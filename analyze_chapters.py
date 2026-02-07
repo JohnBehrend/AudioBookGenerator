@@ -12,6 +12,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+# Import the chapter file finder from list_chapters.py
+from list_chapters import find_chapter_files
+
 
 def load_chapter_map(file_path: str) -> Tuple[Dict, Dict]:
     """Load a chapter map JSON file and return character_map and line_map."""
@@ -39,8 +42,8 @@ def analyze_directory(directory: str, args) -> None:
     """Analyze all chapter map files in the given directory."""
     directory = Path(directory)
 
-    # Find all chapter_*.map.json files
-    chapter_files = sorted(directory.glob("chapter_*.map.json"))
+    # Find all chapter_*.map.json files using the function from list_chapters.py
+    chapter_files = find_chapter_files(str(directory), verbose=args.verbose)
 
     if not chapter_files:
         print(f"No chapter map files found in {directory}", file=sys.stderr)
@@ -56,7 +59,8 @@ def analyze_directory(directory: str, args) -> None:
 
     # Analyze each chapter
     for chapter_file in chapter_files:
-        chapter_num = int(chapter_file.stem.split('_')[1])
+        # Extract chapter number from filename (e.g., chapter_0.map.json -> 0)
+        chapter_num = int(chapter_file.stem.split('_')[1].split('.')[0])
         character_map, line_map = load_chapter_map(str(chapter_file))
 
         if not character_map:
@@ -79,7 +83,9 @@ def analyze_directory(directory: str, args) -> None:
             'narrator_lines': narrator_lines,
             'dialogue_lines': dialogue_lines,
             'unique_speakers': unique_speakers,
-            'speakers': chapter_speakers_list
+            'speakers': chapter_speakers_list,
+            'line_map': line_map,
+            'character_map': character_map
         })
 
         # Combine with overall data
@@ -103,12 +109,13 @@ def analyze_directory(directory: str, args) -> None:
 
     # Count lines per speaker across all chapters
     speaker_line_counts = Counter()
-    for line_map in [s['line_map'] for s in [extract_speaker_info(i, c_map, l_map) for i, (c_map, l_map) in
-                                                 [(ch['chapter'], (chapter_stats[i]['speakers'], {l: s for l, s in zip(
-                                                     [k for k, v in extract_speaker_info(ch['chapter'], chapter_stats[i]['character_map'],
-                                                                 chapter_stats[i]['line_map'].keys(), chapter_stats[i]['line_map'].values()) for
-                                                     k, v in chapter_stats[i]['line_map'].items()}))} for i, ch in enumerate(chapter_stats)]
-                                                 for i, ch in enumerate(chapter_stats)]:
+
+    # Iterate through each chapter's data and count speaker lines
+    for chapter in chapter_stats:
+        # Get the line_map from this chapter
+        line_map = chapter['line_map']
+
+        # Count each speaker's lines
         for speaker_key in line_map.values():
             speaker_name = combined_character_map.get(speaker_key, f"Unknown_{speaker_key}")
             speaker_line_counts[speaker_name] += 1

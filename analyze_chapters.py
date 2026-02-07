@@ -27,15 +27,56 @@ def load_chapter_map(file_path: str) -> Tuple[Dict, Dict]:
         return {}, {}
 
 
-def extract_speaker_info(chapter_num: int, character_map: Dict, line_map: Dict) -> Dict:
+def extract_speaker_info(chapter_num: int, character_map: Dict, line_map: Dict, key_to_names: Dict[int, List[str]]) -> Dict:
     """Extract speaker information for a specific chapter."""
     speakers = {}
     for line_num, speaker_key in line_map.items():
-        speaker_name = character_map.get(speaker_key, f"Unknown_{speaker_key}")
+        speaker_name = get_preferred_name_for_key(speaker_key, key_to_names)
         if speaker_name not in speakers:
             speakers[speaker_name] = []
         speakers[speaker_name].append(line_num)
     return speakers
+
+
+def get_character_key_mapping(chapter_files: List[str]) -> Dict[int, List[str]]:
+    """
+    Load all character maps from chapter files and create a mapping of
+    which character names can belong to each key number.
+    Returns a dict: {key: [name1, name2, name3, ...]}
+    """
+    key_to_names = {}
+    for chapter_file in chapter_files:
+        chapter_num = int(chapter_file.stem.split('_')[1].split('.')[0])
+        character_map, _ = load_chapter_map(str(chapter_file))
+        if character_map:
+            for k, v in character_map.items():
+                key_num = int(k)
+                if key_num not in key_to_names:
+                    key_to_names[key_num] = []
+                # Add name if not already in the list (case-insensitive)
+                name_lower = v.lower().strip()
+                if not any(n.lower().strip() == name_lower for n in key_to_names[key_num]):
+                    key_to_names[key_num].append(v)
+    return key_to_names
+
+
+def get_preferred_name_for_key(key: int, key_to_names: Dict[int, List[str]]) -> str:
+    """
+    Get the preferred name for a key. Uses the narrator (key 1) and
+    then the most frequently appearing name, or returns all names if ambiguous.
+    """
+    if key in key_to_names and len(key_to_names[key]) > 0:
+        # Priority 1: Narrator (key 1) should always be "narrator"
+        if key == 1 and "narrator" in key_to_names[key]:
+            return "narrator"
+        # Priority 2: If only one name, use it
+        if len(key_to_names[key]) == 1:
+            return key_to_names[key][0]
+        # Priority 3: Use the most common name (if we had counts)
+        # For now, pick the first name or return all names
+        # We'll return all names if there's ambiguity
+        return ", ".join(key_to_names[key])
+    return f"Unknown_{key}"
 
 
 def analyze_directory(directory: str, args) -> None:
@@ -51,10 +92,12 @@ def analyze_directory(directory: str, args) -> None:
 
     print(f"Found {len(chapter_files)} chapter files in {directory}\n")
 
+    # Load all character maps upfront to get complete speaker names
+    key_to_names = get_character_key_mapping(chapter_files)
+
     # Data storage
     all_speakers = []
     chapter_stats = []
-    combined_character_map = {}
     combined_line_map = defaultdict(list)
 
     # Analyze each chapter
@@ -66,8 +109,8 @@ def analyze_directory(directory: str, args) -> None:
         if not character_map:
             continue
 
-        # Extract speaker info for this chapter
-        chapter_speakers = extract_speaker_info(chapter_num, character_map, line_map)
+        # Extract speaker info for this chapter using key_to_names for names
+        chapter_speakers = extract_speaker_info(chapter_num, character_map, line_map, key_to_names)
         chapter_speakers_list = list(chapter_speakers.keys())
         all_speakers.extend(chapter_speakers_list)
 
@@ -89,7 +132,6 @@ def analyze_directory(directory: str, args) -> None:
         })
 
         # Combine with overall data
-        combined_character_map.update(character_map)
         for line_num, speaker_key in line_map.items():
             combined_line_map[line_num].append(speaker_key)
 
@@ -115,9 +157,9 @@ def analyze_directory(directory: str, args) -> None:
         # Get the line_map from this chapter
         line_map = chapter['line_map']
 
-        # Count each speaker's lines
+        # Count each speaker's lines using key_to_names for names
         for speaker_key in line_map.values():
-            speaker_name = combined_character_map.get(speaker_key, f"Unknown_{speaker_key}")
+            speaker_name = get_preferred_name_for_key(speaker_key, key_to_names)
             speaker_line_counts[speaker_name] += 1
 
     top_speakers = speaker_line_counts.most_common(10)

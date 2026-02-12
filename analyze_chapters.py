@@ -15,6 +15,7 @@ import pandas as pd
 
 from list_chapters import find_chapter_files
 
+
 class Chapter:
     """Represents a single chapter with its speaker annotations."""
 
@@ -239,8 +240,6 @@ class ChapterAnalyzer:
         # Get chapter columns (exclude 'Total')
         chapter_cols = [c for c in pivot.columns if c != 'Total']
 
-        # Calculate max for density mapping (now calculated per-speaker per batch)
-
         # Per-chapter breakdown (density map)
         print("\n" + "-" * 60)
         print(f"PER-CHAPTER DENSITY MAP (space=0, .=1-2, x=3-5, X=6-9, #=10+)")
@@ -282,6 +281,16 @@ class ChapterAnalyzer:
             json.dump(output_data, f, indent=2)
         print(f"\nFull analysis saved to: {output_path}")
 
+    def save_characters_json(self, output_dir: Path, stats: Dict) -> None:
+        """Save character list to JSON file."""
+        characters_path = output_dir / "characters.json"
+        characters_data = {
+            'characters': sorted(stats['speaker_counts'].keys())
+        }
+        with open(characters_path, 'w', encoding='utf-8') as f:
+            json.dump(characters_data, f, indent=2)
+        print(f"Characters list saved to: {characters_path}")
+
     def save_csv(self, output_dir: Path, chapter_stats: List[Dict]) -> None:
         """Save chapter statistics to CSV file."""
         csv_path = output_dir / "chapter_stats.csv"
@@ -312,6 +321,7 @@ class ChapterAnalyzer:
 
         if args.json_output:
             self.save_json(self.directory, overall_stats, chapter_stats)
+            self.save_characters_json(self.directory, overall_stats)
 
         if args.csv_output:
             self.save_csv(self.directory, chapter_stats)
@@ -342,7 +352,7 @@ def main() -> None:
     parser.add_argument(
         "--json-output",
         action="store_true",
-        help="Generate detailed JSON output file"
+        help="Generate detailed JSON output file and characters.json"
     )
     parser.add_argument(
         "--csv-output",

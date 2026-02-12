@@ -64,9 +64,9 @@ def compare_characters(character_name: str, other_character: str) -> bool:
 
     # Also check prefix/suffix with space boundaries
     # e.g., "John" matches "John Smith" but not "Johnson"
-    if lower2.startswith(lower1 + " ") or lower1.startswith(lower2 + " "):
-        return True
-    if lower2.endswith(" " + lower1) or lower1.endswith(" " + lower2):
+    # Use shorter/longer to handle both directions properly
+    shorter, longer = (lower1, lower2) if len(lower1) < len(lower2) else (lower2, lower1)
+    if longer.startswith(shorter + " ") or longer.endswith(" " + shorter):
         return True
 
     return False

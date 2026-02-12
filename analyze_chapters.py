@@ -201,8 +201,22 @@ class ChapterAnalyzer:
             print(f"  Unique Speakers: {stat['unique_speakers']}")
             print(f"  Top Speakers: {', '.join(stat['speakers'][:5])}")
 
+    def _density_char(self, count: int, max_count: int) -> str:
+        """Return a density character based on count relative to max."""
+        if count == 0:
+            return ' '
+        ratio = count / max_count if max_count > 0 else 0
+        if ratio < 0.25:
+            return '.'
+        elif ratio < 0.5:
+            return 'x'
+        elif ratio < 0.75:
+            return 'X'
+        else:
+            return '#'
+
     def print_histogram(self, df: pd.DataFrame) -> None:
-        """Print ASCII histogram of speaker counts."""
+        """Print ASCII histogram of speaker counts in compact format."""
         if df.empty:
             print("\nNo data to display.")
             return
@@ -221,24 +235,29 @@ class ChapterAnalyzer:
         print("\n" + "=" * 60)
         print("HISTOGRAM: SPEAKER DIALOGUE LINE COUNTS")
         print("=" * 60)
-        print("\nPer-Chapter Dialogue Line Counts (by speaker):")
-        print("-" * 60)
-        print(pivot.to_string())
 
-        # ASCII bar chart
+        # Get chapter columns (exclude 'Total')
+        chapter_cols = [c for c in pivot.columns if c != 'Total']
+
+        # Calculate max for density mapping (now calculated per-speaker per batch)
+
+        # Per-chapter breakdown (density map)
         print("\n" + "-" * 60)
-        print("ASCII BAR CHART (Total Lines per Speaker)")
+        print(f"PER-CHAPTER DENSITY MAP (space=0, .=1-2, x=3-5, X=6-9, #=10+)")
         print("-" * 60)
 
-        speakers = pivot.index.tolist()
-        totals = pivot['Total'].tolist()
-        max_count = max(totals) if totals else 1
-        max_bar_width = 40
+        # Print all chapters
+        for speaker in pivot.index.tolist():
+            counts = [int(pivot.at[speaker, col]) for col in chapter_cols]
+            # Use per-speaker max for density mapping
+            speaker_max = max(counts) if counts else 1
+            density_chars = [self._density_char(c, speaker_max) for c in counts]
+            total = sum(counts)
+            chapter_str = ''.join(density_chars)
+            print(f"  {speaker:20} | {chapter_str} ({total})")
 
-        for speaker, count in zip(speakers, totals):
-            bar_length = int((count / max_count) * max_bar_width) if max_count > 0 else 0
-            bar = "#" * bar_length
-            print(f"{speaker:30} | {bar} ({count})")
+        # Legend
+        print("\nLegend: ' ' = 0, '.' = 1-2, 'x' = 3-5, 'X' = 6-9, '#' = 10+")
 
     def print_all_speakers(self, stats: Dict) -> None:
         """Print all detected speakers."""

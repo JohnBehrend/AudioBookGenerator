@@ -62,6 +62,7 @@ python list_chapters.py chapters
 - Audio generation uses a postfix for validation and clips it from final output
 - GPU selection: `--alt_gpu` uses cuda:1, default is cuda:0
 - Generated audio files are in `chapters/` (gitignored)
+- The line endings in the repo can be windows line endings.
 
 ## Known Issues
 

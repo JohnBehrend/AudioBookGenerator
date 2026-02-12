@@ -94,6 +94,22 @@ def find_duplicate_characters(characters: list) -> dict:
     return {k: v for k, v in canonical_to_duplicates.items() if v}
 
 
+def create_duplicate_replacement_map(duplicates: dict) -> dict:
+    """Create a mapping from each duplicate name to its canonical name.
+
+    Args:
+        duplicates: Dict mapping canonical name to list of duplicate names
+
+    Returns:
+        Dict mapping duplicate character names to their canonical name
+    """
+    replacement_map = {}
+    for canonical, duplicates_list in duplicates.items():
+        for dup_name in duplicates_list:
+            replacement_map[dup_name] = canonical
+    return replacement_map
+
+
 def deduplicate_descriptions(descriptions: dict, duplicates: dict, verbose: bool = False) -> dict:
     """Deduplicate character descriptions based on duplicate character mappings.
 
@@ -286,11 +302,30 @@ def main() -> None:
         if args.verbose and duplicates:
             print(f"Found duplicate character names: {duplicates}")
 
-        # Describe all characters
-        descriptions = describe_all_characters(client, args.model, characters, context)
+        # Create a map from duplicate names to canonical names
+        duplicate_replacement_map = create_duplicate_replacement_map(duplicates)
+        if args.verbose and duplicate_replacement_map:
+            print(f"Duplicate replacement map: {duplicate_replacement_map}")
 
-        # Deduplicate descriptions based on name similarity
-        deduped_descriptions = deduplicate_descriptions(descriptions, duplicates, args.verbose)
+        # Get list of canonical characters (exclude duplicates)
+        canonical_characters = [
+            char for char in characters
+            if char not in duplicate_replacement_map
+        ]
+        if args.verbose:
+            print(f"Canonical characters to describe: {canonical_characters}")
+
+        # Describe only canonical characters
+        descriptions = describe_all_characters(client, args.model, canonical_characters, context)
+
+        deduped_descriptions = descriptions
+
+        # Save duplicate replacement map to file
+        replacement_map_file = "duplicate_replacement_map.json"
+        with open(replacement_map_file, 'w', encoding='utf-8') as f:
+            json.dump(duplicate_replacement_map, f, indent=2, ensure_ascii=False)
+        if args.verbose:
+            print(f"Duplicate replacement map saved to: {replacement_map_file}")
 
         # Save results (replacing em dashes with regular hyphens)
         output_file = "characters_descriptions.json"

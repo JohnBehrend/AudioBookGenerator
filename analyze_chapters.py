@@ -15,10 +15,6 @@ import pandas as pd
 
 from list_chapters import find_chapter_files
 
-# Global variable for key-to-names mapping (used by Chapter class)
-_global_key_to_names: Dict[int, List[str]] = {}
-
-
 class Chapter:
     """Represents a single chapter with its speaker annotations."""
 
@@ -26,6 +22,15 @@ class Chapter:
         self.chapter_num = chapter_num
         self.character_map = character_map
         self.line_map = line_map
+
+    def _get_speaker_name(self, key: int) -> str:
+        """Get speaker name from this chapter's character_map."""
+        if key == 1:
+            return "narrator"
+        key_str = str(key)
+        if key_str in self.character_map:
+            return self.character_map[key_str].strip()
+        return f"Unknown_{key}"
 
     @property
     def total_lines(self) -> int:
@@ -46,14 +51,14 @@ class Chapter:
     def unique_speakers(self) -> List[str]:
         """List of unique speaker names in this chapter."""
         speaker_keys = set(self.line_map.values())
-        return [get_preferred_name_for_key(k, _global_key_to_names) for k in speaker_keys]
+        return [self._get_speaker_name(k) for k in speaker_keys]
 
     @property
     def speaker_counts(self) -> Dict[str, int]:
         """Count of lines per speaker."""
         counts: Dict[str, int] = {}
         for speaker_key in self.line_map.values():
-            name = get_preferred_name_for_key(speaker_key, _global_key_to_names)
+            name = self._get_speaker_name(speaker_key)
             counts[name] = counts.get(name, 0) + 1
         return counts
 
@@ -61,7 +66,7 @@ class Chapter:
         """Return a mapping of speaker names to their line numbers."""
         speakers: Dict[str, List[int]] = {}
         for line_num, speaker_key in self.line_map.items():
-            name = get_preferred_name_for_key(speaker_key, _global_key_to_names)
+            name = self._get_speaker_name(speaker_key)
             if name not in speakers:
                 speakers[name] = []
             speakers[name].append(line_num)
@@ -88,9 +93,6 @@ class ChapterAnalyzer:
         if self.verbose:
             print(f"Found {len(chapter_files)} chapter files")
 
-        # Build global key-to-names mapping from all chapters
-        self._build_key_to_names(chapter_files)
-
         # Load each chapter
         for chapter_file in chapter_files:
             chapter_num = self._extract_chapter_number(chapter_file)
@@ -109,26 +111,6 @@ class ChapterAnalyzer:
         if stem.endswith('.map'):
             stem = stem[:-4]
         return int(stem.split('_')[1])
-
-    def _build_key_to_names(self, chapter_files: List[Path]) -> None:
-        """Build global mapping of speaker keys to preferred names."""
-        global _global_key_to_names
-        _global_key_to_names = {}
-
-        for chapter_file in chapter_files:
-            character_map, _ = load_chapter_map(str(chapter_file))
-            if not character_map:
-                continue
-
-            for k, v in character_map.items():
-                key_num = int(k)
-                if key_num not in _global_key_to_names:
-                    _global_key_to_names[key_num] = []
-
-                name_lower = v.lower().strip()
-                # Avoid duplicates (case-insensitive)
-                if not any(n.lower().strip() == name_lower for n in _global_key_to_names[key_num]):
-                    _global_key_to_names[key_num].append(v)
 
     def get_overall_statistics(self) -> Dict:
         """Get overall statistics across all chapters."""
@@ -328,25 +310,6 @@ def load_chapter_map(file_path: str) -> tuple:
     except Exception as e:
         print(f"Error loading {file_path}: {e}", file=sys.stderr)
         return {}, {}
-
-
-def get_preferred_name_for_key(key: int, key_to_names: Dict[int, List[str]]) -> str:
-    """
-    Get the preferred name for a speaker key.
-
-    Priority:
-    1. Narrator (key 1) -> "narrator"
-    2. Single name -> that name
-    3. Multiple names -> concatenated with ", "
-    4. Unknown key -> "Unknown_{key}"
-    """
-    if key in key_to_names and key_to_names[key]:
-        if key == 1 and "narrator" in key_to_names[key]:
-            return "narrator"
-        if len(key_to_names[key]) == 1:
-            return key_to_names[key][0]
-        return ", ".join(key_to_names[key])
-    return f"Unknown_{key}"
 
 
 def main() -> None:

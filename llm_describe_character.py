@@ -151,6 +151,27 @@ def load_chapter_text(chapter_file: str) -> str:
         return f.read()
 
 
+def find_chapters_with_character(chapter_texts: list, chapter_files: list, character_name: str) -> list:
+    """Find chapters where a character is mentioned.
+
+    Args:
+        chapter_texts: List of chapter text content
+        chapter_files: List of chapter file paths (in matching order)
+        character_name: The character name to search for
+
+    Returns:
+        List of (chapter_file, chapter_text) tuples where character appears
+    """
+    chapters_with_char = []
+    char_lower = character_name.lower()
+
+    for text, filepath in zip(chapter_texts, chapter_files):
+        if char_lower in text.lower():
+            chapters_with_char.append((filepath, text))
+
+    return chapters_with_char
+
+
 def lookup_character_on_wiki(character_name: str, wiki_url_template: str = "") -> str:
     """Look up a character on a wiki for additional context.
 
@@ -190,12 +211,13 @@ def lookup_character_on_wiki(character_name: str, wiki_url_template: str = "") -
     return ""
 
 
-def build_character_context(characters: list, chapter_texts: list, wiki_url_template: str = "") -> str:
+def build_character_context(characters: list, chapter_texts: list, chapter_files: list = [], wiki_url_template: str = "") -> str:
     """Build context string with character names and their appearances.
 
     Args:
         characters: List of character names
         chapter_texts: List of chapter text content
+        chapter_files: List of chapter file paths (used for finding relevant chapters)
         wiki_url_template: Optional URL template for wiki lookup (with {name} placeholder)
 
     Returns:
@@ -213,11 +235,23 @@ def build_character_context(characters: list, chapter_texts: list, wiki_url_temp
             if wiki_info:
                 context += f"--- {char} ---\n{wiki_info}\n\n"
 
-    context += "\n\nRelevant dialogue and context from the book:\n"
-    for i, text in enumerate(chapter_texts[:3]):  # Use first 3 chapters for context
-        context += f"--- Chapter {i+1} Excerpt ---\n"
-        context += text[:1000]  # First 1000 chars of each chapter
-        context += "\n\n"
+    # Build character-specific context using relevant chapters
+    if chapter_files and len(chapter_files) == len(chapter_texts):
+        context += "\n\nRelevant dialogue and context from the book:\n"
+        for char in characters:
+            relevant_chapters = find_chapters_with_character(chapter_texts, chapter_files, char)
+            if relevant_chapters:
+                context += f"\n--- {char} Context ---\n"
+                # Use up to 2 most relevant chapters, first 800 chars each
+                for filepath, text in relevant_chapters[:2]:
+                    context += f"[From {filepath.name}]\n"
+                    context += text[:800] + "\n\n"
+    else:
+        # Fallback to first 3 chapters for all characters
+        context += "\n\nRelevant dialogue and context from the book:\n"
+        for i, text in enumerate(chapter_texts[:3]):
+            context += f"--- Chapter {i+1} Excerpt ---\n"
+            context += text[:1000] + "\n\n"
     return context
 
 
@@ -342,6 +376,7 @@ def main() -> None:
     # Load chapter texts for context
     chapters_dir = Path(args.chapters_dir)
     chapter_texts = []
+    chapter_files = []
     if chapters_dir.is_dir():
         chapter_files = sorted(chapters_dir.glob("chapter_*.txt"))
         for chapter_file in chapter_files:
@@ -350,7 +385,7 @@ def main() -> None:
             print(f"Loaded {len(chapter_texts)} chapter files for context")
 
     # Build context
-    context = build_character_context(characters, chapter_texts, args.wiki_url_template)
+    context = build_character_context(characters, chapter_texts, chapter_files, args.wiki_url_template)
 
     # Describe characters
     if args.single_character:

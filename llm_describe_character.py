@@ -13,15 +13,23 @@ from openai import OpenAI
 
 # Default prompt for character description
 CHARACTER_DESCRIPTION_PROMPT = """
-You are an expert in literary analysis and character development. Your task is to provide detailed descriptions of characters based on their names and the context in which they appear in an audiobook.
+You are an expert voice actor and audiobook narrator. Your task is to create unique voice profiles for characters based on their names and the context in which they appear in an audiobook.
 
-For each character, provide a description that includes:
-1. A brief physical description (if known)
-2. Their role in the story
-3. Key personality traits
-4. Any notable characteristics or quirks
+For each character, provide a detailed voice profile that includes:
+1. **Age and Gender**: Young adult male, elderly woman, etc.
+2. **Emotional base state**: Confident, nervous, authoritative, meek, playful, etc.
+3. **Accent**: Regional (Southern drawl, Boston accent, British RP), socio-economic (posh, working-class), or neutral
+4. **Speaking style**: Fast/talkative, slow/deliberate, formal/informal, gruff/smooth, etc.
+5. **Unique vocal characteristics**: Any notable speech patterns, quirks, or distinctive features
 
-Format your response as a JSON object where keys are character names and values are their descriptions.
+Format your response as a JSON object where keys are character names and values are their voice profiles.
+Each description should be a single concise paragraph that illustrates how the character sounds when speaking.
+
+Example format:
+"Elderly male farmer with a meek and rustic lisp, speaks slowly with a drawl. His voice carries the weariness of decades on the land, often pausing mid-sentence as if remembering something."
+
+Another example:
+"Mid-30s female detective with a sharp, no-nonsense tone. She speaks in quick, clipped sentences with a slight Chicago accent, exuding quiet authority and weary skepticism."
 """
 
 

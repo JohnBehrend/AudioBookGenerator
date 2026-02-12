@@ -5,19 +5,322 @@ Processes all chapter_*.map.json files and generates statistics.
 """
 
 import argparse
+import csv
 import json
-import os
 import sys
-from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
-# Import the chapter file finder from list_chapters.py
+import pandas as pd
+
 from list_chapters import find_chapter_files
 
+# Global variable for key-to-names mapping (used by Chapter class)
+_global_key_to_names: Dict[int, List[str]] = {}
 
-def load_chapter_map(file_path: str) -> Tuple[Dict, Dict]:
-    """Load a chapter map JSON file and return character_map and line_map."""
+
+class Chapter:
+    """Represents a single chapter with its speaker annotations."""
+
+    def __init__(self, chapter_num: int, character_map: Dict, line_map: Dict) -> None:
+        self.chapter_num = chapter_num
+        self.character_map = character_map
+        self.line_map = line_map
+
+    @property
+    def total_lines(self) -> int:
+        """Total number of lines in the chapter."""
+        return len(self.line_map)
+
+    @property
+    def narrator_lines(self) -> int:
+        """Number of lines spoken by the narrator (key 1)."""
+        return sum(1 for speaker in self.line_map.values() if speaker == 1)
+
+    @property
+    def dialogue_lines(self) -> int:
+        """Number of dialogue lines (non-narrator)."""
+        return self.total_lines - self.narrator_lines
+
+    @property
+    def unique_speakers(self) -> List[str]:
+        """List of unique speaker names in this chapter."""
+        speaker_keys = set(self.line_map.values())
+        return [get_preferred_name_for_key(k, _global_key_to_names) for k in speaker_keys]
+
+    @property
+    def speaker_counts(self) -> Dict[str, int]:
+        """Count of lines per speaker."""
+        counts: Dict[str, int] = {}
+        for speaker_key in self.line_map.values():
+            name = get_preferred_name_for_key(speaker_key, _global_key_to_names)
+            counts[name] = counts.get(name, 0) + 1
+        return counts
+
+    def get_speakers(self) -> Dict[str, List[int]]:
+        """Return a mapping of speaker names to their line numbers."""
+        speakers: Dict[str, List[int]] = {}
+        for line_num, speaker_key in self.line_map.items():
+            name = get_preferred_name_for_key(speaker_key, _global_key_to_names)
+            if name not in speakers:
+                speakers[name] = []
+            speakers[name].append(line_num)
+        return speakers
+
+
+class ChapterAnalyzer:
+    """Analyzes multiple chapter files and generates statistics."""
+
+    def __init__(self, directory: str, verbose: bool = False) -> None:
+        self.directory = Path(directory)
+        self.verbose = verbose
+        self.chapters: List[Chapter] = []
+        self._load_chapters()
+
+    def _load_chapters(self) -> None:
+        """Load all chapter map files from the directory."""
+        chapter_files = find_chapter_files(str(self.directory), verbose=self.verbose)
+
+        if not chapter_files:
+            print(f"No chapter map files found in {self.directory}", file=sys.stderr)
+            sys.exit(1)
+
+        if self.verbose:
+            print(f"Found {len(chapter_files)} chapter files")
+
+        # Build global key-to-names mapping from all chapters
+        self._build_key_to_names(chapter_files)
+
+        # Load each chapter
+        for chapter_file in chapter_files:
+            chapter_num = self._extract_chapter_number(chapter_file)
+            character_map, line_map = load_chapter_map(str(chapter_file))
+
+            if character_map:
+                self.chapters.append(Chapter(chapter_num, character_map, line_map))
+
+        if self.verbose:
+            print(f"Successfully loaded {len(self.chapters)} chapters")
+
+    def _extract_chapter_number(self, file_path: Path) -> int:
+        """Extract chapter number from filename (e.g., chapter_0.map.json -> 0)."""
+        stem = file_path.stem  # e.g., "chapter_0.map"
+        # Remove .map suffix if present
+        if stem.endswith('.map'):
+            stem = stem[:-4]
+        return int(stem.split('_')[1])
+
+    def _build_key_to_names(self, chapter_files: List[Path]) -> None:
+        """Build global mapping of speaker keys to preferred names."""
+        global _global_key_to_names
+        _global_key_to_names = {}
+
+        for chapter_file in chapter_files:
+            character_map, _ = load_chapter_map(str(chapter_file))
+            if not character_map:
+                continue
+
+            for k, v in character_map.items():
+                key_num = int(k)
+                if key_num not in _global_key_to_names:
+                    _global_key_to_names[key_num] = []
+
+                name_lower = v.lower().strip()
+                # Avoid duplicates (case-insensitive)
+                if not any(n.lower().strip() == name_lower for n in _global_key_to_names[key_num]):
+                    _global_key_to_names[key_num].append(v)
+
+    def get_overall_statistics(self) -> Dict:
+        """Get overall statistics across all chapters."""
+        total_lines = sum(c.total_lines for c in self.chapters)
+        narrator_lines = sum(c.narrator_lines for c in self.chapters)
+
+        # Collect all unique speakers
+        all_speakers = set()
+        for chapter in self.chapters:
+            all_speakers.update(chapter.unique_speakers)
+
+        # Count lines per speaker across all chapters
+        speaker_counts: Dict[str, int] = {}
+        for chapter in self.chapters:
+            for name, count in chapter.speaker_counts.items():
+                speaker_counts[name] = speaker_counts.get(name, 0) + count
+
+        return {
+            'total_chapters': len(self.chapters),
+            'total_lines': total_lines,
+            'narrator_lines': narrator_lines,
+            'dialogue_lines': total_lines - narrator_lines,
+            'unique_speakers': len(all_speakers),
+            'speaker_counts': speaker_counts
+        }
+
+    def get_top_speakers(self, n: int = 10) -> List[tuple]:
+        """Get top N speakers by line count."""
+        stats = self.get_overall_statistics()
+        counts = stats['speaker_counts']
+        return sorted(counts.items(), key=lambda x: x[1], reverse=True)[:n]
+
+    def get_chapter_stats(self) -> List[Dict]:
+        """Get statistics for each chapter."""
+        return [{
+            'chapter': c.chapter_num,
+            'total_lines': c.total_lines,
+            'narrator_lines': c.narrator_lines,
+            'dialogue_lines': c.dialogue_lines,
+            'unique_speakers': len(c.unique_speakers),
+            'speakers': c.unique_speakers
+        } for c in self.chapters]
+
+    def generate_histogram_data(self) -> pd.DataFrame:
+        """Generate histogram data showing speaker counts per chapter."""
+        records = []
+        for chapter in self.chapters:
+            for speaker, count in chapter.speaker_counts.items():
+                records.append({
+                    'chapter': chapter.chapter_num,
+                    'speaker': speaker,
+                    'line_count': count
+                })
+        return pd.DataFrame(records)
+
+    def print_overall_statistics(self, stats: Dict) -> None:
+        """Print overall statistics to console."""
+        print("=" * 60)
+        print("OVERALL STATISTICS")
+        print("=" * 60)
+        print(f"Total Chapters Analyzed: {stats['total_chapters']}")
+        print(f"Total Lines: {stats['total_lines']}")
+        print(f"Unique Speakers Across All Chapters: {stats['unique_speakers']}")
+        print(f"Narrator Lines: {stats['narrator_lines']}")
+        print(f"Dialogue Lines: {stats['dialogue_lines']}")
+
+    def print_top_speakers(self, top_speakers: List[tuple], total_lines: int) -> None:
+        """Print top speakers by line count."""
+        print("\n" + "=" * 60)
+        print("TOP SPEAKERS BY LINE COUNT")
+        print("=" * 60)
+
+        for rank, (speaker, count) in enumerate(top_speakers, 1):
+            percentage = (count / total_lines) * 100 if total_lines > 0 else 0
+            print(f"{rank}. {speaker}: {count} lines ({percentage:.1f}%)")
+
+    def print_chapter_statistics(self, chapter_stats: List[Dict]) -> None:
+        """Print per-chapter statistics."""
+        print("\n" + "=" * 60)
+        print("PER CHAPTER STATISTICS")
+        print("=" * 60)
+
+        for stat in chapter_stats:
+            print(f"\nChapter {stat['chapter']}:")
+            print(f"  Total Lines: {stat['total_lines']}")
+            print(f"  Narrator Lines: {stat['narrator_lines']}")
+            print(f"  Dialogue Lines: {stat['dialogue_lines']}")
+            print(f"  Unique Speakers: {stat['unique_speakers']}")
+            print(f"  Top Speakers: {', '.join(stat['speakers'][:5])}")
+
+    def print_histogram(self, df: pd.DataFrame) -> None:
+        """Print ASCII histogram of speaker counts."""
+        if df.empty:
+            print("\nNo data to display.")
+            return
+
+        # Create pivot table
+        pivot = df.pivot_table(
+            index='speaker',
+            columns='chapter',
+            values='line_count',
+            fill_value=0,
+            aggfunc='sum'
+        )
+        pivot['Total'] = pivot.sum(axis=1)
+        pivot = pivot.sort_values('Total', ascending=False)
+
+        print("\n" + "=" * 60)
+        print("HISTOGRAM: SPEAKER DIALOGUE LINE COUNTS")
+        print("=" * 60)
+        print("\nPer-Chapter Dialogue Line Counts (by speaker):")
+        print("-" * 60)
+        print(pivot.to_string())
+
+        # ASCII bar chart
+        print("\n" + "-" * 60)
+        print("ASCII BAR CHART (Total Lines per Speaker)")
+        print("-" * 60)
+
+        speakers = pivot.index.tolist()
+        totals = pivot['Total'].tolist()
+        max_count = max(totals) if totals else 1
+        max_bar_width = 40
+
+        for speaker, count in zip(speakers, totals):
+            bar_length = int((count / max_count) * max_bar_width) if max_count > 0 else 0
+            bar = "#" * bar_length
+            print(f"{speaker:30} | {bar} ({count})")
+
+    def print_all_speakers(self, stats: Dict) -> None:
+        """Print all detected speakers."""
+        print("\n" + "=" * 60)
+        print("ALL SPEAKERS DETECTED")
+        print("=" * 60)
+        for speaker in sorted(stats['speaker_counts'].keys()):
+            print(f"  - {speaker}")
+
+    def save_json(self, output_dir: Path, stats: Dict, chapter_stats: List[Dict]) -> None:
+        """Save full analysis to JSON file."""
+        output_data = {
+            'total_chapters': stats['total_chapters'],
+            'total_lines': stats['total_lines'],
+            'unique_speakers': stats['unique_speakers'],
+            'speaker_counts': {s: int(c) for s, c in stats['speaker_counts'].items()},
+            'chapter_stats': chapter_stats
+        }
+
+        output_path = output_dir / "chapter_analysis.json"
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(output_data, f, indent=2)
+        print(f"\nFull analysis saved to: {output_path}")
+
+    def save_csv(self, output_dir: Path, chapter_stats: List[Dict]) -> None:
+        """Save chapter statistics to CSV file."""
+        csv_path = output_dir / "chapter_stats.csv"
+        fieldnames = ['chapter', 'total_lines', 'narrator_lines', 'dialogue_lines', 'unique_speakers', 'speakers']
+
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(chapter_stats)
+        print(f"CSV statistics saved to: {csv_path}")
+
+    def analyze(self, args) -> None:
+        """Run the full analysis and output results."""
+        # Get all statistics
+        overall_stats = self.get_overall_statistics()
+        chapter_stats = self.get_chapter_stats()
+        top_speakers = self.get_top_speakers(10)
+        histogram_df = self.generate_histogram_data()
+
+        # Print reports
+        self.print_overall_statistics(overall_stats)
+        self.print_top_speakers(top_speakers, overall_stats['total_lines'])
+        self.print_chapter_statistics(chapter_stats)
+
+        # Optional outputs
+        if args.histogram:
+            self.print_histogram(histogram_df)
+
+        if args.json_output:
+            self.save_json(self.directory, overall_stats, chapter_stats)
+
+        if args.csv_output:
+            self.save_csv(self.directory, chapter_stats)
+
+        if args.verbose:
+            self.print_all_speakers(overall_stats)
+
+
+def load_chapter_map(file_path: str) -> tuple:
+    """Load a chapter map JSON file and return (character_map, line_map)."""
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -27,192 +330,26 @@ def load_chapter_map(file_path: str) -> Tuple[Dict, Dict]:
         return {}, {}
 
 
-def extract_speaker_info(chapter_num: int, character_map: Dict, line_map: Dict, key_to_names: Dict[int, List[str]]) -> Dict:
-    """Extract speaker information for a specific chapter."""
-    speakers = {}
-    for line_num, speaker_key in line_map.items():
-        speaker_name = get_preferred_name_for_key(speaker_key, key_to_names)
-        if speaker_name not in speakers:
-            speakers[speaker_name] = []
-        speakers[speaker_name].append(line_num)
-    return speakers
-
-
-def get_character_key_mapping(chapter_files: List[str]) -> Dict[int, List[str]]:
-    """
-    Load all character maps from chapter files and create a mapping of
-    which character names can belong to each key number.
-    Returns a dict: {key: [name1, name2, name3, ...]}
-    """
-    key_to_names = {}
-    for chapter_file in chapter_files:
-        chapter_num = int(chapter_file.stem.split('_')[1].split('.')[0])
-        character_map, _ = load_chapter_map(str(chapter_file))
-        if character_map:
-            for k, v in character_map.items():
-                key_num = int(k)
-                if key_num not in key_to_names:
-                    key_to_names[key_num] = []
-                # Add name if not already in the list (case-insensitive)
-                name_lower = v.lower().strip()
-                if not any(n.lower().strip() == name_lower for n in key_to_names[key_num]):
-                    key_to_names[key_num].append(v)
-    return key_to_names
-
-
 def get_preferred_name_for_key(key: int, key_to_names: Dict[int, List[str]]) -> str:
     """
-    Get the preferred name for a key. Uses the narrator (key 1) and
-    then the most frequently appearing name, or returns all names if ambiguous.
+    Get the preferred name for a speaker key.
+
+    Priority:
+    1. Narrator (key 1) -> "narrator"
+    2. Single name -> that name
+    3. Multiple names -> concatenated with ", "
+    4. Unknown key -> "Unknown_{key}"
     """
-    if key in key_to_names and len(key_to_names[key]) > 0:
-        # Priority 1: Narrator (key 1) should always be "narrator"
+    if key in key_to_names and key_to_names[key]:
         if key == 1 and "narrator" in key_to_names[key]:
             return "narrator"
-        # Priority 2: If only one name, use it
         if len(key_to_names[key]) == 1:
             return key_to_names[key][0]
-        # Priority 3: Use the most common name (if we had counts)
-        # For now, pick the first name or return all names
-        # We'll return all names if there's ambiguity
         return ", ".join(key_to_names[key])
     return f"Unknown_{key}"
 
 
-def analyze_directory(directory: str, args) -> None:
-    """Analyze all chapter map files in the given directory."""
-    directory = Path(directory)
-
-    # Find all chapter_*.map.json files using the function from list_chapters.py
-    chapter_files = find_chapter_files(str(directory), verbose=args.verbose)
-
-    if not chapter_files:
-        print(f"No chapter map files found in {directory}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Found {len(chapter_files)} chapter files in {directory}\n")
-
-    # Load all character maps upfront to get complete speaker names
-    key_to_names = get_character_key_mapping(chapter_files)
-
-    # Data storage
-    all_speakers = []
-    chapter_stats = []
-    combined_line_map = defaultdict(list)
-
-    # Analyze each chapter
-    for chapter_file in chapter_files:
-        # Extract chapter number from filename (e.g., chapter_0.map.json -> 0)
-        chapter_num = int(chapter_file.stem.split('_')[1].split('.')[0])
-        character_map, line_map = load_chapter_map(str(chapter_file))
-
-        if not character_map:
-            continue
-
-        # Extract speaker info for this chapter using key_to_names for names
-        chapter_speakers = extract_speaker_info(chapter_num, character_map, line_map, key_to_names)
-        chapter_speakers_list = list(chapter_speakers.keys())
-        all_speakers.extend(chapter_speakers_list)
-
-        # Statistics for this chapter
-        total_lines = len(line_map)
-        unique_speakers = len(chapter_speakers)
-        narrator_lines = sum(1 for spk in line_map.values() if spk == 1)
-        dialogue_lines = total_lines - narrator_lines
-
-        chapter_stats.append({
-            'chapter': chapter_num,
-            'total_lines': total_lines,
-            'narrator_lines': narrator_lines,
-            'dialogue_lines': dialogue_lines,
-            'unique_speakers': unique_speakers,
-            'speakers': chapter_speakers_list,
-            'line_map': line_map,
-            'character_map': character_map
-        })
-
-        # Combine with overall data
-        for line_num, speaker_key in line_map.items():
-            combined_line_map[line_num].append(speaker_key)
-
-    # Generate overall statistics
-    print("=" * 60)
-    print("OVERALL STATISTICS")
-    print("=" * 60)
-    print(f"Total Chapters Analyzed: {len(chapter_files)}")
-    print(f"Total Lines: {len(combined_line_map)}")
-    print(f"Unique Speakers Across All Chapters: {len(all_speakers)}")
-    print(f"Narrator Lines: {sum(1 for spk in combined_line_map.values() if spk == 1)}")
-    print(f"Dialogue Lines: {len(combined_line_map) - sum(1 for spk in combined_line_map.values() if spk == 1)}")
-
-    print("\n" + "=" * 60)
-    print("TOP SPEAKERS BY LINE COUNT")
-    print("=" * 60)
-
-    # Count lines per speaker across all chapters
-    speaker_line_counts = Counter()
-
-    # Iterate through each chapter's data and count speaker lines
-    for chapter in chapter_stats:
-        # Get the line_map from this chapter
-        line_map = chapter['line_map']
-
-        # Count each speaker's lines using key_to_names for names
-        for speaker_key in line_map.values():
-            speaker_name = get_preferred_name_for_key(speaker_key, key_to_names)
-            speaker_line_counts[speaker_name] += 1
-
-    top_speakers = speaker_line_counts.most_common(10)
-    for rank, (speaker, count) in enumerate(top_speakers, 1):
-        percentage = (count / len(combined_line_map)) * 100
-        print(f"{rank}. {speaker}: {count} lines ({percentage:.1f}%)")
-
-    print("\n" + "=" * 60)
-    print("PER CHAPTER STATISTICS")
-    print("=" * 60)
-
-    for stat in chapter_stats:
-        print(f"\nChapter {stat['chapter']}:")
-        print(f"  Total Lines: {stat['total_lines']}")
-        print(f"  Narrator Lines: {stat['narrator_lines']}")
-        print(f"  Dialogue Lines: {stat['dialogue_lines']}")
-        print(f"  Unique Speakers: {stat['unique_speakers']}")
-        print(f"  Top Speakers: {', '.join(stat['speakers'][:5])}")
-
-    # Optional output
-    if args.json_output:
-        output_data = {
-            'total_chapters': len(chapter_files),
-            'total_lines': len(combined_line_map),
-            'unique_speakers': len(all_speakers),
-            'speaker_counts': {s: int(c) for s, c in speaker_line_counts.most_common()},
-            'chapter_stats': chapter_stats
-        }
-
-        output_path = Path(directory) / "chapter_analysis.json"
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(output_data, f, indent=2)
-        print(f"\nFull analysis saved to: {output_path}")
-
-    if args.csv_output:
-        import csv
-        csv_path = Path(directory) / "chapter_stats.csv"
-        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=['chapter', 'total_lines', 'narrator_lines',
-                                                  'dialogue_lines', 'unique_speakers', 'speakers'])
-            writer.writeheader()
-            writer.writerows(chapter_stats)
-        print(f"CSV statistics saved to: {csv_path}")
-
-    if args.verbose:
-        print("\n" + "=" * 60)
-        print("ALL SPEAKERS DETECTED")
-        print("=" * 60)
-        for speaker in sorted(all_speakers):
-            print(f"  - {speaker}")
-
-
-if __name__ == "__main__":
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Analyze chapter map JSON files and generate statistics"
     )
@@ -236,15 +373,22 @@ if __name__ == "__main__":
         help="Print detailed speaker list"
     )
     parser.add_argument(
-        "--chapter-filter",
-        type=int,
-        help="Filter to specific chapter number (e.g., --chapter-filter 1)"
+        "--histogram",
+        action="store_true",
+        help="Generate ASCII histogram of speaker dialogue counts"
     )
     args = parser.parse_args()
 
     # Validate directory
-    if not os.path.isdir(args.directory):
+    directory = Path(args.directory)
+    if not directory.is_dir():
         print(f"Error: Directory not found: {args.directory}", file=sys.stderr)
         sys.exit(1)
 
-    analyze_directory(args.directory, args)
+    # Run analysis
+    analyzer = ChapterAnalyzer(str(directory), verbose=args.verbose)
+    analyzer.analyze(args)
+
+
+if __name__ == "__main__":
+    main()

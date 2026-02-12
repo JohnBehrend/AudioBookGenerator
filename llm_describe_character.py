@@ -195,10 +195,13 @@ def main() -> None:
             print(f"Describing {len(characters)} characters...")
         descriptions = describe_all_characters(client, args.model, characters, context)
 
-        # Save results
+        # Save results (replacing em dashes with regular hyphens)
         output_file = "characters_descriptions.json"
         with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(descriptions, f, indent=2)
+            # Convert descriptions to JSON string and replace em dash with hyphen
+            json_content = json.dumps(descriptions, indent=2, ensure_ascii=False)
+            json_content = json_content.replace('\u2014', '-')
+            f.write(json_content)
         print(f"\nCharacter descriptions saved to: {output_file}")
 
         # Print summary

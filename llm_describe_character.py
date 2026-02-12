@@ -7,9 +7,13 @@ and generates detailed descriptions for each character.
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from openai import OpenAI
+import requests
+from bs4 import BeautifulSoup
+
 
 # Default prompt for character description
 CHARACTER_DESCRIPTION_PROMPT = """
@@ -23,7 +27,7 @@ For each character, provide a detailed voice profile that includes:
 5. **Speaking style**: Fast/talkative, slow/deliberate, formal/informal, gruff/smooth, etc.
 6. **Unique vocal characteristics**: Any notable speech patterns, quirks, or distinctive features
 
-Format your response as a JSON object where keys are character names and values are their voice profiles.
+Format your response as a JSON object where keys are character names and values are voice profiles.
 Each description MUST begin with "Male" or "Female" followed by the age and other characteristics.
 The description should be a single concise paragraph that illustrates how the character sounds when speaking.
 
@@ -147,11 +151,67 @@ def load_chapter_text(chapter_file: str) -> str:
         return f.read()
 
 
-def build_character_context(characters: list, chapter_texts: list) -> str:
-    """Build context string with character names and their appearances."""
+def lookup_character_on_wiki(character_name: str, wiki_url_template: str = "") -> str:
+    """Look up a character on a wiki for additional context.
+
+    Args:
+        character_name: The name of the character to look up
+        wiki_url_template: URL template with {name} placeholder for the character name
+
+    Returns:
+        A string with biographical information from the wiki, or empty string if not found
+    """
+    # Format the URL with the character name
+    url = wiki_url_template.format(name=character_name.replace(" ", "_"))
+
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Audiobook Character Describer)"}
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.content, "html.parser")
+
+        # Check if it's a disambiguation page or doesn't exist
+        content = soup.find("div", class_="mw-parser-output")
+        if not content:
+            return ""
+
+        # Get the first paragraph (usually the most relevant)
+        first_para = content.find("p")
+        if first_para:
+            text = first_para.get_text(strip=True)
+            # Clean up citation brackets like [1], [2], etc.
+            text = re.sub(r'\[\d+\]', '', text)
+            return text[:1000]  # Limit to first 1000 chars
+
+    except requests.RequestException:
+        pass
+
+    return ""
+
+
+def build_character_context(characters: list, chapter_texts: list, wiki_url_template: str = "") -> str:
+    """Build context string with character names and their appearances.
+
+    Args:
+        characters: List of character names
+        chapter_texts: List of chapter text content
+        wiki_url_template: Optional URL template for wiki lookup (with {name} placeholder)
+
+    Returns:
+        Context string for the LLM prompt
+    """
     context = "Characters to describe:\n"
     for char in characters:
         context += f"- {char}\n"
+
+    # Add wiki lookup context if enabled
+    if wiki_url_template:
+        context += "\n\nAdditional context from wiki:\n"
+        for char in characters:
+            wiki_info = lookup_character_on_wiki(char, wiki_url_template)
+            if wiki_info:
+                context += f"--- {char} ---\n{wiki_info}\n\n"
 
     context += "\n\nRelevant dialogue and context from the book:\n"
     for i, text in enumerate(chapter_texts[:3]):  # Use first 3 chapters for context
@@ -234,19 +294,22 @@ def main() -> None:
         help="Enable verbose printing for debug."
     )
     parser.add_argument(
-        "-api_key",
-        metavar="lm-studio",
+        "--api_key",
+        "-k",
+        metavar="API_KEY",
         default="lm-studio",
         help="Provide custom API key."
     )
     parser.add_argument(
-        "-port",
-        metavar="1234",
+        "--port",
+        "-p",
+        metavar="PORT",
         default="1234",
         help="Provide custom port for inference."
     )
     parser.add_argument(
-        "-model",
+        "--model",
+        "-m",
         default="local-model",
         help="Model name to use for inference."
     )
@@ -254,6 +317,12 @@ def main() -> None:
         "--single-character",
         metavar="CHARACTER",
         help="Describe a single specific character."
+    )
+    parser.add_argument(
+        "--wiki-url",
+        metavar="URL",
+        dest="wiki_url_template",
+        help="Enable lookup on wiki using URL template (use {name} placeholder for character name)."
     )
     args = parser.parse_args()
 
@@ -281,7 +350,7 @@ def main() -> None:
             print(f"Loaded {len(chapter_texts)} chapter files for context")
 
     # Build context
-    context = build_character_context(characters, chapter_texts)
+    context = build_character_context(characters, chapter_texts, args.wiki_url_template)
 
     # Describe characters
     if args.single_character:

@@ -45,33 +45,25 @@ def load_characters(characters_file: str) -> list:
 def compare_characters(character_name: str, other_character: str) -> bool:
     """Check if two characters are likely the same based on name similarity.
 
-    Requires either exact match OR one name is a strict prefix of the other
-    AND the names share a meaningful connection (not just substring match).
+    Only matches when one name contains the other as a complete word/token
+    (separated by spaces on both sides), or exact match.
     """
     if character_name == other_character:
         return True
 
-    # Check for prefix matches only
-    # This catches cases like "John" and "John Smith" but avoids "ara" matching "aram"
     lower1, lower2 = character_name.lower(), other_character.lower()
 
-    # If one is significantly shorter (less than 70% length of other), don't auto-match
-    # This prevents "ara" from matching longer names
-    min_len, max_len = len(lower1), len(lower2)
-    if min_len < max_len * 0.8:
-        return False
+    # Check if one contains the other as a complete word (space-separated)
+    # This catches "John Smith" containing "John" but not "Ara" containing "A"
+    if f" {lower1} " in f" {lower2} " or f" {lower2} " in f" {lower1} ":
+        return True
 
-    # Check if shorter name is a prefix of longer name
-    if min_len == max_len:
-        return False  # Different lengths but neither is prefix
-    if min_len == max_len - 1:
-        # Check single character difference (e.g., "John" vs "John" + suffix)
-        if lower1 == lower2[:-1] or lower1 == lower2[1:]:
-            return True
-    elif min_len == max_len - 2:
-        # Check two character difference (e.g., "John" vs "Johnson")
-        if lower1 == lower2[:-2] or lower1 == lower2[2:]:
-            return True
+    # Also check prefix/suffix with space boundaries
+    # e.g., "John" matches "John Smith" but not "Johnson"
+    if lower2.startswith(lower1 + " ") or lower1.startswith(lower2 + " "):
+        return True
+    if lower2.endswith(" " + lower1) or lower1.endswith(" " + lower2):
+        return True
 
     return False
 

@@ -21,6 +21,22 @@ import tempfile
 from pathlib import Path
 
 
+def progress_iterator(items, progress: gr.Progress = None, desc="Processing"):
+    """Generator that yields items and updates progress bar if available."""
+    if progress is None:
+        for item in items:
+            yield item
+        return
+
+    total = len(items) if hasattr(items, '__len__') else None
+    for i, item in enumerate(items):
+        if total:
+            progress(i, total, desc=f"{desc} ({i+1}/{total})")
+        else:
+            progress(i, desc=f"{desc} ({i+1})")
+        yield item
+
+
 # Get the directory where this script is located
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -46,7 +62,7 @@ def get_chapters_dir():
 # Stage 1: EPUB Parsing
 # ============================================================================
 
-def parse_epub_to_file(epub_file):
+def parse_epub_to_file(epub_file, progress=gr.Progress()):
     """Stage 1: Parse EPUB file into chapter text files."""
     if epub_file is None:
         return "Error: No EPUB file uploaded.", 0, []
@@ -69,9 +85,13 @@ def parse_epub_to_file(epub_file):
         if not chapters:
             return "Error: No chapters found in EPUB file.", 0, []
 
+        progress(0, 1, desc="Parsing EPUB...")
+
         # Save each chapter as a text file
         chapter_files = []
+        total_chapters = len(chapters)
         for i, chapter in enumerate(chapters):
+            progress(i, total_chapters, desc=f"Saving chapter {i+1}/{total_chapters}")
             output_file = chapters_dir / f"chapter_{i}.txt"
             with open(output_file, "w", encoding="utf-8") as f:
                 for cobj in chapter:
@@ -94,7 +114,7 @@ def parse_epub_to_file(epub_file):
 # Stage 2: LLM Speaker Labeling
 # ============================================================================
 
-def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, chapter_range, log_output):
+def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, chapter_range, log_output, progress=gr.Progress()):
     """Stage 2: Run LLM to label speakers in selected chapters."""
     # Get list of chapter files
     chapters_dir = get_chapters_dir()
@@ -129,9 +149,12 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
         log_output += "\nNo chapters selected for processing."
         return log_output
 
-    log_output += f"\nProcessing {len(selected_chapters)} chapters with LLM..."
+    num_chapters = len(selected_chapters)
+    log_output += f"\nProcessing {num_chapters} chapters with LLM..."
 
-    for chapter_file in selected_chapters:
+    for i, chapter_file in enumerate(selected_chapters):
+        chapter_num = i + 1
+        progress(chapter_num, num_chapters + 2, desc=f"Chapter {chapter_num}/{num_chapters}")
         log_output += f"\nProcessing: {chapter_file}"
 
         # Build command to call llm_label_speakers.py
@@ -160,6 +183,7 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
         except Exception as e:
             log_output += f"\nError processing {chapter_file}: {str(e)}"
 
+    progress(num_chapters + 1, num_chapters + 2, desc="Stage 2 Complete")
     log_output += "\n\nStage 2 complete!"
     return log_output
 
@@ -168,7 +192,7 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
 # Stage 3: Chapter Analysis
 # ============================================================================
 
-def analyze_chapters(log_output):
+def analyze_chapters(log_output, progress=gr.Progress()):
     """Stage 3: Analyze chapter map files and generate statistics."""
     log_output += "\n\nRunning chapter analysis..."
 
@@ -180,14 +204,24 @@ def analyze_chapters(log_output):
             log_output += "\nNo .map.json files found. Please run Stage 2 first."
             return log_output
 
+        # Count map files for progress
+        num_map_files = len(map_files)
+        progress(0, num_map_files + 2, desc="Analyzing chapters...")
+
         # Run analyze_chapters.py
         cmd = [sys.executable, str(SCRIPT_DIR / "analyze_chapters.py"), str(chapters_dir), "--json-output", "--verbose"]
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
+        process = subprocess.Popen(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR), universal_newlines=True)
 
-        log_output += result.stdout
-        if result.stderr:
-            log_output += f"\nErrors: {result.stderr}"
+        # Read output line by line for progress feedback
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                log_output += f"\n{line.strip()}"
+                progress(len(log_output.split('\n')) % (num_map_files + 1), num_map_files + 2, desc="Analyzing...")
 
+        process.stdout.close()
+        process.wait()
+
+        progress(num_map_files + 1, num_map_files + 2, desc="Stage 3 Complete")
         log_output += "\n\nStage 3 complete!"
         return log_output
 
@@ -200,33 +234,66 @@ def analyze_chapters(log_output):
 # Stage 4: Character Descriptions
 # ============================================================================
 
-def describe_characters(api_key, port, log_output):
+def describe_characters(api_key, port, log_output, progress=gr.Progress()):
     """Stage 4: Use LLM to describe characters."""
     log_output += "\n\nGenerating character descriptions..."
 
     try:
         # Check if characters.json exists
         chapters_dir = get_chapters_dir()
-        if not os.path.exists(str(chapters_dir / "characters.json")):
+        characters_file = chapters_dir / "characters.json"
+        if not os.path.exists(str(characters_file)):
             log_output += "\ncharacters.json not found. Please run Stage 3 first."
             return log_output
 
-        # Run llm_describe_character.py
+        # Load characters to get count for progress
+        with open(characters_file, "r", encoding="utf-8") as f:
+            characters_data = json.load(f)
+        num_characters = len(characters_data.get("characters", []))
+
+        progress(0, num_characters + 2, desc="Starting character descriptions...")
+
+        # Run llm_describe_character.py with progress tracking
         cmd = [
             sys.executable,
             str(SCRIPT_DIR / "llm_describe_character.py"),
-            str(chapters_dir / "characters.json"),
+            str(characters_file),
             str(chapters_dir),
             "--api_key", api_key,
             "--port", port,
             "--verbose"
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
-        log_output += result.stdout
-        if result.stderr:
-            log_output += f"\nErrors: {result.stderr}"
+        # Use subprocess with progress tracking
+        process = subprocess.Popen(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=str(SCRIPT_DIR),
+            universal_newlines=True
+        )
 
+        # Read output line by line to track progress
+        processed_chars = 0
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                log_output += f"\n{line.strip()}"
+                # Update progress based on output
+                if "Loading" in line or "Loaded" in line:
+                    progress(processed_chars, num_characters + 2, desc="Loading...")
+                elif "Describing" in line or "Character" in line:
+                    processed_chars += 1
+                    progress(processed_chars, num_characters + 2, desc=f"Character {processed_chars}/{num_characters}")
+
+        process.stdout.close()
+        process.wait()
+
+        if process.returncode != 0:
+            if process.stderr:
+                log_output += f"\nErrors: {process.stderr.read()}"
+            log_output += "\nWarning: Process exited with non-zero code."
+
+        progress(num_characters + 1, num_characters + 2, desc="Stage 4 Complete")
         log_output += "\n\nStage 4 complete!"
         return log_output
 
@@ -239,30 +306,59 @@ def describe_characters(api_key, port, log_output):
 # Stage 5: Voice Sample Generation
 # ============================================================================
 
-def generate_voice_samples(log_output):
+def generate_voice_samples(log_output, progress=gr.Progress()):
     """Stage 5: Generate voice samples for each character."""
     log_output += "\n\nGenerating voice samples..."
 
     try:
         # Check if characters_descriptions.json exists
         chapters_dir = get_chapters_dir()
-        if not os.path.exists(str(SCRIPT_DIR / "characters_descriptions.json")):
+        descriptions_file = SCRIPT_DIR / "characters_descriptions.json"
+        if not os.path.exists(str(descriptions_file)):
             log_output += "\ncharacters_descriptions.json not found. Please run Stage 4 first."
             return log_output
 
-        # Run generate_voice_samples.py
+        # Load descriptions to get count for progress
+        with open(descriptions_file, "r", encoding="utf-8") as f:
+            descriptions = json.load(f)
+
+        num_characters = len(descriptions)
+        log_output += f"\nFound {num_characters} characters to process."
+
+        # Run generate_voice_samples.py with progress tracking
         cmd = [
             sys.executable,
             str(SCRIPT_DIR / "generate_voice_samples.py"),
-            "--descriptions", str(SCRIPT_DIR / "characters_descriptions.json"),
+            "--descriptions", str(descriptions_file),
             "--output-dir", str(chapters_dir)
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
-        log_output += result.stdout
-        if result.stderr:
-            log_output += f"\nErrors: {result.stderr}"
+        # Use a callback to track progress
+        process = subprocess.Popen(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=str(SCRIPT_DIR),
+            universal_newlines=True
+        )
 
+        # Read output line by line to track progress
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                log_output += f"\n{line.strip()}"
+                # Update progress based on output pattern
+                progress_text = f"Generating voice samples..."
+                progress(len(log_output.split('\n')) % (num_characters + 1), num_characters + 1, desc=progress_text)
+
+        process.stdout.close()
+        process.wait()
+
+        if process.returncode != 0:
+            if process.stderr:
+                log_output += f"\nErrors: {process.stderr.read()}"
+            log_output += "\nWarning: Process exited with non-zero code."
+
+        progress(num_characters, num_characters + 1, desc="Stage 5 Complete")
         log_output += "\n\nStage 5 complete!"
         return log_output
 
@@ -275,7 +371,7 @@ def generate_voice_samples(log_output):
 # Stage 6: Full Audiobook Generation
 # ============================================================================
 
-def generate_full_audiobook(log_output):
+def generate_full_audiobook(log_output, progress=gr.Progress()):
     """Stage 6: Generate full audiobook with all chapters."""
     log_output += "\n\nGenerating full audiobook..."
 
@@ -298,14 +394,43 @@ def generate_full_audiobook(log_output):
             log_output += "\nUploaded EPUB file not found. Please run Stage 1 first."
             return log_output
 
+        # Count chapters for progress tracking
+        chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
+        num_chapters = len(chapter_files)
+        log_output += f"\nGenerating audiobook for {num_chapters} chapters..."
+
         # Run parse_epub.py with the temp EPUB file and --resume
         cmd = [sys.executable, str(SCRIPT_DIR / "parse_epub.py"), epub_path, "--resume"]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(chapters_dir))
-        log_output += result.stdout
-        if result.stderr:
-            log_output += f"\nErrors: {result.stderr}"
+        # Use subprocess with progress tracking
+        process = subprocess.Popen(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=str(chapters_dir),
+            universal_newlines=True
+        )
 
+        # Track progress based on chapter completion
+        completed_chapters = 0
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                log_output += f"\n{line.strip()}"
+                # Check for chapter completion patterns
+                if "Skipping" in line or "Resuming" in line:
+                    completed_chapters += 1
+                # Update progress based on output
+                progress(completed_chapters, num_chapters, desc=f"Chapter {completed_chapters}/{num_chapters}")
+
+        process.stdout.close()
+        process.wait()
+
+        if process.returncode != 0:
+            if process.stderr:
+                log_output += f"\nErrors: {process.stderr.read()}"
+            log_output += "\nWarning: Process exited with non-zero code."
+
+        progress(num_chapters, num_chapters, desc="Stage 6 Complete")
         log_output += "\n\nStage 6 complete!"
         return log_output
 

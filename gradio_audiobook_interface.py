@@ -222,10 +222,15 @@ def analyze_chapters(log_output, progress=gr.Progress()):
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(SCRIPT_DIR))
 
         # Read output line by line for progress feedback
+        # Count lines with chapter progress markers
+        lines_with_chapter = 0
         for line in iter(process.stdout.readline, ''):
             if line:
                 log_output += f"\n{line.strip()}"
-                progress(len(log_output.split('\n')) / (num_map_files + 2), desc="Analyzing...")
+                # Count lines that contain chapter info
+                if "Chapter" in line or "Loaded" in line or "Analyzing" in line:
+                    lines_with_chapter += 1
+                    progress(min(lines_with_chapter / (num_map_files + 1), 1.0), desc="Analyzing...")
 
         process.stdout.close()
         process.wait()
@@ -352,11 +357,17 @@ def generate_voice_samples(log_output, progress=gr.Progress()):
         )
 
         # Read output line by line to track progress
+        processed_chars = 0
         for line in iter(process.stdout.readline, ''):
             if line:
                 log_output += f"\n{line.strip()}"
-                # Update progress based on output
-                progress((len(log_output.split('\n')) - 2) / (num_characters + 2), desc="Generating voice samples...")
+                # Parse progress from output format: [1/10] character_name
+                import re
+                match = re.search(r'\[(\d+)/(\d+)\]', line)
+                if match:
+                    processed_chars = int(match.group(1))
+                    total_chars = int(match.group(2))
+                    progress(processed_chars / total_chars, desc=f"Character {processed_chars}/{total_chars}")
 
         process.stdout.close()
         process.wait()
@@ -413,10 +424,10 @@ def generate_full_audiobook(log_output, progress=gr.Progress()):
         # Use subprocess with progress tracking
         process = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            cwd=str(chapters_dir),
-            universal_newlines=True
+            cwd=str(chapters_dir)
         )
 
         # Track progress based on chapter completion

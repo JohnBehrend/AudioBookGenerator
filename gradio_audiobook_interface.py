@@ -162,8 +162,9 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
     log_output += f"\nProcessing {num_chapters} chapters with LLM..."
 
     for i, chapter_file in enumerate(selected_chapters):
-        chapter_num = i + 1
-        progress((chapter_num) / (num_chapters + 2), desc=f"Chapter {chapter_num}/{num_chapters}")
+        # Update progress before processing each chapter
+        # i represents the number of completed chapters (0-indexed)
+        progress(i / num_chapters, desc=f"Chapter {i}/{num_chapters}")
         log_output += f"\nProcessing: {chapter_file}"
 
         # Build command to call llm_label_speakers.py
@@ -179,7 +180,8 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
         try:
             result = subprocess.run(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 timeout=300,  # 5 minute timeout per chapter
                 cwd=str(SCRIPT_DIR)
@@ -192,7 +194,8 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
         except Exception as e:
             log_output += f"\nError processing {chapter_file}: {str(e)}"
 
-    progress((num_chapters + 1) / (num_chapters + 2), desc="Stage 2 Complete")
+    # Final progress: all chapters completed
+    progress(1, desc="Chapter 100%")
     log_output += "\n\nStage 2 complete!"
     return log_output
 
@@ -265,7 +268,7 @@ def describe_characters(api_key, port, log_output, progress=gr.Progress()):
             characters_data = json.load(f)
         num_characters = len(characters_data.get("characters", []))
 
-        progress(0, desc="Starting character descriptions...")
+        progress(0, desc=f"Character 0/{num_characters}")
 
         # Run llm_describe_character.py with progress tracking
         cmd = [
@@ -294,10 +297,10 @@ def describe_characters(api_key, port, log_output, progress=gr.Progress()):
                 log_output += f"\n{line.strip()}"
                 # Update progress based on output
                 if "Loading" in line or "Loaded" in line:
-                    progress(processed_chars / (num_characters + 2), desc="Loading...")
+                    progress(processed_chars / num_characters, desc="Loading...")
                 elif "Describing" in line or "Character" in line:
+                    progress(processed_chars / num_characters, desc=f"Character {processed_chars}/{num_characters}")
                     processed_chars += 1
-                    progress(processed_chars / (num_characters + 2), desc=f"Character {processed_chars}/{num_characters}")
 
         process.stdout.close()
         process.wait()

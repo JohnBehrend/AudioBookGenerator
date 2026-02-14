@@ -20,6 +20,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
 
 def progress_iterator(items, progress: gr.Progress = None, desc="Processing"):
     """Generator that yields items and updates progress bar if available."""
@@ -130,8 +135,11 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
         selected_chapters = chapter_files
     else:
         # Handle both list (range) and single int values
-        if isinstance(chapter_range, (list, tuple)) and len(chapter_range) >= 2:
-            start_chapter, end_chapter = chapter_range[0], chapter_range[1]
+        # Also handle numpy arrays that Gradio might return
+        if np is not None and isinstance(chapter_range, np.ndarray) and len(chapter_range) >= 2:
+            start_chapter, end_chapter = int(chapter_range[0]), int(chapter_range[1])
+        elif isinstance(chapter_range, (list, tuple)) and len(chapter_range) >= 2:
+            start_chapter, end_chapter = int(chapter_range[0]), int(chapter_range[1])
         elif chapter_range is not None:
             # Fallback: use single value as both start and end
             start_chapter = int(chapter_range)
@@ -211,7 +219,7 @@ def analyze_chapters(log_output, progress=gr.Progress()):
 
         # Run analyze_chapters.py
         cmd = [sys.executable, str(SCRIPT_DIR / "analyze_chapters.py"), str(chapters_dir), "--json-output", "--verbose"]
-        process = subprocess.Popen(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR), universal_newlines=True)
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(SCRIPT_DIR))
 
         # Read output line by line for progress feedback
         for line in iter(process.stdout.readline, ''):
@@ -268,10 +276,10 @@ def describe_characters(api_key, port, log_output, progress=gr.Progress()):
         # Use subprocess with progress tracking
         process = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            cwd=str(SCRIPT_DIR),
-            universal_newlines=True
+            cwd=str(SCRIPT_DIR)
         )
 
         # Read output line by line to track progress
@@ -337,10 +345,10 @@ def generate_voice_samples(log_output, progress=gr.Progress()):
         # Use subprocess with progress tracking
         process = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            cwd=str(SCRIPT_DIR),
-            universal_newlines=True
+            cwd=str(SCRIPT_DIR)
         )
 
         # Read output line by line to track progress

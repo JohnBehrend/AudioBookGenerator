@@ -77,3 +77,11 @@ python generate_voice_samples.py [--descriptions] [--output-dir]
 - GPU selection: `--alt_gpu` uses cuda:1, default is cuda:0
 - Generated audio files are in `chapters/` (gitignored)
 - Linux line endings (LF) are used throughout the repository
+
+## Before Making Changes
+
+**Always verify syntax first:** Run `python -m py_compile <file.py>` before assuming there are syntax errors. Python's syntax checker is reliable - if it compiles, the syntax is correct.
+
+**Check git diff after fixes:** If you make changes to fix reported errors, verify with `git diff` that actual code was changed. If no diff appears, the reported error may not exist.
+
+**Prefer running tests:** Run the test suite (`python -m pytest tests/`) to identify real issues before assuming syntax errors.

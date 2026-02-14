@@ -80,7 +80,13 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
     if use_all_chapters:
         selected_chapters = chapter_files
     else:
-        start_chapter, end_chapter = chapter_range
+        # Handle both list (range) and single int values
+        if isinstance(chapter_range, (list, tuple)) and len(chapter_range) >= 2:
+            start_chapter, end_chapter = chapter_range
+        else:
+            # Fallback: use single value as both start and end
+            start_chapter = int(chapter_range) if chapter_range else 0
+            end_chapter = start_chapter
         selected_chapters = [
             f"./chapters/chapter_{i}.txt"
             for i in range(start_chapter, end_chapter + 1)

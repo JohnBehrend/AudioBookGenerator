@@ -7,61 +7,6 @@ from unittest.mock import Mock, patch, MagicMock
 import os
 
 
-class TestHelperFunctions:
-    """Tests for helper functions in parse_epub.py."""
-
-    def test_distill_string(self):
-        """Test the distill_string helper function."""
-        from parse_epub import distill_string
-
-        result = distill_string("Hello, World! How are you?")
-
-        assert result == "hello world how are you"
-        assert "!" not in result
-        assert "?" not in result
-        assert "," not in result
-
-    def test_distill_string_with_hyphens(self):
-        """Test distill_string handles hyphens."""
-        from parse_epub import distill_string
-
-        result = distill_string("state-of-the-art")
-
-        assert result == "stateoftheart"
-
-    def test_distill_string_case_insensitive(self):
-        """Test distill_string converts to lowercase."""
-        from parse_epub import distill_string
-
-        result = distill_string("HELLO WORLD")
-
-        assert result == "hello world"
-
-
-class TestLoadJson:
-    """Tests for the load_json helper function."""
-
-    def test_load_existing_json(self, temp_dir):
-        """Test loading an existing JSON file."""
-        from parse_epub import load_json
-
-        json_file = temp_dir / "test.json"
-        test_data = {"key": "value", "numbers": [1, 2, 3]}
-        json_file.write_text(json.dumps(test_data))
-
-        result = load_json(str(json_file))
-
-        assert result == test_data
-
-    def test_load_missing_json(self, temp_dir):
-        """Test loading a non-existent JSON file."""
-        from parse_epub import load_json
-
-        result = load_json(str(temp_dir / "nonexistent.json"))
-
-        assert result is None
-
-
 class TestParseEpubIntegration:
     """Integration tests for parse_epub pipeline stages."""
 

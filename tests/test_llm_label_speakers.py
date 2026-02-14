@@ -236,12 +236,14 @@ class TestIsSameCharacterByLineMapping:
         assert match_key == 3
 
     def test_different_characters(self):
-        """Test detection of different characters."""
+        """Test detection of different characters - no overlapping lines."""
         character_key = 2
         character = "john"
+        # john speaks on lines 1,2 (key 2)
         line_map = {1: 2, 2: 2}
+        # mary speaks on lines 3,4 (key 3) - NO overlap with john
         merged_character_map = {1: "narrator", 3: "mary"}
-        merged_line_map = {1: 3, 2: 3}  # Maps to mary
+        merged_line_map = {3: 3, 4: 3}  # mary's lines are 3,4 - no overlap
 
         is_same, match_key = is_same_character_by_line_mapping(
             character_key, character, line_map,

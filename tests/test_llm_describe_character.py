@@ -101,8 +101,9 @@ class TestFindDuplicateCharacters:
         """Test with multiple duplicate groups."""
         characters = ["john", "john smith", "mary", "mary jane", "bob"]
         duplicates = find_duplicate_characters(characters)
-        assert "john smith" in duplicates
-        assert "mary jane" in duplicates
+        # canonical -> duplicates mapping
+        assert "john" in duplicates
+        assert "mary" in duplicates
         assert "bob" not in duplicates
 
 

@@ -195,14 +195,15 @@ class TestFindChapterFiles:
         """Test filtering files by chapter number."""
         from list_chapters import find_chapter_files
 
-        (temp_dir / "chapter_0.map.json").write_text("{}")
-        (temp_dir / "chapter_1.map.json").write_text("{}")
-        (temp_dir / "chapter_2.map.json").write_text("{}")
+        # Note: the function uses :02d format, so chapter 1 becomes "01"
+        (temp_dir / "chapter_00.map.json").write_text("{}")
+        (temp_dir / "chapter_01.map.json").write_text("{}")
+        (temp_dir / "chapter_02.map.json").write_text("{}")
 
         files = find_chapter_files(str(temp_dir), chapter_filter=1, verbose=False)
 
         assert len(files) == 1
-        assert "chapter_1" in str(files[0])
+        assert "chapter_01" in str(files[0])
 
 
 @pytest.fixture

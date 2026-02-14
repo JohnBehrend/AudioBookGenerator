@@ -31,7 +31,7 @@ def progress_iterator(items, progress: gr.Progress = None, desc="Processing"):
     total = len(items) if hasattr(items, '__len__') else None
     for i, item in enumerate(items):
         if total:
-            progress(i, total, desc=f"{desc} ({i+1}/{total})")
+            progress((i + 1) / total, desc=f"{desc} ({i+1}/{total})")
         else:
             progress(i, desc=f"{desc} ({i+1})")
         yield item
@@ -85,13 +85,14 @@ def parse_epub_to_file(epub_file, progress=gr.Progress()):
         if not chapters:
             return "Error: No chapters found in EPUB file.", 0, []
 
-        progress(0, 1, desc="Parsing EPUB...")
+        # Gradio 6.x: progress(progress_float, desc="...")
+        progress(0, desc="Parsing EPUB...")
 
         # Save each chapter as a text file
         chapter_files = []
         total_chapters = len(chapters)
         for i, chapter in enumerate(chapters):
-            progress(i, total_chapters, desc=f"Saving chapter {i+1}/{total_chapters}")
+            progress((i + 1) / total_chapters, desc=f"Saving chapter {i+1}/{total_chapters}")
             output_file = chapters_dir / f"chapter_{i}.txt"
             with open(output_file, "w", encoding="utf-8") as f:
                 for cobj in chapter:
@@ -154,7 +155,7 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
 
     for i, chapter_file in enumerate(selected_chapters):
         chapter_num = i + 1
-        progress(chapter_num, num_chapters + 2, desc=f"Chapter {chapter_num}/{num_chapters}")
+        progress((chapter_num) / (num_chapters + 2), desc=f"Chapter {chapter_num}/{num_chapters}")
         log_output += f"\nProcessing: {chapter_file}"
 
         # Build command to call llm_label_speakers.py
@@ -183,7 +184,7 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
         except Exception as e:
             log_output += f"\nError processing {chapter_file}: {str(e)}"
 
-    progress(num_chapters + 1, num_chapters + 2, desc="Stage 2 Complete")
+    progress((num_chapters + 1) / (num_chapters + 2), desc="Stage 2 Complete")
     log_output += "\n\nStage 2 complete!"
     return log_output
 
@@ -206,7 +207,7 @@ def analyze_chapters(log_output, progress=gr.Progress()):
 
         # Count map files for progress
         num_map_files = len(map_files)
-        progress(0, num_map_files + 2, desc="Analyzing chapters...")
+        progress(0, desc="Analyzing chapters...")
 
         # Run analyze_chapters.py
         cmd = [sys.executable, str(SCRIPT_DIR / "analyze_chapters.py"), str(chapters_dir), "--json-output", "--verbose"]
@@ -216,12 +217,12 @@ def analyze_chapters(log_output, progress=gr.Progress()):
         for line in iter(process.stdout.readline, ''):
             if line:
                 log_output += f"\n{line.strip()}"
-                progress(len(log_output.split('\n')) % (num_map_files + 1), num_map_files + 2, desc="Analyzing...")
+                progress(len(log_output.split('\n')) / (num_map_files + 2), desc="Analyzing...")
 
         process.stdout.close()
         process.wait()
 
-        progress(num_map_files + 1, num_map_files + 2, desc="Stage 3 Complete")
+        progress(1, desc="Stage 3 Complete")
         log_output += "\n\nStage 3 complete!"
         return log_output
 
@@ -251,7 +252,7 @@ def describe_characters(api_key, port, log_output, progress=gr.Progress()):
             characters_data = json.load(f)
         num_characters = len(characters_data.get("characters", []))
 
-        progress(0, num_characters + 2, desc="Starting character descriptions...")
+        progress(0, desc="Starting character descriptions...")
 
         # Run llm_describe_character.py with progress tracking
         cmd = [
@@ -280,10 +281,10 @@ def describe_characters(api_key, port, log_output, progress=gr.Progress()):
                 log_output += f"\n{line.strip()}"
                 # Update progress based on output
                 if "Loading" in line or "Loaded" in line:
-                    progress(processed_chars, num_characters + 2, desc="Loading...")
+                    progress(processed_chars / (num_characters + 2), desc="Loading...")
                 elif "Describing" in line or "Character" in line:
                     processed_chars += 1
-                    progress(processed_chars, num_characters + 2, desc=f"Character {processed_chars}/{num_characters}")
+                    progress(processed_chars / (num_characters + 2), desc=f"Character {processed_chars}/{num_characters}")
 
         process.stdout.close()
         process.wait()
@@ -293,7 +294,7 @@ def describe_characters(api_key, port, log_output, progress=gr.Progress()):
                 log_output += f"\nErrors: {process.stderr.read()}"
             log_output += "\nWarning: Process exited with non-zero code."
 
-        progress(num_characters + 1, num_characters + 2, desc="Stage 4 Complete")
+        progress(1, desc="Stage 4 Complete")
         log_output += "\n\nStage 4 complete!"
         return log_output
 
@@ -333,7 +334,7 @@ def generate_voice_samples(log_output, progress=gr.Progress()):
             "--output-dir", str(chapters_dir)
         ]
 
-        # Use a callback to track progress
+        # Use subprocess with progress tracking
         process = subprocess.Popen(
             cmd,
             capture_output=True,
@@ -346,9 +347,8 @@ def generate_voice_samples(log_output, progress=gr.Progress()):
         for line in iter(process.stdout.readline, ''):
             if line:
                 log_output += f"\n{line.strip()}"
-                # Update progress based on output pattern
-                progress_text = f"Generating voice samples..."
-                progress(len(log_output.split('\n')) % (num_characters + 1), num_characters + 1, desc=progress_text)
+                # Update progress based on output
+                progress((len(log_output.split('\n')) - 2) / (num_characters + 2), desc="Generating voice samples...")
 
         process.stdout.close()
         process.wait()
@@ -358,7 +358,7 @@ def generate_voice_samples(log_output, progress=gr.Progress()):
                 log_output += f"\nErrors: {process.stderr.read()}"
             log_output += "\nWarning: Process exited with non-zero code."
 
-        progress(num_characters, num_characters + 1, desc="Stage 5 Complete")
+        progress(1, desc="Stage 5 Complete")
         log_output += "\n\nStage 5 complete!"
         return log_output
 
@@ -420,7 +420,7 @@ def generate_full_audiobook(log_output, progress=gr.Progress()):
                 if "Skipping" in line or "Resuming" in line:
                     completed_chapters += 1
                 # Update progress based on output
-                progress(completed_chapters, num_chapters, desc=f"Chapter {completed_chapters}/{num_chapters}")
+                progress(completed_chapters / num_chapters, desc=f"Chapter {completed_chapters}/{num_chapters}")
 
         process.stdout.close()
         process.wait()
@@ -430,7 +430,7 @@ def generate_full_audiobook(log_output, progress=gr.Progress()):
                 log_output += f"\nErrors: {process.stderr.read()}"
             log_output += "\nWarning: Process exited with non-zero code."
 
-        progress(num_chapters, num_chapters, desc="Stage 6 Complete")
+        progress(1, desc="Stage 6 Complete")
         log_output += "\n\nStage 6 complete!"
         return log_output
 

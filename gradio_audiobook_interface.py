@@ -146,7 +146,7 @@ def analyze_chapters(log_output):
 
     try:
         # Check if map files exist
-        map_files = glob.glob("./chapters/*.map.json")
+        map_files = glob.glob(str(SCRIPT_DIR / "chapters" / "*.map.json"))
         if not map_files:
             log_output += "\nNo .map.json files found. Please run Stage 2 first."
             return log_output
@@ -177,7 +177,7 @@ def describe_characters(api_key, port, log_output):
 
     try:
         # Check if characters.json exists
-        if not os.path.exists("./chapters/characters.json"):
+        if not os.path.exists(str(SCRIPT_DIR / "chapters" / "characters.json")):
             log_output += "\ncharacters.json not found. Please run Stage 3 first."
             return log_output
 
@@ -215,7 +215,7 @@ def generate_voice_samples(log_output):
 
     try:
         # Check if characters_descriptions.json exists
-        if not os.path.exists("characters_descriptions.json"):
+        if not os.path.exists(str(SCRIPT_DIR / "characters_descriptions.json")):
             log_output += "\ncharacters_descriptions.json not found. Please run Stage 4 first."
             return log_output
 
@@ -223,8 +223,8 @@ def generate_voice_samples(log_output):
         cmd = [
             sys.executable,
             str(SCRIPT_DIR / "generate_voice_samples.py"),
-            "--descriptions", "characters_descriptions.json",
-            "--output-dir", "./chapters"
+            "--descriptions", str(SCRIPT_DIR / "characters_descriptions.json"),
+            "--output-dir", str(SCRIPT_DIR / "chapters")
         ]
 
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
@@ -250,7 +250,7 @@ def generate_full_audiobook(log_output):
 
     try:
         # Check if chapter map files exist
-        map_files = glob.glob("./chapters/*.map.json")
+        map_files = glob.glob(str(SCRIPT_DIR / "chapters" / "*.map.json"))
         if not map_files:
             log_output += "\nNo .map.json files found. Please run Stage 2 first."
             return log_output

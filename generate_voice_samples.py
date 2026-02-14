@@ -175,6 +175,22 @@ def main():
         for char_name, path, duration in generated:
             print(f"  {char_name}: {path} ({duration:.2f}s)")
 
+        # Generate voices_map.json for use in audiobook generation
+        voices_map = {}
+        # Add narrator as default (will be used for non-character speech)
+        voices_map["narrator"] = "narrator.wav"
+        # Map character names to their voice samples
+        for char_name, path, duration in generated:
+            # Extract just the filename from the path
+            voice_file = os.path.basename(path)
+            voices_map[char_name] = voice_file
+
+        voices_map_path = os.path.join(output_dir, "voices_map.json")
+        with open(voices_map_path, "w", encoding="utf-8") as f:
+            json.dump(voices_map, f, indent=2)
+        print(f"\nGenerated voices_map.json: {voices_map_path}")
+        print("  (This file maps characters to their voice samples for audiobook generation)")
+
 
 if __name__ == "__main__":
     main()

@@ -255,6 +255,10 @@ def parse_epub():
     voices_map = None
     if args.voices_map is not None:
         voices_map = load_json(args.voices_map)
+    else:
+        # Try to load voices_map.json from output directory (auto-generated from voice samples)
+        voices_map_path = os.path.join(output_dir, "voices_map.json")
+        voices_map = load_json(voices_map_path)
 
     if args.verbose:
         print("chapter_voice_map:", voices_map)
@@ -273,6 +277,9 @@ def parse_epub():
             character_map = {int(k): v for k, v in character_map.items()}
             line_map = {int(k): v for k, v in line_map.items()}
             line_to_character_map = {k: character_map[v] for k, v in line_map.items()}
+            if voices_map is None:
+                print(f"Error: voices_map is None. Please provide a voices map file using --voices_map.")
+                exit()
             if all(x in voices_map.keys() for x in line_to_character_map.values()):
                 line_to_voice_map = {k: voices_map[v] for k, v in line_to_character_map.items()}
             else:

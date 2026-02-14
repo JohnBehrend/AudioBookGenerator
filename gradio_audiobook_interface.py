@@ -17,11 +17,29 @@ import sys
 import json
 import glob
 import subprocess
+import tempfile
 from pathlib import Path
 
 
 # Get the directory where this script is located
 SCRIPT_DIR = Path(__file__).resolve().parent
+
+# Global temp directory for chapters - created per session
+TEMP_DIR = None
+CHAPTERS_DIR = None
+
+
+def get_chapters_dir():
+    """Get or create a temporary chapters directory for this session."""
+    global TEMP_DIR, CHAPTERS_DIR
+
+    if CHAPTERS_DIR is None:
+        # Create a temporary directory with a unique name
+        TEMP_DIR = tempfile.mkdtemp(prefix="jbab_chapters_")
+        CHAPTERS_DIR = Path(TEMP_DIR) / "chapters"
+        CHAPTERS_DIR.mkdir(parents=True, exist_ok=True)
+
+    return CHAPTERS_DIR
 
 
 # ============================================================================
@@ -37,8 +55,8 @@ def parse_epub_to_file(epub_file):
         # Import parse_chapter module
         from parse_chapter import parse_epub_to_chapters
 
-        # Create chapters directory
-        os.makedirs("./chapters", exist_ok=True)
+        # Get the temp chapters directory
+        chapters_dir = get_chapters_dir()
 
         # Parse the EPUB
         chapters = parse_epub_to_chapters(epub_file.name)
@@ -49,7 +67,7 @@ def parse_epub_to_file(epub_file):
         # Save each chapter as a text file
         chapter_files = []
         for i, chapter in enumerate(chapters):
-            output_file = f"./chapters/chapter_{i}.txt"
+            output_file = chapters_dir / f"chapter_{i}.txt"
             with open(output_file, "w", encoding="utf-8") as f:
                 for cobj in chapter:
                     f.write(f"Line {cobj.line_num}: ")
@@ -59,7 +77,7 @@ def parse_epub_to_file(epub_file):
                     if cobj.has_quotes:
                         f.write('"')
                     f.write("\n")
-            chapter_files.append(output_file)
+            chapter_files.append(str(output_file))
 
         return f"Successfully parsed {len(chapters)} chapters.", len(chapters), chapter_files
 
@@ -74,7 +92,8 @@ def parse_epub_to_file(epub_file):
 def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, chapter_range, log_output):
     """Stage 2: Run LLM to label speakers in selected chapters."""
     # Get list of chapter files
-    chapter_files = sorted(glob.glob("./chapters/chapter_*.txt"))
+    chapters_dir = get_chapters_dir()
+    chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
 
     if not chapter_files:
         log_output += "\nNo chapter files found. Please run Stage 1 first."
@@ -92,9 +111,9 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
             start_chapter = int(chapter_range) if chapter_range else 0
             end_chapter = start_chapter
         selected_chapters = [
-            f"./chapters/chapter_{i}.txt"
+            str(chapters_dir / f"chapter_{i}.txt")
             for i in range(start_chapter, end_chapter + 1)
-            if os.path.exists(f"./chapters/chapter_{i}.txt")
+            if os.path.exists(str(chapters_dir / f"chapter_{i}.txt"))
         ]
 
     if not selected_chapters:
@@ -146,13 +165,14 @@ def analyze_chapters(log_output):
 
     try:
         # Check if map files exist
-        map_files = glob.glob(str(SCRIPT_DIR / "chapters" / "*.map.json"))
+        chapters_dir = get_chapters_dir()
+        map_files = glob.glob(str(chapters_dir / "*.map.json"))
         if not map_files:
             log_output += "\nNo .map.json files found. Please run Stage 2 first."
             return log_output
 
         # Run analyze_chapters.py
-        cmd = [sys.executable, str(SCRIPT_DIR / "analyze_chapters.py"), "./chapters", "--json-output", "--verbose"]
+        cmd = [sys.executable, str(SCRIPT_DIR / "analyze_chapters.py"), str(chapters_dir), "--json-output", "--verbose"]
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
 
         log_output += result.stdout
@@ -177,7 +197,8 @@ def describe_characters(api_key, port, log_output):
 
     try:
         # Check if characters.json exists
-        if not os.path.exists(str(SCRIPT_DIR / "chapters" / "characters.json")):
+        chapters_dir = get_chapters_dir()
+        if not os.path.exists(str(chapters_dir / "characters.json")):
             log_output += "\ncharacters.json not found. Please run Stage 3 first."
             return log_output
 
@@ -185,8 +206,8 @@ def describe_characters(api_key, port, log_output):
         cmd = [
             sys.executable,
             str(SCRIPT_DIR / "llm_describe_character.py"),
-            "./chapters/characters.json",
-            "./chapters",
+            str(chapters_dir / "characters.json"),
+            str(chapters_dir),
             "--api_key", api_key,
             "--port", port,
             "--verbose"
@@ -215,6 +236,7 @@ def generate_voice_samples(log_output):
 
     try:
         # Check if characters_descriptions.json exists
+        chapters_dir = get_chapters_dir()
         if not os.path.exists(str(SCRIPT_DIR / "characters_descriptions.json")):
             log_output += "\ncharacters_descriptions.json not found. Please run Stage 4 first."
             return log_output
@@ -224,7 +246,7 @@ def generate_voice_samples(log_output):
             sys.executable,
             str(SCRIPT_DIR / "generate_voice_samples.py"),
             "--descriptions", str(SCRIPT_DIR / "characters_descriptions.json"),
-            "--output-dir", str(SCRIPT_DIR / "chapters")
+            "--output-dir", str(chapters_dir)
         ]
 
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
@@ -250,13 +272,14 @@ def generate_full_audiobook(log_output):
 
     try:
         # Check if chapter map files exist
-        map_files = glob.glob(str(SCRIPT_DIR / "chapters" / "*.map.json"))
+        chapters_dir = get_chapters_dir()
+        map_files = glob.glob(str(chapters_dir / "*.map.json"))
         if not map_files:
             log_output += "\nNo .map.json files found. Please run Stage 2 first."
             return log_output
 
         # Check if characters_descriptions.json exists
-        if not os.path.exists("characters_descriptions.json"):
+        if not os.path.exists(str(SCRIPT_DIR / "characters_descriptions.json")):
             log_output += "\ncharacters_descriptions.json not found. Please run Stage 4 first."
             return log_output
 
@@ -416,13 +439,25 @@ def create_interface():
         # Update files list periodically
         gr.on(
             triggers=[parse_btn.click, label_btn.click, analyze_btn.click],
-            fn=lambda: "\n".join(glob.glob("./chapters/*")),
+            fn=lambda: "\n".join(glob.glob(str(get_chapters_dir() / "*"))),
             outputs=files_output
         )
 
     return demo
 
 
+def cleanup_temp_dir():
+    """Clean up the temporary directory when done."""
+    global TEMP_DIR
+    if TEMP_DIR and os.path.exists(TEMP_DIR):
+        import shutil
+        shutil.rmtree(TEMP_DIR)
+        TEMP_DIR = None
+
+
 if __name__ == "__main__":
     demo = create_interface()
-    demo.launch(share=False)
+    try:
+        demo.launch(share=False)
+    finally:
+        cleanup_temp_dir()

@@ -1,0 +1,20 @@
+# Force LF line endings for all text files
+* text eol=lf
+
+# Python files
+*.py text eol=lf
+
+# Markdown files
+*.md text eol=lf
+
+# JSON files
+*.json text eol=lf
+
+# Configuration files
+*.txt text eol=lf
+*.ini text eol=lf
+
+# Ignore binary files
+*.wav binary
+*.mp3 binary
+*.epub binary

@@ -333,6 +333,8 @@ def parse_epub():
                 print(f"Skipping chapter {str(i).zfill(2)}.", end="\r")
                 continue
 
+        print(f"[CHAPTER_START] Chapter {i}/{len(chapters)}", flush=True)
+
         voices_used = list(dict.fromkeys([chapter_obj.get_speaker() for chapter_obj in chapter]).keys())
 
         for voice in voices_used:
@@ -452,7 +454,7 @@ def parse_epub():
 
                     ratio, last_valid_token = score_strings_pop(input_string, detected_string, lookahead=5, postfix=distill_string(short_text_postfix))
 
-                    print(str(j).zfill(4), ", Attempt: ", retries + 1, "Ratio: ", int(ratio * 100), "Voice: ", voice)
+                    print(f"[LINE_PROGRESS] Chapter {i}, Line {j+1}/{len(chapter)}, Attempt {retries + 1}, Ratio: {int(ratio * 100)}, Voice: {voice}", flush=True)
 
                     if short_text_flag:
                         if (distill_string(short_text_postfix) in detected_string) and (postfix_detect_token in segments):
@@ -500,6 +502,8 @@ def parse_epub():
         audio = get_non_silent_audio_from_wavs(wavs)
         audio.export(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3"), format="mp3")
         [os.unlink(x) for x in wavs]
+
+        print(f"[CHAPTER_COMPLETE] Chapter {i}/{len(chapters)}", flush=True)
 
         if args.speaker_histogram:
             this_speaker = str(chapter_obj.get_speaker())

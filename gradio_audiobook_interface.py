@@ -63,6 +63,16 @@ def get_chapters_dir():
     return CHAPTERS_DIR
 
 
+def update_chapter_range_slider(chapter_count):
+    """Update the chapter range slider maximum and value based on actual chapter count."""
+    if chapter_count and chapter_count > 0:
+        new_max = max(0, chapter_count - 1)
+        # Update the value to stay within bounds (use default range [0, min(5, new_max)])
+        default_end = min(5, new_max)
+        return gr.update(maximum=new_max, value=[0, default_end])
+    return gr.update(maximum=10, value=[0, 5])
+
+
 # ============================================================================
 # Stage 1: EPUB Parsing
 # ============================================================================
@@ -393,7 +403,7 @@ def generate_voice_samples(log_output, progress=gr.Progress()):
 # Stage 6: Full Audiobook Generation
 # ============================================================================
 
-def generate_full_audiobook(log_output, progress=gr.Progress()):
+def generate_full_audiobook(log_output, max_chapters=None, progress=gr.Progress()):
     """Stage 6: Generate full audiobook with all chapters."""
     log_output += "\n\nGenerating full audiobook..."
 
@@ -416,14 +426,16 @@ def generate_full_audiobook(log_output, progress=gr.Progress()):
             log_output += "\nUploaded EPUB file not found. Please run Stage 1 first."
             return log_output
 
-        # Count chapters for progress tracking
+        # Count chapters for progress tracking and pass to parse_epub.py
         chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
         num_chapters = len(chapter_files)
         log_output += f"\nGenerating audiobook for {num_chapters} chapters..."
 
-        # Run parse_epub.py with the temp EPUB file and --resume
+        # Run parse_epub.py with the temp EPUB file, --resume, and --max-chapters
         # Use chapters_dir as output directory to avoid nested folders
         cmd = [sys.executable, str(SCRIPT_DIR / "parse_epub.py"), epub_path, "--resume", "--output-dir", str(chapters_dir)]
+        if max_chapters:
+            cmd.extend(["--max-chapters", str(max_chapters)])
 
         # Use subprocess with progress tracking (no cwd needed since we pass --output-dir)
         process = subprocess.Popen(
@@ -630,8 +642,9 @@ def create_interface():
         )
 
         # Update chapter range slider when chapters are created
+        # Use get_chapter_count to read the actual count from filesystem
         parse_btn.click(
-            fn=lambda count: gr.update(maximum=max(0, count - 1) if count else 10),
+            fn=update_chapter_range_slider,
             inputs=chapter_count_display,
             outputs=chapter_range_slider
         )
@@ -662,7 +675,7 @@ def create_interface():
 
         audiobook_btn.click(
             fn=generate_full_audiobook,
-            inputs=audiobook_output,
+            inputs=[audiobook_output, max_chapters_slider],
             outputs=audiobook_output
         )
 

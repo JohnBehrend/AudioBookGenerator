@@ -6,7 +6,7 @@ description = "JAB Audiobook Pipeline"
 # qwen-tts -> librosa -> numba -> llvmlite (which only supports Python <3.11)
 requires-python = ">=3.10,<3.11"
 dependencies = [
-    "torch>=2.8.0",
+    "torch",
     "torchaudio>=2.8.0",
     "torchvision>=0.20.0",
     "transformers>=4.48.0",
@@ -43,10 +43,36 @@ analyze-chapters = "analyze_chapters:main"
 llm-describe-character = "llm_describe_character:main"
 generate-voice-samples = "generate_voice_samples:main"
 
+[project.optional-dependencies]
+cu128 = [
+  "torch",
+  "torchvision",
+  "torchaudio",
+]
+
+[tool.setuptools.packages.find]
+include = ["gradio_audiobook_interface.py", "parse_epub.py", "llm_label_speakers.py", "analyze_chapters.py", "llm_describe_character.py", "generate_voice_samples.py", "analyze_chapters.py"]
+
 [tool.uv]
-# Test and lint dependencies
 dev-dependencies = [
     "pytest",
     "mypy",
     "black",
 ]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu128" },
+]
+torchvision = [
+  { index = "pytorch-cu128" },
+]
+torchaudio = [
+  { index = "pytorch-cu128" },
+]
+flash-attn = { path = "flash_attn-2.7.4+cu128torch2.7-cp311-cp311-win_amd64.whl" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

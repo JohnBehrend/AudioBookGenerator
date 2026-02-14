@@ -43,14 +43,33 @@ python generate_voice_samples.py [--descriptions] [--output-dir]
 
 ## Requirements
 
-- Python 3.8+
-- Gradio
-- Torch / PyTorch
-- HuggingFace Transformers
-- whisperx
-- vibevoice
-- pydub
-- scipy
+Install all dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+### Core Dependencies
+
+- **Python 3.8+**
+- **PyTorch** (with CUDA support optional: `torch`, `torchaudio`, `torchvision`)
+- **Transformers** and **tokenizers** (HuggingFace)
+- **Gradio** for the web interface
+- **WhisperX** / **faster-whisper** for STT validation
+- **OpenAI API** client for LLM operations
+
+### Audio Processing
+
+- **pydub** for audio manipulation (requires system ffmpeg)
+- **scipy** for signal processing
+- **pandas** for data handling
+
+### EPUB Processing
+
+- **ebooklib** for EPUB parsing
+- **beautifulsoup4** for HTML parsing
+
+## Configuration
 
 ## Configuration
 

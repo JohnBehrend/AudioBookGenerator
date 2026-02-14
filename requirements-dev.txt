@@ -1,5 +1,10 @@
+# Development dependencies
+# Install with: pip install -r requirements-dev.txt
+
+# Main dependencies
+-r requirements.txt
+
 # Testing dependencies
-# Install main dependencies first: pip install -r ../requirements.txt
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
 

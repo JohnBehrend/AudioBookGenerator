@@ -1,0 +1,52 @@
+[project]
+name = "jbab"
+version = "0.1.0"
+description = "JAB Audiobook Pipeline"
+# Note: requires-python must be <3.11 due to qwen-tts dependencies.
+# qwen-tts -> librosa -> numba -> llvmlite (which only supports Python <3.11)
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "torch>=2.8.0",
+    "torchaudio>=2.8.0",
+    "torchvision>=0.20.0",
+    "transformers>=4.48.0",
+    "tokenizers>=0.13",
+    "faster-whisper>=1.1.1",
+    "whisperx>=3.8.0",
+    "openai>=1.0.0",
+    "pydub",
+    "scipy>=1.11.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "gradio>=4.0.0",
+    "ebooklib>=0.18.0",
+    "beautifulsoup4>=4.12.0",
+    "pillow>=9.0.0",
+    "tqdm>=4.65.0",
+    "requests>=2.31.0",
+    "filelock>=3.12.0",
+    "fsspec>=2023.5.0",
+    "huggingface-hub>=0.21.0",
+    "qwen-tts",
+    # librosa constraint needed to avoid newer versions that require incompatible numba
+    "librosa>=0.10.0,<0.11.0",
+    # numba>=0.57.0 needed to get llvmlite>=0.40 which supports Python 3.10
+    # (llvmlite 0.36.0 only supports Python <3.10)
+    "numba>=0.57.0",
+]
+
+[project.scripts]
+audiobook-interface = "gradio_audiobook_interface:main"
+parse-epub = "parse_epub:main"
+llm-label-speakers = "llm_label_speakers:main"
+analyze-chapters = "analyze_chapters:main"
+llm-describe-character = "llm_describe_character:main"
+generate-voice-samples = "generate_voice_samples:main"
+
+[tool.uv]
+# Test and lint dependencies
+dev-dependencies = [
+    "pytest",
+    "mypy",
+    "black",
+]

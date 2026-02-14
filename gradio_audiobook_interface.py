@@ -20,10 +20,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-try:
-    import numpy as np
-except ImportError:
-    np = None
 
 
 def progress_iterator(items, progress: gr.Progress = None, desc="Processing"):
@@ -63,14 +59,6 @@ def get_chapters_dir():
     return CHAPTERS_DIR
 
 
-def update_chapter_range_slider(chapter_count):
-    """Update the chapter range slider maximum and value based on actual chapter count."""
-    if chapter_count and chapter_count > 0:
-        new_max = max(0, chapter_count - 1)
-        # Update the value to stay within bounds (use default range [0, min(5, new_max)])
-        default_end = min(5, new_max)
-        return gr.update(maximum=new_max, value=[0, default_end])
-    return gr.update(maximum=10, value=[0, 5])
 
 
 # ============================================================================
@@ -130,8 +118,8 @@ def parse_epub_to_file(epub_file, max_chapters=None, progress=gr.Progress()):
 # Stage 2: LLM Speaker Labeling
 # ============================================================================
 
-def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, chapter_range, log_output, progress=gr.Progress()):
-    """Stage 2: Run LLM to label speakers in selected chapters."""
+def process_chapters_for_labels(api_key, port, num_attempts, log_output, progress=gr.Progress()):
+    """Stage 2: Run LLM to label speakers in all chapters."""
     # Get list of chapter files
     chapters_dir = get_chapters_dir()
     chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
@@ -140,33 +128,8 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
         log_output += "\nNo chapter files found. Please run Stage 1 first."
         return log_output
 
-    # Determine which chapters to process
-    if use_all_chapters:
-        selected_chapters = chapter_files
-    else:
-        # Handle both list (range) and single int values
-        # Also handle numpy arrays that Gradio might return
-        if np is not None and isinstance(chapter_range, np.ndarray) and len(chapter_range) >= 2:
-            start_chapter, end_chapter = int(chapter_range[0]), int(chapter_range[1])
-        elif isinstance(chapter_range, (list, tuple)) and len(chapter_range) >= 2:
-            start_chapter, end_chapter = int(chapter_range[0]), int(chapter_range[1])
-        elif chapter_range is not None:
-            # Fallback: use single value as both start and end
-            start_chapter = int(chapter_range)
-            end_chapter = start_chapter
-        else:
-            # Default to first chapter if value is None
-            start_chapter = 0
-            end_chapter = 0
-        selected_chapters = [
-            str(chapters_dir / f"chapter_{i}.txt")
-            for i in range(start_chapter, end_chapter + 1)
-            if os.path.exists(str(chapters_dir / f"chapter_{i}.txt"))
-        ]
-
-    if not selected_chapters:
-        log_output += "\nNo chapters selected for processing."
-        return log_output
+    # Process all chapters (chapters were selected in Stage 1 via max_chapters_slider)
+    selected_chapters = chapter_files
 
     num_chapters = len(selected_chapters)
     log_output += f"\nProcessing {num_chapters} chapters with LLM..."
@@ -583,27 +546,7 @@ def create_interface():
         # Stage 2: LLM Speaker Labeling
         with gr.Accordion("Stage 2: LLM Speaker Labeling", open=False) as stage2:
             gr.Markdown("Use LLM to identify speakers and attribute dialogue lines.")
-            all_chapters_checkbox = gr.Checkbox(
-                label="Process All Chapters",
-                value=True
-            )
-            chapter_range_slider = gr.Slider(
-                minimum=0,
-                maximum=10,
-                value=[0, 5],
-                step=1,
-                label="Chapter Range (disable when All Chapters is checked)",
-                interactive=False
-            )
-
-            # Update slider interactivity when checkbox changes
-            all_chapters_checkbox.change(
-                lambda x: gr.update(interactive=not x),
-                inputs=all_chapters_checkbox,
-                outputs=chapter_range_slider
-            )
-
-            label_btn = gr.Button("Label Selected Chapters", variant="primary")
+            label_btn = gr.Button("Label All Chapters", variant="primary")
             log_output = gr.Textbox(label="Progress Log", lines=10, max_lines=20)
 
         # Stage 3: Chapter Analysis
@@ -641,17 +584,9 @@ def create_interface():
             outputs=[parse_output, chapter_count_display, gr.Textbox(visible=False)]
         )
 
-        # Update chapter range slider when chapters are created
-        # Use get_chapter_count to read the actual count from filesystem
-        parse_btn.click(
-            fn=update_chapter_range_slider,
-            inputs=chapter_count_display,
-            outputs=chapter_range_slider
-        )
-
         label_btn.click(
             fn=process_chapters_for_labels,
-            inputs=[api_key_input, port_input, num_attempts_input, all_chapters_checkbox, chapter_range_slider, log_output],
+            inputs=[api_key_input, port_input, num_attempts_input, log_output],
             outputs=log_output
         )
 

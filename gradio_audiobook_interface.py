@@ -103,9 +103,10 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
         log_output += f"\nProcessing: {chapter_file}"
 
         # Build command to call llm_label_speakers.py
+        script_dir = Path(__file__).parent
         cmd = [
             sys.executable,
-            "llm_label_speakers.py",
+            str(script_dir / "llm_label_speakers.py"),
             "-txt_file", chapter_file,
             "-num_llm_attempts", str(num_attempts),
             "-api_key", api_key,
@@ -147,7 +148,7 @@ def analyze_chapters(log_output):
             return log_output
 
         # Run analyze_chapters.py
-        cmd = [sys.executable, "analyze_chapters.py", "./chapters", "--json-output", "--verbose"]
+        cmd = [sys.executable, str(script_dir / "analyze_chapters.py"), "./chapters", "--json-output", "--verbose"]
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         log_output += result.stdout

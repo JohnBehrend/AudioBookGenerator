@@ -422,27 +422,88 @@ def generate_full_audiobook(log_output, progress=gr.Progress()):
         log_output += f"\nGenerating audiobook for {num_chapters} chapters..."
 
         # Run parse_epub.py with the temp EPUB file and --resume
-        cmd = [sys.executable, str(SCRIPT_DIR / "parse_epub.py"), epub_path, "--resume"]
+        # Use chapters_dir as output directory to avoid nested folders
+        cmd = [sys.executable, str(SCRIPT_DIR / "parse_epub.py"), epub_path, "--resume", "--output-dir", str(chapters_dir)]
 
-        # Use subprocess with progress tracking
+        # Use subprocess with progress tracking (no cwd needed since we pass --output-dir)
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            cwd=str(chapters_dir)
+            cwd=str(SCRIPT_DIR)
         )
 
-        # Track progress based on chapter completion
+        # Track progress based on output patterns
+        import re
         completed_chapters = 0
+        current_chapter = -1
+        current_voice = ""
+        current_line = -1
+        current_retry = 0
+        total_estimate = num_chapters * 10  # Rough estimate of total work units
+
         for line in iter(process.stdout.readline, ''):
             if line:
-                log_output += f"\n{line.strip()}"
-                # Check for chapter completion patterns
-                if "Skipping" in line or "Resuming" in line:
+                line_stripped = line.strip()
+                log_output += f"\n{line_stripped}"
+
+                # Parse [CHAPTER_START] Chapter X of Y
+                chapter_match = re.search(r'\[CHAPTER_START\]\s+Chapter\s+(\d+)', line_stripped)
+                if chapter_match:
+                    current_chapter = int(chapter_match.group(1))
+                    log_output += f"\n[INFO] Starting chapter {current_chapter}"
+
+                # Parse [VOICE_START] Processing voice N/M: name
+                voice_match = re.search(r'\[VOICE_START\]\s+Processing\s+voice\s+(\d+)/(\d+):\s+(.+)', line_stripped)
+                if voice_match:
+                    voice_idx = int(voice_match.group(1))
+                    total_voices = int(voice_match.group(2))
+                    current_voice = voice_match.group(3)
+                    log_output += f"\n[INFO] Voice {voice_idx}/{total_voices}: {current_voice}"
+
+                # Parse [GENERATE_START] Chapter X, Line Y, Voice 'name'
+                gen_match = re.search(r'\[GENERATE_START\]\s+Chapter\s+(\d+),\s+Line\s+(\d+)', line_stripped)
+                if gen_match:
+                    gen_chapter = int(gen_match.group(1))
+                    gen_line = int(gen_match.group(2))
+                    current_line = gen_line
+                    log_output += f"\n[INFO] Generating line {gen_line} of chapter {gen_chapter}"
+
+                # Parse [RETRY_START] Attempt N/5
+                retry_match = re.search(r'\[RETRY_START\]\s+Attempt\s+(\d+)/5', line_stripped)
+                if retry_match:
+                    current_retry = int(retry_match.group(1))
+                    log_output += f"\n[INFO] Retry attempt {current_retry}/5"
+
+                # Parse [TTS_GENERATE] or [WHISPER_TRANSCRIBE] for more granular progress
+                if "[TTS_GENERATE]" in line_stripped:
+                    log_output += f"\n[INFO] TTS Generation in progress..."
+                if "[TTS_COMPLETE]" in line_stripped:
+                    log_output += f"\n[INFO] TTS Generation complete"
+                if "[WHISPER_TRANSCRIBE]" in line_stripped:
+                    log_output += f"\n[INFO] Whisper transcription in progress..."
+                if "[WHISPER_ALIGN]" in line_stripped:
+                    log_output += f"\n[INFO] Whisper alignment in progress..."
+                if "[VALIDATION_COMPLETE]" in line_stripped:
+                    log_output += f"\n[INFO] Validation complete"
+                if "[CLIP_POSTFIX]" in line_stripped:
+                    log_output += f"\n[INFO] Clipping postfix..."
+                if "[CLIP_VALID]" in line_stripped:
+                    log_output += f"\n[INFO] Clipping to valid token..."
+                if "[SAVE_AUDIO_FINAL]" in line_stripped:
+                    log_output += f"\n[INFO] Saving final audio..."
+                if "[SAVE_AUDIO_FINAL_COMPLETE]" in line_stripped:
+                    log_output += f"\n[INFO] Final audio saved"
+
+                # Update progress based on current stage
+                if "[CHAPTER_COMPLETE]" in line_stripped:
                     completed_chapters += 1
-                # Update progress based on output
-                progress(completed_chapters / num_chapters, desc=f"Chapter {completed_chapters}/{num_chapters}")
+                    progress(completed_chapters / num_chapters, desc=f"Chapter {completed_chapters}/{num_chapters}")
+                elif current_chapter >= 0:
+                    # Estimate progress within a chapter based on line number
+                    progress_estimate = completed_chapters + (current_line + 1) / 20.0
+                    progress(min(progress_estimate / num_chapters, 1.0), desc=f"Chapter {completed_chapters + 1}/{num_chapters}")
 
         process.stdout.close()
         process.wait()

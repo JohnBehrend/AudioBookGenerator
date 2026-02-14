@@ -210,6 +210,7 @@ def parse_epub():
     parser.add_argument("--alt_order", action="store_true", help="Use same gpu but high chapters to low chapters for processing.")
     parser.add_argument("--verbose", action="store_true", help="Print verbose logging information")
     parser.add_argument("--tts-engine", default="kugelaudio", choices=["kugelaudio", "vibevoice"], help="TTS engine to use")
+    parser.add_argument("--output-dir", metavar="DIR", help="Output directory for chapter files (default: script_dir/chapters)")
     args = parser.parse_args()
 
     # Override TTS_ENGINE with command line argument
@@ -226,7 +227,15 @@ def parse_epub():
 
     # Print each chapter (you can modify this to output in different formats)
     speaker_counts = {}
-    os.makedirs("./chapters", exist_ok=True)
+    # Determine output directory
+    if args.output_dir:
+        output_dir = args.output_dir
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        output_dir = os.path.join(script_dir, "chapters")
+
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"[OUTPUT_DIR] Using output directory: {output_dir}", flush=True)
     voice_mapper = VoiceMapper()
 
     if args.alt_gpu:
@@ -256,7 +265,7 @@ def parse_epub():
         chapter_iterator = enumerate(chapters)
 
     for i, chapter in chapter_iterator:
-        chapter_map = load_json(f"./chapters/chapter_{i}.map.json")
+        chapter_map = load_json(os.path.join(output_dir, f"chapter_{i}.map.json"))
         if args.verbose:
             print(f"Chapter {i}")
         if chapter_map:
@@ -320,7 +329,7 @@ def parse_epub():
 
     for i, chapter in chapter_iterator:
         if args.resume:
-            if os.path.exists(f"./chapters/chapter_{str(i).zfill(2)}.mp3"):
+            if os.path.exists(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")):
                 print(f"Skipping chapter {str(i).zfill(2)}.", end="\r")
                 continue
 
@@ -328,7 +337,7 @@ def parse_epub():
 
         for voice in voices_used:
             if args.resume:
-                already_generated = [int(x.split(".")[-2]) for x in glob.glob(f"./chapters/chapter_{str(i).zfill(2)}.*.wav") if not x.endswith(".tmp.wav")]
+                already_generated = [int(x.split(".")[-2]) for x in glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")) if not x.endswith(".tmp.wav")]
             else:
                 already_generated = []
 
@@ -393,7 +402,7 @@ def parse_epub():
                         verbose=False
                     )
 
-                    output_path = f"./chapters/chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"
+                    output_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav")
 
                     if TTS_ENGINE == 'kugelaudio':
                         # KugelAudio returns audio directly in speech_outputs
@@ -420,7 +429,7 @@ def parse_epub():
                     sample_rate, waveform = denoise_speech((sample_rate, waveform))
                     wavfile.write(output_path, sample_rate, waveform)
 
-                    audio = whisperx.load_audio(f"./chapters/chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav")
+                    audio = whisperx.load_audio(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"))
                     result = validation_model.transcribe(audio, batch_size=1)
                     model_a, metadata = whisperx.load_align_model(language_code=result["language"], device="cuda")
                     result = whisperx.align(result["segments"], model_a, metadata, audio, "cuda", return_char_alignments=False)
@@ -458,9 +467,9 @@ def parse_epub():
                                 else:
                                     clip_end2 = end_times[-1]
                                 print(f"POSTFIX DETECTED CLIPPING to {clip_end1} - {clip_end2}")
-                                audio = pydub.AudioSegment.from_wav(f"./chapters/chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav")
+                                audio = pydub.AudioSegment.from_wav(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"))
                                 trimmed_audio = audio[0:((clip_end1 + clip_end2) * 500)]
-                                trimmed_audio.export(f"./chapters/chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav", format="wav")
+                                trimmed_audio.export(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"), format="wav")
                         else:
                             if ((last_valid_token is None) or (last_valid_token == "")):
                                 print("POSTFIX UN-DETECTED and INVALID VALUES. SKIP.")
@@ -468,28 +477,28 @@ def parse_epub():
                                 lastvalid_index = segments[::-1].index(last_valid_token)
                                 clip_end1 = end_times[::-1][lastvalid_index]
                                 print(f"POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1} ")
-                                audio = pydub.AudioSegment.from_wav(f"./chapters/chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav")
+                                audio = pydub.AudioSegment.from_wav(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"))
                                 trimmed_audio = audio[0:(clip_end1 * 1000)]
-                                trimmed_audio.export(f"./chapters/chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav", format="wav")
+                                trimmed_audio.export(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"), format="wav")
 
                     if ratio > max_ratio:
                         max_ratio = ratio
-                        if os.path.exists(f"./chapters/chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.wav"):
-                            os.unlink(f"./chapters/chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.wav")
+                        if os.path.exists(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.wav")):
+                            os.unlink(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.wav"))
                         time.sleep(2)
                         os.rename(
-                            f"./chapters/chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav",
-                            f"./chapters/chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.wav"
+                            os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"),
+                            os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.wav")
                         )
 
                     retries += 1
 
-                if os.path.exists(f"./chapters/chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"):
-                    os.unlink(f"./chapters/chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav")
+                if os.path.exists(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav")):
+                    os.unlink(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"))
 
-        wavs = glob.glob(f"./chapters/chapter_{str(i).zfill(2)}.*.wav")
+        wavs = glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav"))
         audio = get_non_silent_audio_from_wavs(wavs)
-        audio.export(f"./chapters/chapter_{str(i).zfill(2)}.mp3", format="mp3")
+        audio.export(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3"), format="mp3")
         [os.unlink(x) for x in wavs]
 
         if args.speaker_histogram:

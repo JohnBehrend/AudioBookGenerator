@@ -48,8 +48,29 @@ def interpret_new_result(result, attempt_num):
     """
     line_map = {}
     char_map = {}
-    # load after stripping out comments
-    json_result = json.loads("\n".join([x for x in result if not x.startswith("```")]))                
+    # Filter out markdown code blocks and combine lines
+    filtered_result = [x for x in result if not x.startswith("```")]
+    result_text = "\n".join(filtered_result)
+
+    # Extract only the first valid JSON object (handle duplicate JSON from LLM)
+    # Find the first { and matching closing }
+    first_brace = result_text.find("{")
+    if first_brace != -1:
+        # Try to find the end of the first JSON object
+        brace_count = 0
+        end_pos = -1
+        for i, char in enumerate(result_text[first_brace:], start=first_brace):
+            if char == "{":
+                brace_count += 1
+            elif char == "}":
+                brace_count -= 1
+                if brace_count == 0:
+                    end_pos = i + 1
+                    break
+        if end_pos != -1:
+            result_text = result_text[first_brace:end_pos]
+
+    json_result = json.loads(result_text)                
     # convert keys to int
     char_map = {int(k): v.lower().strip().replace("_"," ").replace("'","").split("/")[0].split(" (")[0] for k,v in json_result["speaker_map"].items()}
     # remove line_map entries that are invalid.

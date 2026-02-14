@@ -67,7 +67,7 @@ def get_chapters_dir():
 # Stage 1: EPUB Parsing
 # ============================================================================
 
-def parse_epub_to_file(epub_file, progress=gr.Progress()):
+def parse_epub_to_file(epub_file, max_chapters=None, progress=gr.Progress()):
     """Stage 1: Parse EPUB file into chapter text files."""
     if epub_file is None:
         return "Error: No EPUB file uploaded.", 0, []
@@ -84,8 +84,8 @@ def parse_epub_to_file(epub_file, progress=gr.Progress()):
         epub_dest = chapters_dir / "uploaded.epub"
         shutil.copy2(epub_file.name, str(epub_dest))
 
-        # Parse the EPUB
-        chapters = parse_epub_to_chapters(epub_file.name)
+        # Parse the EPUB with max_chapters limit if specified
+        chapters = parse_epub_to_chapters(epub_file.name, max_chapters=int(max_chapters) if max_chapters else None)
 
         if not chapters:
             return "Error: No chapters found in EPUB file.", 0, []
@@ -560,6 +560,13 @@ def create_interface():
             parse_btn = gr.Button("Parse EPUB", variant="primary")
             parse_output = gr.Textbox(label="Status")
             chapter_count_display = gr.Number(label="Chapters Created", precision=0)
+            max_chapters_slider = gr.Slider(
+                minimum=1,
+                maximum=100,
+                value=10,
+                step=1,
+                label="Max Chapters to Generate"
+            )
 
         # Stage 2: LLM Speaker Labeling
         with gr.Accordion("Stage 2: LLM Speaker Labeling", open=False) as stage2:
@@ -618,7 +625,7 @@ def create_interface():
         # Event handlers
         parse_btn.click(
             fn=parse_epub_to_file,
-            inputs=epub_upload,
+            inputs=[epub_upload, max_chapters_slider],
             outputs=[parse_output, chapter_count_display, gr.Textbox(visible=False)]
         )
 

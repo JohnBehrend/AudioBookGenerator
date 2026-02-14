@@ -58,20 +58,21 @@ def get_chapter_objs(text: str):
                 chapter_objs.append(ChapterObj(False, cleanup_text(paragraph), line_num))
     return chapter_objs
 
-def parse_epub_to_chapters(epub_path):
+def parse_epub_to_chapters(epub_path, max_chapters=None):
     """
     Parse an EPUB file into an array of chapters.
-    
+
     Args:
         epub_path (str): Path to the EPUB file
-        
+        max_chapters (int, optional): Maximum number of chapters to parse. If None, parses all chapters.
+
     Returns:
         list: Array of chapter texts
     """
     try:
         book = epub.read_epub(epub_path)
         chapters = []
-        
+
         for item in book.get_items():
             if item.get_type() == ebooklib.ITEM_DOCUMENT:
                 # Extract text content from HTML
@@ -119,8 +120,11 @@ def parse_epub_to_chapters(epub_path):
                     , 'html.parser').get_text(separator=" ", strip=False)
                 if txt.strip():  # Only add non-empty chapters
                     chapters.append(get_chapter_objs(txt))
+                    # Stop if we've reached the max_chapters limit
+                    if max_chapters is not None and len(chapters) >= max_chapters:
+                        break
         return chapters
-    
+
     except Exception as e:
         print(f"Error parsing EPUB file: {e}")
         return []

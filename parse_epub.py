@@ -211,6 +211,7 @@ def parse_epub():
     parser.add_argument("--verbose", action="store_true", help="Print verbose logging information")
     parser.add_argument("--tts-engine", default="kugelaudio", choices=["kugelaudio", "vibevoice"], help="TTS engine to use")
     parser.add_argument("--output-dir", metavar="DIR", help="Output directory for chapter files (default: script_dir/chapters)")
+    parser.add_argument("--max-chapters", type=int, metavar="N", help="Maximum number of chapters to parse (default: all)")
     args = parser.parse_args()
 
     # Override TTS_ENGINE with command line argument
@@ -219,7 +220,7 @@ def parse_epub():
 
     end_characters = ["?", ".", "-", ";", ",", "!"]
     # Parse the EPUB file
-    chapters = parse_epub_to_chapters(args.epub_file)
+    chapters = parse_epub_to_chapters(args.epub_file, max_chapters=args.max_chapters)
 
     if not chapters:
         print("No chapters found or error occurred")

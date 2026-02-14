@@ -215,7 +215,7 @@ def parse_epub():
         voices_used =list(dict.fromkeys([chapter_obj.get_speaker() for chapter_obj in chapter]).keys())
         for voice in voices_used:
             if args.resume:
-                already_generated = [int(x.split(".")[-2]) for x in glob.glob(f"./chapters/chapter_{str(i).zfill(2)}.*.wav" ) if not x.endswith(".tmp.wav")]
+                already_generated = [int(x.split(".")[-2]) for x in glob.glob(f"./chapters/chapter_{str(i).zfill(2)}.*.wav") if not x.endswith(".tmp.wav")]
             else:
                 already_generated = []
             for j, chapter_obj in enumerate(chapter):

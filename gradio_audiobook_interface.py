@@ -20,6 +20,10 @@ import subprocess
 from pathlib import Path
 
 
+# Get the directory where this script is located
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
 # ============================================================================
 # Stage 1: EPUB Parsing
 # ============================================================================
@@ -103,10 +107,9 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
         log_output += f"\nProcessing: {chapter_file}"
 
         # Build command to call llm_label_speakers.py
-        script_dir = Path(__file__).parent
         cmd = [
             sys.executable,
-            str(script_dir / "llm_label_speakers.py"),
+            str(SCRIPT_DIR / "llm_label_speakers.py"),
             "-txt_file", chapter_file,
             "-num_llm_attempts", str(num_attempts),
             "-api_key", api_key,
@@ -118,7 +121,8 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minute timeout per chapter
+                timeout=300,  # 5 minute timeout per chapter
+                cwd=str(SCRIPT_DIR)
             )
             log_output += result.stdout
             if result.stderr:
@@ -148,8 +152,8 @@ def analyze_chapters(log_output):
             return log_output
 
         # Run analyze_chapters.py
-        cmd = [sys.executable, str(script_dir / "analyze_chapters.py"), "./chapters", "--json-output", "--verbose"]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        cmd = [sys.executable, str(SCRIPT_DIR / "analyze_chapters.py"), "./chapters", "--json-output", "--verbose"]
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
 
         log_output += result.stdout
         if result.stderr:
@@ -180,7 +184,7 @@ def describe_characters(api_key, port, log_output):
         # Run llm_describe_character.py
         cmd = [
             sys.executable,
-            "llm_describe_character.py",
+            str(SCRIPT_DIR / "llm_describe_character.py"),
             "./chapters/characters.json",
             "./chapters",
             "--api_key", api_key,
@@ -188,7 +192,7 @@ def describe_characters(api_key, port, log_output):
             "--verbose"
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
         log_output += result.stdout
         if result.stderr:
             log_output += f"\nErrors: {result.stderr}"
@@ -218,12 +222,12 @@ def generate_voice_samples(log_output):
         # Run generate_voice_samples.py
         cmd = [
             sys.executable,
-            "generate_voice_samples.py",
+            str(SCRIPT_DIR / "generate_voice_samples.py"),
             "--descriptions", "characters_descriptions.json",
             "--output-dir", "./chapters"
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
         log_output += result.stdout
         if result.stderr:
             log_output += f"\nErrors: {result.stderr}"
@@ -257,9 +261,9 @@ def generate_full_audiobook(log_output):
             return log_output
 
         # Run parse_epub.py
-        cmd = [sys.executable, "parse_epub.py", "--resume"]
+        cmd = [sys.executable, str(SCRIPT_DIR / "parse_epub.py"), "--resume"]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
         log_output += result.stdout
         if result.stderr:
             log_output += f"\nErrors: {result.stderr}"
@@ -394,19 +398,19 @@ def create_interface():
         describe_btn.click(
             fn=describe_characters,
             inputs=[api_key_input, port_input, log_output],
-            outputs=log_output
+            outputs=descriptions_output
         )
 
         voice_samples_btn.click(
             fn=generate_voice_samples,
-            inputs=log_output,
-            outputs=log_output
+            inputs=voice_samples_output,
+            outputs=voice_samples_output
         )
 
         audiobook_btn.click(
             fn=generate_full_audiobook,
-            inputs=log_output,
-            outputs=log_output
+            inputs=audiobook_output,
+            outputs=audiobook_output
         )
 
         # Update files list periodically

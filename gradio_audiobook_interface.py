@@ -110,11 +110,15 @@ def process_chapters_for_labels(api_key, port, num_attempts, use_all_chapters, c
     else:
         # Handle both list (range) and single int values
         if isinstance(chapter_range, (list, tuple)) and len(chapter_range) >= 2:
-            start_chapter, end_chapter = chapter_range
-        else:
+            start_chapter, end_chapter = chapter_range[0], chapter_range[1]
+        elif chapter_range is not None:
             # Fallback: use single value as both start and end
-            start_chapter = int(chapter_range) if chapter_range else 0
+            start_chapter = int(chapter_range)
             end_chapter = start_chapter
+        else:
+            # Default to first chapter if value is None
+            start_chapter = 0
+            end_chapter = 0
         selected_chapters = [
             str(chapters_dir / f"chapter_{i}.txt")
             for i in range(start_chapter, end_chapter + 1)

@@ -4,7 +4,8 @@
       "Bash(python:*)",
       "Bash(python3:*)",
       "Bash(echo:*)",
-      "Bash(xxd:*)"
+      "Bash(xxd:*)",
+      "Bash(pip install:*)"
     ]
   }
 }

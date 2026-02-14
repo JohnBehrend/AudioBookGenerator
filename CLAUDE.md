@@ -79,6 +79,7 @@ python generate_voice_samples.py [--descriptions] [--output-dir]
 - Linux line endings (LF) are used throughout the repository
 
 ## Before Making Changes
+**Use the python virtual environment**  Run .venv/Scripts/python instead of python
 
 **Always verify syntax first:** Run `python -m py_compile <file.py>` before assuming there are syntax errors. Python's syntax checker is reliable - if it compiles, the syntax is correct.
 

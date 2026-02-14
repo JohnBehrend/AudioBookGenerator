@@ -54,9 +54,14 @@ def parse_epub_to_file(epub_file):
     try:
         # Import parse_chapter module
         from parse_chapter import parse_epub_to_chapters
+        import shutil
 
         # Get the temp chapters directory
         chapters_dir = get_chapters_dir()
+
+        # Copy the EPUB file to temp directory for Stage 6
+        epub_dest = chapters_dir / "uploaded.epub"
+        shutil.copy2(epub_file.name, str(epub_dest))
 
         # Parse the EPUB
         chapters = parse_epub_to_chapters(epub_file.name)
@@ -279,14 +284,20 @@ def generate_full_audiobook(log_output):
             return log_output
 
         # Check if characters_descriptions.json exists
-        if not os.path.exists(str(SCRIPT_DIR / "characters_descriptions.json")):
+        if not os.path.exists(str(chapters_dir / "characters_descriptions.json")):
             log_output += "\ncharacters_descriptions.json not found. Please run Stage 4 first."
             return log_output
 
-        # Run parse_epub.py
-        cmd = [sys.executable, str(SCRIPT_DIR / "parse_epub.py"), "--resume"]
+        # Check if uploaded EPUB exists in temp directory
+        epub_path = str(chapters_dir / "uploaded.epub")
+        if not os.path.exists(epub_path):
+            log_output += "\nUploaded EPUB file not found. Please run Stage 1 first."
+            return log_output
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
+        # Run parse_epub.py with the temp EPUB file and --resume
+        cmd = [sys.executable, str(SCRIPT_DIR / "parse_epub.py"), epub_path, "--resume"]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(chapters_dir))
         log_output += result.stdout
         if result.stderr:
             log_output += f"\nErrors: {result.stderr}"

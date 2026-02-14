@@ -52,23 +52,36 @@ def interpret_new_result(result, attempt_num):
     filtered_result = [x for x in result if not x.startswith("```")]
     result_text = "\n".join(filtered_result)
 
-    # Extract only the first valid JSON object (handle duplicate JSON from LLM)
-    # Find the first { and matching closing }
+    # Count how many valid JSON objects are in the response
+    # If there are multiple, this is an error (LLM outputting duplicates)
+    brace_positions = []
+    brace_count = 0
     first_brace = result_text.find("{")
     if first_brace != -1:
-        # Try to find the end of the first JSON object
-        brace_count = 0
-        end_pos = -1
         for i, char in enumerate(result_text[first_brace:], start=first_brace):
             if char == "{":
                 brace_count += 1
             elif char == "}":
                 brace_count -= 1
                 if brace_count == 0:
-                    end_pos = i + 1
-                    break
-        if end_pos != -1:
-            result_text = result_text[first_brace:end_pos]
+                    brace_positions.append(i)
+
+    # If we found more than one complete JSON object, raise an error
+    if len(brace_positions) > 1:
+        # Find where the second JSON starts
+        first_json_end = brace_positions[0]
+        second_json_start = result_text.find("{", first_json_end)
+        raise ValueError(
+            f"LLM returned duplicate JSON objects in attempt {attempt_num}. "
+            f"First JSON ends at position {first_json_end}, "
+            f"second JSON starts at position {second_json_start}. "
+            f"Response preview: {result_text[:200]}..."
+        )
+
+    # Extract only the first valid JSON object
+    if first_brace != -1 and brace_positions:
+        end_pos = brace_positions[0] + 1
+        result_text = result_text[first_brace:end_pos]
 
     json_result = json.loads(result_text)                
     # convert keys to int
@@ -278,7 +291,7 @@ PROMPT_TXT = """
 - Accurately identify all speakers in the text.
 - Accurately identify the speaker of each quoted line.
 - Navigate contextual ambiguity with deep analysis.
-## Output format (exactly this, no extra text)
+## Output format (exactly this, no extra text, NO DUPLICATES)
 {
   "speaker_map": {"1": "narrator", "2": "Name", "3": "OtherName"},
   "attributions": {
@@ -287,17 +300,19 @@ PROMPT_TXT = """
     ...
   }
 }
+## IMPORTANT - DO NOT REPEAT OR DUPLICATE
+- Output ONLY the JSON object above - nothing else
+- Do not output the JSON twice
+- Do not add any text before or after the JSON
+- Do not include thinking/analysis after the JSON
+- If you output duplicate JSON or any extra text, the pipeline will fail
+
 ## Workflow
 1. Scan the text line by line and identify every line that both begins and ends with ".
 2. The speaker for each such line is determined based on context.
 3. After finishing, verify again that no qualifying line was missed.
 4. Output the speaker map in proper JSON format. Simplify the names of the speakers.
 5. Output the attributions exactly as shown - one explicit key per quoted line, no ranges, no comments.
-
-<thinking_template>
-Always finish thinking with a closing tag `</think>
-`, print it verbatim! After the thinking, seamlessly continue the story.
-</thinking_template>
 
 Begin processing the chapter now.
 """
@@ -380,7 +395,13 @@ if __name__ == "__main__":
                 character_map, line_map = interpret_new_result(result, a)
                 print(character_map)
         except Exception as e:
-            print(f"Error in {chapter_file_base}.result.{a}.txt")
+            # Read and show the actual content for debugging
+            with open(chapter_file_base + f".result.{a}.txt", "r", encoding='utf-8') as f:
+                debug_content = f.read()
+            print(f"Error parsing {chapter_file_base}.result.{a}.txt: {e}", file=sys.stderr)
+            print("\n--- LLM Output (for debugging) ---", file=sys.stderr)
+            print(debug_content, file=sys.stderr)
+            print("--- End of LLM Output ---\n", file=sys.stderr)
             raise e
         # print(a)
         # print(character_map)

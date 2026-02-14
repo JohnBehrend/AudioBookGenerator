@@ -41,9 +41,23 @@ import whisperx
 import glob
 import pydub
 
-# Filter audio files
-from sidon_demo_app import denoise_speech
-from scipy.io import wavfile
+# Filter audio files - try to import from sidon_demo_app, provide fallback
+try:
+    from sidon_demo_app import denoise_speech
+except ImportError:
+    # Fallback: simple noise reduction using scipy
+    from scipy.io import wavfile
+    import numpy as np
+    from scipy.signal import wiener
+
+    def denoise_speech(audio_data):
+        """Simple fallback denoising using Wiener filter."""
+        sample_rate, waveform = audio_data
+        # Apply Wiener filter for noise reduction
+        denoised = wiener(waveform.astype(np.float32))
+        return sample_rate, denoised.astype(np.int16)
+else:
+    from scipy.io import wavfile
 import pandas as pd
 
 # garbage collection

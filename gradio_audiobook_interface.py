@@ -284,7 +284,7 @@ def generate_full_audiobook(log_output):
             return log_output
 
         # Check if characters_descriptions.json exists
-        if not os.path.exists(str(chapters_dir / "characters_descriptions.json")):
+        if not os.path.exists(str(SCRIPT_DIR / "characters_descriptions.json")):
             log_output += "\ncharacters_descriptions.json not found. Please run Stage 4 first."
             return log_output
 

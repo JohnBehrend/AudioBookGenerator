@@ -712,7 +712,9 @@ def generate_character_table():
             wav_path = wav_files.get(char_name)
             if wav_path and os.path.exists(wav_path):
                 # Use markdown with HTML for audio player
-                audio_html = f'<audio controls src="{wav_path}" style="width: 100%; height: 32px;"></audio>'
+                # Convert Windows backslashes to forward slashes for HTML
+                wav_path_url = wav_path.replace("\\", "/")
+                audio_html = f'<audio controls src="{wav_path_url}" style="width: 100%; height: 48px;"></audio>'
                 # Redo button with inline styles
                 redo_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Redo</button>'
                 table_data.append([char_name, char_desc, audio_html, redo_btn])
@@ -887,7 +889,8 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
                 return log, character_table
 
             # Get character name from the row data (first column)
-            character_name = row_value.iloc[0] if len(row_value) > 0 else None
+            # evt.row_value is a list, not a pandas Series
+            character_name = row_value[0] if len(row_value) > 0 else None
 
             if not character_name:
                 return log, character_table

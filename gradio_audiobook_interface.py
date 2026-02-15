@@ -712,36 +712,6 @@ def update_character_table(characters_state):
         return gr.Dataframe(value=[])
 
 
-def on_character_select(evt: gr.SelectData, characters_state):
-    """
-    Handle character table row selection.
-    Updates the audio player and generate button based on selected character.
-
-    Args:
-        evt: Gradio SelectData containing selection information
-        characters_state: Current characters state
-
-    Returns:
-        Tuple of (audio_visible, audio_label_visible, audio_filepath, generate_label)
-    """
-    if evt is None or evt.row_value is None:
-        return False, True, None, "Select a character to generate voice sample"
-
-    # Get character name from the row data (first column)
-    character_name = evt.row_value[0] if len(evt.row_value) > 0 else None
-
-    if not character_name:
-        return False, True, None, "Select a character to generate voice sample"
-
-    chapters_dir = get_chapters_dir()
-    wav_path = get_character_wav_file(character_name, chapters_dir)
-
-    if wav_path and os.path.exists(wav_path):
-        # Audio exists - show audio player, hide label
-        return True, False, wav_path, f"Generate voice sample for: {character_name}"
-    else:
-        # Audio doesn't exist - hide audio player, show label with character name
-        return False, True, None, f"Generate voice sample for: {character_name}"
 
 
 
@@ -754,141 +724,103 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
     """Create the Gradio interface with all stages using a state machine pattern."""
 
     with gr.Blocks() as demo:
-        gr.Markdown("# Audiobook Pipeline Interface")
+        gr.Markdown("# Audiobook Pipeline")
 
-        # Single Progress Bar for all stages
-        gr.Markdown("### Progress")
+        # Progress bar at top
         progress_bar = gr.Progress()
 
-        # Single Shared Log Output for all stages
-        gr.Markdown("### Log Output")
-        log_output = gr.Textbox(
-            label="Pipeline Log",
-            lines=8,
-            max_lines=30
+        # State display
+        state_display = gr.Label(label="State", value="Ready", show_label=True)
+
+        # Settings - compact
+        with gr.Row():
+            api_key_input = gr.Textbox(label="API", value=api_key_default, scale=2)
+            port_input = gr.Textbox(label="Port", value=port_default, scale=1)
+            num_attempts_input = gr.Slider(minimum=1, maximum=50, value=num_attempts_default,
+                                           step=1, label="LLM Attempts", scale=2)
+            max_chapters_slider = gr.Slider(minimum=1, maximum=100, value=max_chapters_default,
+                                            step=1, label="Max", scale=2)
+
+        # EPUB upload
+        epub_upload = gr.File(label="EPUB", file_types=[".epub"], value=epub_path_default)
+
+        # Main buttons - single row
+        with gr.Row():
+            parse_btn = gr.Button("1. Parse", variant="primary", scale=1)
+            label_btn = gr.Button("2. Label", variant="secondary", scale=1)
+            describe_btn = gr.Button("3. Describe", variant="secondary", scale=1)
+
+        # Voice samples - single row
+        with gr.Row():
+            voice_samples_btn = gr.Button("4. Voices", variant="secondary", scale=1)
+            generate_char_btn = gr.Button("5. Regen", variant="secondary", scale=1)
+            tts_btn = gr.Button("6. Audiobook", variant="primary", scale=2)
+
+        # Log output
+        log_output = gr.Textbox(label="Log", lines=4, max_lines=6)
+
+        # Character info
+        character_table = gr.Dataframe(
+            headers=["Character", "Description"],
+            datatype=["str", "str"],
+            wrap=True,
+            max_height=100
         )
 
-        # Configuration and EPUB Parsing (required first step)
-        with gr.Accordion("Configuration & EPUB Parsing", open=True):
-            gr.Markdown("### Pipeline Settings")
-            with gr.Row():
-                api_key_input = gr.Textbox(
-                    label="LLM API Key",
-                    value=api_key_default,
-                    placeholder="Enter your API key (default: lm-studio)"
-                )
-                port_input = gr.Textbox(
-                    label="LLM Port",
-                    value=port_default,
-                    placeholder="Port for LLM inference"
-                )
-                num_attempts_input = gr.Slider(
-                    minimum=1,
-                    maximum=50,
-                    value=num_attempts_default,
-                    step=1,
-                    label="Number of LLM Attempts"
-                )
-            max_chapters_slider = gr.Slider(
-                minimum=1,
-                maximum=100,
-                value=max_chapters_default,
-                step=1,
-                label="Max Chapters to Generate"
-            )
-
-            gr.Markdown("### EPUB File")
-            epub_upload = gr.File(label="Upload EPUB File", file_types=[".epub"], value=epub_path_default)
-            parse_btn = gr.Button("Parse EPUB", variant="primary")
-            parse_output = gr.Textbox(label="Status")
-            chapter_count_display = gr.Number(label="Chapters Created", precision=0)
-
-        # Stage 2: LLM Speaker Labeling
-        with gr.Accordion("Stage 2: Label Speakers", open=False):
-            gr.Markdown("Use LLM to identify speakers and attribute dialogue lines.")
-            label_btn = gr.Button("Label All Chapters", variant="primary")
-            label_output = gr.Textbox(label="Labeling Results", visible=False)
-
-        # Character Workflow (Describe, Generate Samples, Select Character)
-        with gr.Accordion("Character Workflow", open=False):
-            gr.Markdown("### Character Descriptions & Voice Samples")
-            gr.Markdown("Generate character voice profiles and samples. Select a character below to regenerate individual voice samples.")
-
-            # Describe characters button
-            describe_btn = gr.Button("Describe Characters", variant="secondary")
-
-            # Character Descriptions Table
-            character_table = gr.Dataframe(
-                headers=["Character", "Description"],
-                datatype=["str", "str"],
-                label="Characters",
-                wrap=True
-            )
-
-            # Generate all voice samples button
-            voice_samples_btn = gr.Button("Generate All Voice Samples", variant="primary")
-
-            # Selected character audio and generation controls
-            with gr.Row():
-                with gr.Column():
-                    gr.Markdown("##### Character Audio")
-                    character_audio = gr.Audio(
-                        label="Character Voice Sample",
-                        type="filepath",
-                        visible=False
-                    )
-                    character_audio_label = gr.Label(
-                        label="No audio available",
-                        visible=True
-                    )
-                with gr.Column():
-                    gr.Markdown("##### Generate Voice Sample")
-                    generate_char_btn = gr.Button("Generate Voice Sample", variant="primary")
-                    generate_char_output = gr.Textbox(label="Generation Status")
-
-        # Stage 5: Full Audiobook Generation
-        with gr.Accordion("Stage 5: Generate Audiobook", open=False):
-            gr.Markdown("Generate the complete audiobook with all voices applied.")
-            tts_btn = gr.Button("Generate Full Audiobook", variant="primary")
-            tts_output = gr.Textbox(label="Audiobook Generation Results")
-
-        # Output file display
-        with gr.Accordion("Generated Files", open=False):
-            files_output = gr.Textbox(label="Chapter Files")
+        # Audio player (hidden until needed)
+        character_audio = gr.Audio(label="", type="filepath", visible=False)
 
         # State to track characters
         characters_state = gr.State(None)
 
-        # State to track pipeline state (enum: None, epub_parsed, labels_complete, characters_described, voice_samples_complete, audiobook_complete)
+        # State to track pipeline state
         pipeline_state = gr.State(None)
 
         # ============================================================================
         # STATE TRANSITION HANDLERS - Define which buttons are enabled based on state
         # ============================================================================
 
+        def update_state_display(state):
+            """Update state display based on pipeline state."""
+            state_labels = {
+                None: "Ready",
+                PipelineState.EPUB_PARSED: "EPUB Parsed",
+                PipelineState.LABELS_COMPLETE: "Speakers Labeled",
+                PipelineState.CHARACTERS_DESCRIBED: "Characters Described",
+                PipelineState.VOICE_SAMPLES_COMPLETE: "Voice Samples Ready",
+                PipelineState.AUDIOBOOK_COMPLETE: "Audiobook Complete"
+            }
+            return (gr.update(value=state_labels.get(state, "Unknown")),)
+
         def update_button_visibility(state):
             """
             Update button enabled state based on pipeline state.
-            Returns tuple of (parse_update, label_update, describe_update, voice_update, tts_update)
+            Returns tuple of (parse_update, label_update, describe_update, voice_update, gen_char_update, tts_update)
             using gr.update() to properly update button states.
             """
             if state is None:
                 # Initial state: only Parse EPUB is enabled
-                return gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False)
+                return (gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=False),
+                        gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False))
             elif state == PipelineState.EPUB_PARSED:
                 # EPUB parsed: can do Label Speakers
-                return gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False)
+                return (gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=False),
+                        gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False))
             elif state == PipelineState.LABELS_COMPLETE:
                 # Labels done: can describe characters
-                return gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=False)
+                return (gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True),
+                        gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False))
             elif state == PipelineState.CHARACTERS_DESCRIBED:
                 # Characters described: can generate voice samples
-                return gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=False)
+                return (gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True),
+                        gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=False))
             elif state == PipelineState.VOICE_SAMPLES_COMPLETE:
                 # Voice samples done: can generate full audiobook
-                return gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True)
+                return (gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True),
+                        gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True))
             else:  # AUDIOBOOK_COMPLETE or beyond
-                return gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True)
+                return (gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True),
+                        gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True))
 
         # ============================================================================
         # EVENT HANDLERS
@@ -898,7 +830,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         parse_btn.click(
             fn=parse_epub_to_file,
             inputs=[epub_upload, max_chapters_slider],
-            outputs=[parse_output, chapter_count_display, gr.Textbox(visible=False)]
+            outputs=[log_output, log_output, log_output]  # dummy outputs to satisfy function signature
         ).then(
             # Reset log for new session
             fn=lambda: "=== Stage 1: EPUB Parsing Complete ===\n",
@@ -907,9 +839,9 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             fn=lambda: PipelineState.EPUB_PARSED,
             outputs=pipeline_state
         ).then(
-            fn=update_button_visibility,
+            fn=lambda s: update_button_visibility(s) + update_state_display(s),
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, tts_btn]
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn, state_display]
         )
 
         # Label Speakers - Stage 2
@@ -920,7 +852,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, tts_btn]
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         )
 
         # Describe Characters - Stage 3
@@ -935,7 +867,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, tts_btn]
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         )
 
         # Generate All Voice Samples - Stage 4
@@ -946,70 +878,32 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, tts_btn]
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         )
 
-        # Handle row selection in character table
-        def on_character_select(evt: gr.SelectData, _characters_state):
+        # Handle row selection in character table - show audio when character selected
+        def on_character_select_simple(evt: gr.SelectData, _characters_state):
             """Handle row selection in the character table."""
             if evt is None or evt.index is None:
-                return gr.update(visible=False), gr.update(visible=True), None, gr.update(value="Select a character to generate voice sample"), None
+                return gr.update(visible=False)
 
             character_name = evt.row_value[0] if evt.row_value and len(evt.row_value) > 0 else None
 
             if not character_name:
-                return gr.update(visible=False), gr.update(visible=True), None, gr.update(value="Select a character to generate voice sample"), None
+                return gr.update(visible=False)
 
             chapters_dir = get_chapters_dir()
             wav_path = get_character_wav_file(character_name, chapters_dir)
 
             if wav_path and os.path.exists(wav_path):
-                return (
-                    gr.update(visible=True),
-                    gr.update(visible=False),
-                    wav_path,
-                    gr.update(value=f"Voice sample available for: {character_name}"),
-                    character_name
-                )
+                return gr.update(visible=True)
             else:
-                return (
-                    gr.update(visible=False),
-                    gr.update(visible=True),
-                    None,
-                    gr.update(value=f"Generate voice sample for: {character_name}"),
-                    character_name
-                )
-
-        # State to track selected character
-        selected_char_state = gr.State(None)
+                return gr.update(visible=False)
 
         character_table.select(
-            fn=on_character_select,
+            fn=on_character_select_simple,
             inputs=[characters_state],
-            outputs=[character_audio, character_audio_label, character_audio, generate_char_output, selected_char_state]
-        )
-
-        # Handle generate character voice sample button
-        def on_generate_voice_sample(_char_name, _api_key, _port, _pipeline_state, _log):
-            """Generate voice sample for selected character."""
-            if not _char_name:
-                return "No character selected.", _pipeline_state, None
-
-            new_log, new_state, wav_path = regenerate_voice_sample(_char_name, _api_key, _port, _pipeline_state, _log)
-            return new_log, new_state, wav_path
-
-        generate_char_btn.click(
-            fn=on_generate_voice_sample,
-            inputs=[selected_char_state, api_key_input, port_input, pipeline_state, generate_char_output],
-            outputs=[generate_char_output, pipeline_state, character_audio]
-        ).then(
-            fn=update_character_table,
-            inputs=characters_state,
-            outputs=character_table
-        ).then(
-            fn=on_character_select,
-            inputs=[characters_state],
-            outputs=[character_audio, character_audio_label, character_audio, generate_char_output, selected_char_state]
+            outputs=character_audio
         )
 
         # Generate Full Audiobook - Stage 5
@@ -1020,16 +914,10 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, tts_btn]
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         )
 
-        # Update files list periodically
-        gr.on(
-            triggers=[parse_btn.click, label_btn.click, describe_btn.click, voice_samples_btn.click, tts_btn.click],
-            fn=lambda: "\n".join(glob.glob(str(get_chapters_dir() / "*"))),
-            outputs=files_output
-        )
-
+        
     return demo
 
 

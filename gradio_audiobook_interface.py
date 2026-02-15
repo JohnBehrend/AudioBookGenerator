@@ -562,13 +562,13 @@ def generate_tts_audio(
             log_output += "\nError: No chapters found in EPUB file."
             return log_output, pipeline_state
 
-        # Determine device (use CUDA if available, default to cuda:0)
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        log_output += f"\nUsing device: {device}"
-
         # Import and use the modular parse_epub functions
         import torch
         import parse_epub
+
+        # Determine device (use CUDA if available, default to cuda:0)
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        log_output += f"\nUsing device: {device}"
 
         # Setup TTS engine and validation model
         log_output += "\nInitializing TTS model..."

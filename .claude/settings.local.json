@@ -8,7 +8,9 @@
       "Bash(uv sync:*)",
       "Bash(.venv/Scripts/python:*)",
       "Bash(tee:*)",
-      "Bash(.venv/Scripts/python.exe:*)"
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(.venv/Scripts/uv pip install pydub-ffmpeg moviepy)"
     ]
   }
 }

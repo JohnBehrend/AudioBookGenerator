@@ -296,6 +296,36 @@ def describe_characters(api_key, port, log_output, progress=gr.Progress()):
 # Stage 5: Voice Sample Generation
 # ============================================================================
 
+def get_character_descriptions_file():
+    """Get the path to characters_descriptions.json."""
+    return SCRIPT_DIR / "characters_descriptions.json"
+
+
+def get_character_wav_file(character_name, chapters_dir):
+    """Get the path to a character's generated WAV file."""
+    # Check in chapters_dir first, then parent directory
+    for base_dir in [chapters_dir, SCRIPT_DIR]:
+        wav_path = base_dir / f"{character_name}.wav"
+        if os.path.exists(wav_path):
+            return str(wav_path)
+    return None
+
+
+def get_all_character_wav_files(chapters_dir):
+    """Get all generated character WAV files."""
+    wav_files = {}
+    # Check in chapters_dir first, then parent directory
+    for base_dir in [chapters_dir, SCRIPT_DIR]:
+        if base_dir and os.path.exists(base_dir):
+            for wav_path in base_dir.glob("*.wav"):
+                # Only include character voice samples (not narrator or chapter files)
+                wav_name = wav_path.name
+                if not wav_name.startswith("chapter_") and wav_name != "narrator.wav" and wav_name != "uploaded.epub":
+                    char_name = wav_path.stem
+                    wav_files[char_name] = str(wav_path)
+    return wav_files
+
+
 def generate_voice_samples(log_output, progress=gr.Progress()):
     """Stage 5: Generate voice samples for each character."""
     log_output += "\n\nGenerating voice samples..."
@@ -303,7 +333,7 @@ def generate_voice_samples(log_output, progress=gr.Progress()):
     try:
         # Check if characters_descriptions.json exists
         chapters_dir = get_chapters_dir()
-        descriptions_file = SCRIPT_DIR / "characters_descriptions.json"
+        descriptions_file = get_character_descriptions_file()
         if not os.path.exists(str(descriptions_file)):
             log_output += "\ncharacters_descriptions.json not found. Please run Stage 4 first."
             return log_output
@@ -363,6 +393,74 @@ def generate_voice_samples(log_output, progress=gr.Progress()):
     except Exception as e:
         log_output += f"\nError generating voice samples: {str(e)}"
         return log_output
+
+
+def regenerate_voice_sample(character_name, api_key, port, log_output, progress=gr.Progress()):
+    """Regenerate a single voice sample for a character."""
+    log_output += f"\n\nRegenerating voice sample for: {character_name}"
+
+    try:
+        chapters_dir = get_chapters_dir()
+        descriptions_file = get_character_descriptions_file()
+
+        if not os.path.exists(str(descriptions_file)):
+            log_output += "\ncharacters_descriptions.json not found. Please run Stage 4 first."
+            return log_output, None
+
+        # Load the specific character's description
+        with open(descriptions_file, "r", encoding="utf-8") as f:
+            descriptions = json.load(f)
+
+        if character_name not in descriptions:
+            log_output += f"\nCharacter '{character_name}' not found in descriptions."
+            return log_output, None
+
+        char_description = descriptions[character_name]
+
+        # Build command to regenerate just this character
+        cmd = [
+            sys.executable,
+            str(SCRIPT_DIR / "generate_voice_samples.py"),
+            "--descriptions", str(descriptions_file),
+            "--output-dir", str(chapters_dir),
+            "--single-character", character_name
+        ]
+
+        progress(0, desc=f"Regenerating {character_name}...")
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=str(SCRIPT_DIR)
+        )
+
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                line_stripped = line.strip()
+                log_output += f"\n{line_stripped}"
+                if "Generated:" in line_stripped:
+                    progress(1, desc="Done!")
+
+        process.stdout.close()
+        process.wait()
+
+        if process.returncode != 0:
+            if process.stderr:
+                log_output += f"\nErrors: {process.stderr.read()}"
+            log_output += "\nWarning: Process exited with non-zero code."
+            return log_output, None
+
+        # Return the path to the regenerated file
+        wav_path = get_character_wav_file(character_name, chapters_dir)
+        progress(1, desc="Done!")
+        log_output += f"\n\nVoice sample regenerated for: {character_name}"
+        return log_output, wav_path
+
+    except Exception as e:
+        log_output += f"\nError regenerating voice sample: {str(e)}"
+        return log_output, None
 
 
 # ============================================================================
@@ -593,6 +691,85 @@ def generate_full_audiobook(log_output, max_chapters=None, progress=gr.Progress(
     return log_output
 
 
+def generate_character_table():
+    """Generate a table showing character descriptions with audio players and redo buttons."""
+    chapters_dir = get_chapters_dir()
+    descriptions_file = get_character_descriptions_file()
+
+    if not os.path.exists(str(descriptions_file)):
+        return gr.Dataframe(value=[])
+
+    try:
+        with open(descriptions_file, "r", encoding="utf-8") as f:
+            descriptions = json.load(f)
+
+        # Get all generated wav files
+        wav_files = get_all_character_wav_files(chapters_dir)
+
+        # Build table data
+        table_data = []
+        for char_name, char_desc in descriptions.items():
+            # Check if wav file exists for this character
+            wav_path = wav_files.get(char_name)
+            if wav_path and os.path.exists(wav_path):
+                # Create audio player HTML with fixed height for audio controls
+                audio_html = f'<audio controls src="{wav_path}" style="width: 100%; height: 32px;"></audio>'
+                # Create redo button HTML
+                redo_btn = f'<button class="redo-btn" data-char="{char_name}">Redo</button>'
+                table_data.append([char_name, char_desc, audio_html, redo_btn])
+            else:
+                table_data.append([char_name, char_desc, "", "<button class=\"generate-btn\" data-char=\"{}\">Generate</button>".format(char_name)])
+
+        # Create dataframe with HTML datatype for audio and buttons
+        return gr.Dataframe(
+            headers=["Character", "Description", "Audio", "Action"],
+            datatype=["str", "str", "HTML", "HTML"],
+            value=table_data,
+            wrap=True
+        )
+
+    except Exception as e:
+        return gr.Dataframe(value=[])
+
+
+def on_character_table_select(evt: gr.SelectData, table_state, api_key, port, log_output):
+    """Handle button clicks in the character table."""
+    import re
+
+    # evt.value contains the cell value (the button HTML)
+    button_html = evt.value if evt.value else ""
+    character_name = evt.row[0] if evt.row and len(evt.row) > 0 else None
+
+    if not character_name:
+        return gr.State(None), log_output
+
+    # Check if it's a redo button
+    if "Redo" in button_html or "redo-btn" in button_html:
+        # Extract character name from data attribute
+        match = re.search(r'data-char="([^"]+)"', button_html)
+        if match:
+            char_name = match.group(1)
+            # Call the regenerate function
+            new_log, wav_path = regenerate_voice_sample(char_name, api_key, port, log_output)
+            # Refresh the table
+            new_table = generate_character_table()
+            return gr.State(new_table), new_log
+
+    # Check if it's a generate button
+    elif "Generate" in button_html or "generate-btn" in button_html:
+        # Extract character name from data attribute
+        match = re.search(r'data-char="([^"]+)"', button_html)
+        if match:
+            char_name = match.group(1)
+            log_output += f"\n\nWould regenerate voice sample for: {char_name}"
+            # Call the regenerate function anyway
+            new_log, wav_path = regenerate_voice_sample(char_name, api_key, port, log_output)
+            new_table = generate_character_table()
+            return gr.State(new_table), new_log
+
+    return gr.State(None), log_output
+
+
 # ============================================================================
 # Gradio Interface
 # ============================================================================
@@ -656,6 +833,15 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             describe_btn = gr.Button("Describe Characters", variant="secondary")
             descriptions_output = gr.Textbox(label="Character Descriptions")
 
+        # Character Descriptions Table (after Stage 4)
+        with gr.Accordion("Character Descriptions Table", open=False) as char_table_accordion:
+            character_table = gr.Dataframe(
+                headers=["Character", "Description", "Audio", "Action"],
+                datatype=["str", "str", "HTML", "HTML"],
+                label="Characters",
+                wrap=True
+            )
+
         # Stage 5: Voice Samples
         with gr.Accordion("Stage 5: Voice Samples", open=False) as stage5:
             gr.Markdown("Generate voice samples for each character using TTS.")
@@ -685,6 +871,9 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         with gr.Accordion("Generated Files", open=False):
             files_output = gr.Textbox(label="Chapter Files")
 
+        # Hidden state for character table updates
+        table_state = gr.State(None)
+
         # Event handlers
         parse_btn.click(
             fn=parse_epub_to_file,
@@ -708,12 +897,25 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             fn=describe_characters,
             inputs=[api_key_input, port_input, log_output],
             outputs=descriptions_output
+        ).then(
+            fn=generate_character_table,
+            outputs=character_table
         )
 
         voice_samples_btn.click(
             fn=generate_voice_samples,
             inputs=voice_samples_output,
             outputs=voice_samples_output
+        ).then(
+            fn=generate_character_table,
+            outputs=character_table
+        )
+
+        # Handle button clicks in character table
+        character_table.select(
+            fn=on_character_table_select,
+            inputs=[character_table, table_state, api_key_input, port_input, log_output],
+            outputs=[table_state, log_output]
         )
 
         tts_btn.click(

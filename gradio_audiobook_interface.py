@@ -2,13 +2,11 @@
 """
 Gradio Interface for Audiobook Pipeline
 
-A unified web interface for the 6-stage audiobook creation pipeline:
+A unified web interface for the 4-stage audiobook creation pipeline:
 1. EPUB Parsing
 2. LLM Speaker Labeling
-3. Chapter Analysis
-4. Character Description
-5. Voice Sample Generation
-6. Full Audiobook Generation
+3. Character Description
+4. Full Audiobook Generation
 """
 
 import gradio as gr
@@ -173,86 +171,74 @@ def process_chapters_for_labels(api_key, port, num_attempts, log_output, progres
     return log_output
 
 
-# ============================================================================
-# Stage 3: Chapter Analysis
-# ============================================================================
-
-def analyze_chapters(log_output, progress=gr.Progress()):
-    """Stage 3: Analyze chapter map files and generate statistics."""
-    log_output += "\n\nRunning chapter analysis..."
-
-    try:
-        # Check if map files exist
-        chapters_dir = get_chapters_dir()
-        map_files = glob.glob(str(chapters_dir / "*.map.json"))
-        if not map_files:
-            log_output += "\nNo .map.json files found. Please run Stage 2 first."
-            return log_output
-
-        # Count map files for progress
-        num_map_files = len(map_files)
-        progress(0, desc="Analyzing chapters...")
-
-        # Run analyze_chapters.py
-        cmd = [sys.executable, str(SCRIPT_DIR / "analyze_chapters.py"), str(chapters_dir), "--json-output", "--verbose"]
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(SCRIPT_DIR))
-
-        # Read output line by line for progress feedback
-        # Count lines with chapter progress markers
-        lines_with_chapter = 0
-        for line in iter(process.stdout.readline, ''):
-            if line:
-                log_output += f"\n{line.strip()}"
-                # Count lines that contain chapter info
-                if "Chapter" in line or "Loaded" in line or "Analyzing" in line:
-                    lines_with_chapter += 1
-                    progress(min(lines_with_chapter / (num_map_files + 1), 1.0), desc="Analyzing...")
-
-        process.stdout.close()
-        process.wait()
-
-        progress(1, desc="Stage 3 Complete")
-        log_output += "\n\nStage 3 complete!"
-        return log_output
-
-    except Exception as e:
-        log_output += f"\nError analyzing chapters: {str(e)}"
-        return log_output
-
-
-# ============================================================================
 # Stage 4: Character Descriptions
 # ============================================================================
+
+def get_characters_from_map_files(chapters_dir):
+    """Extract unique character names from map.json files."""
+    import glob
+    characters = set()
+
+    map_files = glob.glob(str(chapters_dir / "*.map.json"))
+    for map_file in map_files:
+        try:
+            with open(map_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            character_map = data[0] if isinstance(data, list) and len(data) > 0 else data.get("character_map", {})
+            # Get character names from character_map values
+            if isinstance(character_map, dict):
+                for char_name in character_map.values():
+                    if isinstance(char_name, str):
+                        characters.add(char_name)
+        except Exception:
+            pass
+
+    # Remove narrator from the list (described separately or not needed)
+    characters.discard("narrator")
+    return sorted(list(characters))
+
 
 def describe_characters(api_key, port, log_output, progress=gr.Progress()):
     """Stage 4: Use LLM to describe characters."""
     log_output += "\n\nGenerating character descriptions..."
 
     try:
-        # Check if characters.json exists
         chapters_dir = get_chapters_dir()
-        characters_file = chapters_dir / "characters.json"
-        if not os.path.exists(str(characters_file)):
-            log_output += "\ncharacters.json not found. Please run Stage 3 first."
+
+        # Check if map files exist (replacing characters.json dependency)
+        map_files = glob.glob(str(chapters_dir / "*.map.json"))
+        if not map_files:
+            log_output += "\nNo .map.json files found. Please run Stage 2 first."
             return log_output, None
 
-        # Load characters to get count for progress
-        with open(characters_file, "r", encoding="utf-8") as f:
-            characters_data = json.load(f)
-        num_characters = len(characters_data.get("characters", []))
+        # Extract characters directly from map files
+        characters = get_characters_from_map_files(chapters_dir)
+        num_characters = len(characters)
+
+        if num_characters == 0:
+            log_output += "\nNo characters found in map files. Please run Stage 2 first."
+            return log_output, None
 
         progress(0, desc=f"Character 0/{num_characters}")
+
+        log_output += f"\nFound {num_characters} characters from map files."
 
         # Run llm_describe_character.py with progress tracking
         cmd = [
             sys.executable,
             str(SCRIPT_DIR / "llm_describe_character.py"),
-            str(characters_file),
-            str(chapters_dir),
             "--api_key", api_key,
             "--port", port,
             "--verbose"
         ]
+
+        # Write characters to a temp file for the script to read
+        temp_characters_file = chapters_dir / "temp_characters.json"
+        with open(temp_characters_file, "w", encoding="utf-8") as f:
+            json.dump({"characters": characters}, f)
+
+        cmd.insert(2, str(temp_characters_file))
+        cmd.insert(3, str(chapters_dir))
 
         # Use subprocess with progress tracking
         process = subprocess.Popen(
@@ -553,72 +539,6 @@ def generate_tts_audio(log_output, max_chapters=None, progress=gr.Progress()):
         return log_output
 
 
-def validate_and_clip_audio(log_output, max_chapters=None, progress=gr.Progress()):
-    """Stage 6.2: Validate and clip audio with Whisper."""
-    log_output += "\n\n=== Stage 6.2: Validating and Clipping Audio ==="
-
-    try:
-        # Check if temporary audio files exist
-        chapters_dir = get_chapters_dir()
-        tmp_wavs = glob.glob(str(chapters_dir / "*.tmp.wav"))
-        if not tmp_wavs:
-            log_output += "\nNo temporary audio files found. Please run Stage 6.1 first."
-            return log_output
-
-        num_tmp_files = len(tmp_wavs)
-        log_output += f"\nFound {num_tmp_files} temporary audio files to validate..."
-
-        chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
-        num_chapters = len(chapter_files)
-        if max_chapters:
-            num_chapters = min(num_chapters, int(max_chapters))
-
-        # Get the list of already generated valid .wav files
-        valid_wavs = glob.glob(str(chapters_dir / "*.wav"))
-        valid_count = len(valid_wavs)
-
-        log_output += f"\nValidating audio files... (already validated: {valid_count})"
-
-        # The validation happens DURING generation in parse_epub.py
-        # We run parse_epub with --resume to continue the process
-        epub_path = str(chapters_dir / "uploaded.epub")
-        cmd = [sys.executable, str(SCRIPT_DIR / "parse_epub.py"), epub_path, "--resume", "--output-dir", str(chapters_dir)]
-        if max_chapters:
-            cmd.extend(["--max-chapters", str(max_chapters)])
-
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=str(SCRIPT_DIR)
-        )
-
-        processed_lines = 0
-        total_estimate = num_chapters * 100  # Rough estimate
-
-        for line in iter(process.stdout.readline, ''):
-            if line:
-                line_stripped = line.strip()
-                log_output += f"\n{line_stripped}"
-
-                # Parse line progress for validation
-                if "[LINE_PROGRESS]" in line_stripped:
-                    processed_lines += 1
-                    progress(processed_lines / total_estimate, desc="Validating audio")
-
-        process.stdout.close()
-        process.wait()
-
-        progress(1, desc="Validation Complete")
-        log_output += "\n\nStage 6.2 (Validation) complete!"
-        return log_output
-
-    except Exception as e:
-        log_output += f"\nError validating audio: {str(e)}"
-        return log_output
-
-
 def assemble_chapter_audiobooks(log_output, progress=gr.Progress()):
     """Stage 6.3: Assemble final chapter MP3 files from WAV files."""
     log_output += "\n\n=== Stage 6.3: Assembling Chapter MP3 Files ==="
@@ -683,16 +603,13 @@ def assemble_chapter_audiobooks(log_output, progress=gr.Progress()):
 
 
 def generate_full_audiobook(log_output, max_chapters=None, progress=gr.Progress()):
-    """Stage 6: Generate full audiobook - runs all 6.x steps in sequence."""
+    """Stage 6: Generate full audiobook - runs TTS generation and assembly."""
     log_output += "\n\n=== Stage 6: Full Audiobook Generation ==="
 
-    # Step 6.1: Generate TTS audio
+    # Step 6.1: Generate TTS audio (with embedded validation)
     log_output = generate_tts_audio(log_output, max_chapters, progress)
 
-    # Step 6.2: Validate and clip audio
-    log_output = validate_and_clip_audio(log_output, max_chapters, progress)
-
-    # Step 6.3: Assemble chapter MP3s
+    # Step 6.2: Assemble chapter MP3s
     log_output = assemble_chapter_audiobooks(log_output, progress)
 
     log_output += "\n\n=== Stage 6 Complete: Full Audiobook Generation ==="
@@ -820,20 +737,15 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             label_btn = gr.Button("Label All Chapters", variant="primary")
             log_output = gr.Textbox(label="Progress Log", lines=10, max_lines=20)
 
-        # Stage 3: Chapter Analysis
-        with gr.Accordion("Stage 3: Analyze Chapters", open=False) as stage3:
-            gr.Markdown("Analyze chapter map files and generate statistics.")
-            analyze_btn = gr.Button("Analyze Chapters", variant="secondary")
-            analysis_output = gr.Textbox(label="Analysis Results")
+        # Character Workflow (Describe, Generate Samples, Select Character)
+        with gr.Accordion("Character Workflow", open=False) as char_workflow_accordion:
+            gr.Markdown("### Character Descriptions & Voice Samples")
+            gr.Markdown("Generate character voice profiles and samples. Select a character below to regenerate individual voice samples.")
 
-        # Stage 4: Character Descriptions
-        with gr.Accordion("Stage 4: Describe Characters", open=False) as stage4:
-            gr.Markdown("Generate voice profiles for each character using LLM.")
+            # Describe characters button
             describe_btn = gr.Button("Describe Characters", variant="secondary")
-            descriptions_output = gr.Textbox(label="Character Descriptions")
 
-        # Character Descriptions Table (after Stage 4)
-        with gr.Accordion("Character Descriptions Table", open=False) as char_table_accordion:
+            # Character Descriptions Table
             character_table = gr.Dataframe(
                 headers=["Character", "Description"],
                 datatype=["str", "str"],
@@ -841,14 +753,13 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
                 wrap=True
             )
 
-        # State to track characters after Stage 4
-        characters_state = gr.State(None)
+            # Generate all voice samples button
+            voice_samples_btn = gr.Button("Generate All Voice Samples", variant="primary")
 
-        # Selected character audio and generation controls
-        with gr.Accordion("Selected Character", open=False) as char_detail_accordion:
+            # Selected character audio and generation controls
             with gr.Row():
                 with gr.Column():
-                    gr.Markdown("### Character Audio")
+                    gr.Markdown("##### Character Audio")
                     character_audio = gr.Audio(
                         label="Character Voice Sample",
                         type="filepath",
@@ -859,34 +770,21 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
                         visible=True
                     )
                 with gr.Column():
-                    gr.Markdown("### Generate Voice Sample")
+                    gr.Markdown("##### Generate Voice Sample")
                     generate_char_btn = gr.Button("Generate Voice Sample", variant="primary")
                     generate_char_output = gr.Textbox(label="Generation Status")
 
-        # Stage 5: Voice Samples
-        with gr.Accordion("Stage 5: Voice Samples", open=False) as stage5:
-            gr.Markdown("Generate voice samples for each character using TTS.")
-            voice_samples_btn = gr.Button("Generate Voice Samples", variant="secondary")
-            voice_samples_output = gr.Textbox(label="Voice Sample Results")
+        # State to track characters
+        characters_state = gr.State(None)
 
-        # Stage 6: Full Audiobook (3-step process)
-        with gr.Accordion("Stage 6: Generate Audiobook", open=False) as stage6:
+        # Stage 4: Full Audiobook Generation
+        with gr.Accordion("Stage 4: Generate Audiobook", open=False) as stage4:
             gr.Markdown("Generate the complete audiobook with all voices applied.")
-            gr.Markdown("### Step 6.1: Generate TTS Audio")
-            tts_btn = gr.Button("Generate TTS Audio", variant="secondary")
-            tts_output = gr.Textbox(label="TTS Audio Generation Results")
+            gr.Markdown("### Generate TTS Audio & Assemble")
+            tts_btn = gr.Button("Generate Full Audiobook", variant="primary")
+            tts_output = gr.Textbox(label="Audiobook Generation Results")
 
-            gr.Markdown("### Step 6.2: Validate and Clip Audio")
-            validate_btn = gr.Button("Validate and Clip Audio", variant="secondary")
-            validate_output = gr.Textbox(label="Validation Results")
-
-            gr.Markdown("### Step 6.3: Assemble Chapter MP3s")
-            assemble_btn = gr.Button("Assemble Chapter MP3s", variant="secondary")
-            assemble_output = gr.Textbox(label="Assembly Results")
-
-            gr.Markdown("### Full Pipeline")
-            audiobook_btn = gr.Button("Generate Full Audiobook (All Steps)", variant="primary")
-            audiobook_output = gr.Textbox(label="Full Audiobook Results")
+        # Output file display
 
         # Output file display
         with gr.Accordion("Generated Files", open=False):
@@ -905,30 +803,22 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             outputs=log_output
         )
 
-        analyze_btn.click(
-            fn=analyze_chapters,
-            inputs=log_output,
-            outputs=analysis_output
-        )
-
+        # Describe characters button - triggers character descriptions
         describe_btn.click(
             fn=describe_characters,
             inputs=[api_key_input, port_input, log_output],
-            outputs=[descriptions_output, characters_state]
+            outputs=[log_output, characters_state]
         ).then(
             fn=update_character_table,
             inputs=characters_state,
             outputs=character_table
         )
 
+        # Generate all voice samples button
         voice_samples_btn.click(
             fn=generate_voice_samples,
-            inputs=voice_samples_output,
-            outputs=voice_samples_output
-        ).then(
-            fn=update_character_table,
-            inputs=characters_state,
-            outputs=character_table
+            inputs=[log_output],
+            outputs=log_output
         )
 
         # State to track selected character
@@ -1001,32 +891,14 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         )
 
         tts_btn.click(
-            fn=generate_tts_audio,
+            fn=generate_full_audiobook,
             inputs=[tts_output, max_chapters_slider],
             outputs=tts_output
         )
 
-        validate_btn.click(
-            fn=validate_and_clip_audio,
-            inputs=[validate_output, max_chapters_slider],
-            outputs=validate_output
-        )
-
-        assemble_btn.click(
-            fn=assemble_chapter_audiobooks,
-            inputs=[assemble_output],
-            outputs=assemble_output
-        )
-
-        audiobook_btn.click(
-            fn=generate_full_audiobook,
-            inputs=[audiobook_output, max_chapters_slider],
-            outputs=audiobook_output
-        )
-
         # Update files list periodically
         gr.on(
-            triggers=[parse_btn.click, label_btn.click, analyze_btn.click],
+            triggers=[parse_btn.click, label_btn.click],
             fn=lambda: "\n".join(glob.glob(str(get_chapters_dir() / "*"))),
             outputs=files_output
         )

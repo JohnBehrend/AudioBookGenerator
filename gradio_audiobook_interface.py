@@ -570,18 +570,21 @@ def generate_tts_audio(
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             cwd=str(SCRIPT_DIR),
         )
 
-        # Track TTS generation progress
+        # Track TTS generation progress - stream output line by line
         for line in iter(process.stdout.readline, ""):
             if line:
                 log_output += f"\n{line.strip()}"
 
         process.stdout.close()
         process.wait()
+
+        if process.returncode != 0:
+            log_output += f"\nWarning: Process exited with non-zero code: {process.returncode}"
 
         log_output += "\n\nStage 5.1 (TTS Audio) complete!"
         return log_output, pipeline_state

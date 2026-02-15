@@ -758,19 +758,18 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
 
         # Single Progress Bar for all stages
         gr.Markdown("### Progress")
-        progress_bar = gr.Progress(track_tight=True, value=0)
+        progress_bar = gr.Progress()
 
         # Single Shared Log Output for all stages
         gr.Markdown("### Log Output")
         log_output = gr.Textbox(
             label="Pipeline Log",
             lines=8,
-            max_lines=30,
-            show_copy_button=True
+            max_lines=30
         )
 
         # Configuration and EPUB Parsing (required first step)
-        with gr.Accordion("Configuration & EPUB Parsing", open=True) as accordion1:
+        with gr.Accordion("Configuration & EPUB Parsing", open=True):
             gr.Markdown("### Pipeline Settings")
             with gr.Row():
                 api_key_input = gr.Textbox(
@@ -805,13 +804,13 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             chapter_count_display = gr.Number(label="Chapters Created", precision=0)
 
         # Stage 2: LLM Speaker Labeling
-        with gr.Accordion("Stage 2: Label Speakers", open=False) as accordion2:
+        with gr.Accordion("Stage 2: Label Speakers", open=False):
             gr.Markdown("Use LLM to identify speakers and attribute dialogue lines.")
             label_btn = gr.Button("Label All Chapters", variant="primary")
             label_output = gr.Textbox(label="Labeling Results", visible=False)
 
         # Character Workflow (Describe, Generate Samples, Select Character)
-        with gr.Accordion("Character Workflow", open=False) as accordion3:
+        with gr.Accordion("Character Workflow", open=False):
             gr.Markdown("### Character Descriptions & Voice Samples")
             gr.Markdown("Generate character voice profiles and samples. Select a character below to regenerate individual voice samples.")
 
@@ -848,7 +847,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
                     generate_char_output = gr.Textbox(label="Generation Status")
 
         # Stage 5: Full Audiobook Generation
-        with gr.Accordion("Stage 5: Generate Audiobook", open=False) as accordion4:
+        with gr.Accordion("Stage 5: Generate Audiobook", open=False):
             gr.Markdown("Generate the complete audiobook with all voices applied.")
             tts_btn = gr.Button("Generate Full Audiobook", variant="primary")
             tts_output = gr.Textbox(label="Audiobook Generation Results")
@@ -869,56 +868,27 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
 
         def update_button_visibility(state):
             """
-            Update button visibility and enabled state based on pipeline state.
-            Returns tuple of (accordion states, button visibilities)
+            Update button enabled state based on pipeline state.
+            Returns tuple of (parse_update, label_update, describe_update, voice_update, tts_update)
+            using gr.update() to properly update button states.
             """
             if state is None:
                 # Initial state: only Parse EPUB is enabled
-                return (
-                    True,   # accordion1 (EPUB Parsing) - always visible
-                    False,  # accordion2 (Label Speakers)
-                    False,  # accordion3 (Character Workflow)
-                    False,  # accordion4 (Generate Audiobook)
-                )
+                return gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False)
             elif state == PipelineState.EPUB_PARSED:
                 # EPUB parsed: can do Label Speakers
-                return (
-                    True,
-                    True,
-                    False,
-                    False
-                )
+                return gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False)
             elif state == PipelineState.LABELS_COMPLETE:
                 # Labels done: can describe characters
-                return (
-                    True,
-                    True,
-                    True,
-                    False
-                )
+                return gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=False)
             elif state == PipelineState.CHARACTERS_DESCRIBED:
                 # Characters described: can generate voice samples
-                return (
-                    True,
-                    True,
-                    True,
-                    False
-                )
+                return gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=False)
             elif state == PipelineState.VOICE_SAMPLES_COMPLETE:
                 # Voice samples done: can generate full audiobook
-                return (
-                    True,
-                    True,
-                    True,
-                    True
-                )
+                return gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True)
             else:  # AUDIOBOOK_COMPLETE or beyond
-                return (
-                    True,
-                    True,
-                    True,
-                    True
-                )
+                return gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True)
 
         # ============================================================================
         # EVENT HANDLERS
@@ -939,7 +909,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[accordion1, accordion2, accordion3, accordion4]
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, tts_btn]
         )
 
         # Label Speakers - Stage 2
@@ -950,7 +920,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[accordion1, accordion2, accordion3, accordion4]
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, tts_btn]
         )
 
         # Describe Characters - Stage 3
@@ -965,7 +935,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[accordion1, accordion2, accordion3, accordion4]
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, tts_btn]
         )
 
         # Generate All Voice Samples - Stage 4
@@ -976,7 +946,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[accordion1, accordion2, accordion3, accordion4]
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, tts_btn]
         )
 
         # Handle row selection in character table
@@ -1050,7 +1020,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[accordion1, accordion2, accordion3, accordion4]
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, tts_btn]
         )
 
         # Update files list periodically

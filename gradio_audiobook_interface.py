@@ -486,7 +486,9 @@ def load_chapter_maps(chapters_dir: Path, log_output: str = "") -> Tuple[Dict[in
             character_map = {int(k): v for k, v in character_map.items()}
             line_map = {int(k): v for k, v in line_map.items()}
 
-            chapter_idx = int(Path(map_file).stem.replace("chapter_", ""))
+            # Remove .map.json extension to get chapter filename
+            map_filename = Path(map_file).name.replace(".map.json", "")
+            chapter_idx = int(map_filename.replace("chapter_", ""))
             chapter_maps[chapter_idx] = (character_map, line_map)
         except Exception as e:
             log_output += f"\nError loading map file {map_file}: {e}"
@@ -567,7 +569,7 @@ def generate_tts_audio(
         import parse_epub
 
         # Determine device (use CUDA if available, default to cuda:0)
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         log_output += f"\nUsing device: {device}"
 
         # Setup TTS engine and validation model

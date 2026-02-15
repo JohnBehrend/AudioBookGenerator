@@ -939,11 +939,12 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             """Handle row selection in the character table."""
             # unused parameter to satisfy function signature
             _ = _characters_state
-            if evt is None or evt.row_value is None:
+            # Check for None/empty selection before accessing evt.row_value
+            if evt is None or evt.index is None:
                 return gr.update(visible=False), gr.update(visible=True), None, gr.update(value="Select a character to generate voice sample"), None
 
             # Get character name from the row data (first column)
-            character_name = evt.row_value[0] if len(evt.row_value) > 0 else None
+            character_name = evt.row_value[0] if evt.row_value and len(evt.row_value) > 0 else None
 
             if not character_name:
                 return gr.update(visible=False), gr.update(visible=True), None, gr.update(value="Select a character to generate voice sample"), None

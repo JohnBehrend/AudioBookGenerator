@@ -37,8 +37,7 @@ PIPELINE_STATE_CHARACTERS_DESCRIBED = "characters_described"
 PIPELINE_STATE_VOICE_SAMPLES_COMPLETE = "voice_samples_complete"
 PIPELINE_STATE_AUDIOBOOK_COMPLETE = "audiobook_complete"
 
-# File paths
-CHARACTERS_DESCRIPTIONS_FILE = SCRIPT_DIR / "characters_descriptions.json"
+# File paths - these are now managed dynamically per run
 
 # Default UI values
 DEFAULT_API_KEY = "lm-studio"
@@ -59,6 +58,22 @@ def get_chapters_dir() -> Optional[Path]:
         get_chapters_dir._chapters_dir = Path(get_chapters_dir._temp_dir) / "chapters"
         get_chapters_dir._chapters_dir.mkdir(parents=True, exist_ok=True)
     return get_chapters_dir._chapters_dir
+
+
+def get_characters_descriptions_file() -> Optional[Path]:
+    """Get the path to characters_descriptions.json in the temp directory."""
+    chapters_dir = get_chapters_dir()
+    if not chapters_dir:
+        return None
+    return chapters_dir / "characters_descriptions.json"
+
+
+def get_duplicate_replacement_map_file() -> Optional[Path]:
+    """Get the path to duplicate_replacement_map.json in the temp directory."""
+    chapters_dir = get_chapters_dir()
+    if not chapters_dir:
+        return None
+    return chapters_dir / "duplicate_replacement_map.json"
 
 
 def cleanup_temp_dir() -> None:
@@ -88,7 +103,8 @@ def get_pipeline_state() -> Optional[str]:
         return PIPELINE_STATE_EPUB_PARSED
 
     # Check for Stage 3 completion (characters descriptions)
-    if not CHARACTERS_DESCRIPTIONS_FILE.exists():
+    descriptions_file = get_characters_descriptions_file()
+    if not descriptions_file or not descriptions_file.exists():
         return PIPELINE_STATE_LABELS_COMPLETE
 
     # Check for Stage 4 completion (voice samples)
@@ -317,6 +333,7 @@ def describe_characters(
             "--api_key", api_key,
             "--port", port,
             "--verbose",
+            "--output-dir", str(chapters_dir),
         ]
 
         # Write characters to a temp file for the script to read
@@ -351,8 +368,9 @@ def describe_characters(
         log_output += "\n\nStage 3 complete!"
 
         # Load and return the character descriptions for state tracking
+        descriptions_file = get_characters_descriptions_file()
         try:
-            with open(CHARACTERS_DESCRIPTIONS_FILE, "r", encoding="utf-8") as f:
+            with open(descriptions_file, "r", encoding="utf-8") as f:
                 characters_state = json.load(f)
         except Exception:
             characters_state = {}
@@ -383,12 +401,13 @@ def generate_voice_samples(
         if not chapters_dir:
             return log_output + "\nError: Chapters directory not initialized.", pipeline_state
 
-        if not CHARACTERS_DESCRIPTIONS_FILE.exists():
+        descriptions_file = get_characters_descriptions_file()
+        if not descriptions_file or not descriptions_file.exists():
             log_output += "\ncharacters_descriptions.json not found. Please run Stage 3 (Describe Characters) first."
             return log_output, pipeline_state
 
         # Load descriptions to get count for progress
-        with open(CHARACTERS_DESCRIPTIONS_FILE, "r", encoding="utf-8") as f:
+        with open(descriptions_file, "r", encoding="utf-8") as f:
             descriptions = json.load(f)
 
         num_characters = len(descriptions)
@@ -398,7 +417,7 @@ def generate_voice_samples(
         cmd = [
             sys.executable,
             str(SCRIPT_DIR / "generate_voice_samples.py"),
-            "--descriptions", str(CHARACTERS_DESCRIPTIONS_FILE),
+            "--descriptions", str(descriptions_file),
             "--output-dir", str(chapters_dir),
         ]
 
@@ -447,12 +466,13 @@ def regenerate_voice_sample(
         if not chapters_dir:
             return log_output + "\nError: Chapters directory not initialized.", pipeline_state, None
 
-        if not CHARACTERS_DESCRIPTIONS_FILE.exists():
+        descriptions_file = get_characters_descriptions_file()
+        if not descriptions_file or not descriptions_file.exists():
             log_output += "\ncharacters_descriptions.json not found. Please run Stage 3 (Describe Characters) first."
             return log_output, pipeline_state, None
 
         # Load the specific character's description
-        with open(CHARACTERS_DESCRIPTIONS_FILE, "r", encoding="utf-8") as f:
+        with open(descriptions_file, "r", encoding="utf-8") as f:
             descriptions = json.load(f)
 
         if character_name not in descriptions:
@@ -465,7 +485,7 @@ def regenerate_voice_sample(
         cmd = [
             sys.executable,
             str(SCRIPT_DIR / "generate_voice_samples.py"),
-            "--descriptions", str(CHARACTERS_DESCRIPTIONS_FILE),
+            "--descriptions", str(descriptions_file),
             "--output-dir", str(chapters_dir),
             "--single-character", character_name,
         ]
@@ -526,7 +546,8 @@ def generate_tts_audio(
             return log_output, pipeline_state
 
         # Check if characters_descriptions.json exists
-        if not CHARACTERS_DESCRIPTIONS_FILE.exists():
+        descriptions_file = get_characters_descriptions_file()
+        if not descriptions_file or not descriptions_file.exists():
             log_output += "\ncharacters_descriptions.json not found. Please run Stage 3 (Describe Characters) first."
             return log_output, pipeline_state
 
@@ -678,11 +699,12 @@ def update_character_table(characters_state: Optional[Dict[str, Any]]) -> gr.Dat
     Returns:
         Updated Dataframe component with character data (2 columns: name, truncated_description)
     """
-    if not CHARACTERS_DESCRIPTIONS_FILE.exists() or characters_state is None:
+    descriptions_file = get_characters_descriptions_file()
+    if not descriptions_file or not descriptions_file.exists() or characters_state is None:
         return gr.Dataframe(value=[])
 
     try:
-        with open(CHARACTERS_DESCRIPTIONS_FILE, "r", encoding="utf-8") as f:
+        with open(descriptions_file, "r", encoding="utf-8") as f:
             descriptions = json.load(f)
 
         # Build table data with only character name and truncated description

@@ -358,6 +358,13 @@ def main() -> None:
         dest="wiki_url_template",
         help="Enable lookup on wiki using URL template (use {name} placeholder for character name)."
     )
+    parser.add_argument(
+        "--output-dir",
+        metavar="DIR",
+        dest="output_dir",
+        default=".",
+        help="Directory to save output files (characters_descriptions.json and duplicate_replacement_map.json)."
+    )
     args = parser.parse_args()
 
     client = OpenAI(
@@ -425,14 +432,14 @@ def main() -> None:
         deduped_descriptions = descriptions
 
         # Save duplicate replacement map to file
-        replacement_map_file = "duplicate_replacement_map.json"
+        replacement_map_file = os.path.join(args.output_dir, "duplicate_replacement_map.json")
         with open(replacement_map_file, 'w', encoding='utf-8') as f:
             json.dump(duplicate_replacement_map, f, indent=2, ensure_ascii=False)
         if args.verbose:
             print(f"Duplicate replacement map saved to: {replacement_map_file}")
 
         # Save results (replacing em dashes with regular hyphens)
-        output_file = "characters_descriptions.json"
+        output_file = os.path.join(args.output_dir, "characters_descriptions.json")
         with open(output_file, 'w', encoding='utf-8') as f:
             # Convert descriptions to JSON string and replace em dash with hyphen
             json_content = json.dumps(deduped_descriptions, indent=2, ensure_ascii=False)

@@ -711,21 +711,19 @@ def generate_character_table():
         for char_name, char_desc in descriptions.items():
             wav_path = wav_files.get(char_name)
             if wav_path and os.path.exists(wav_path):
-                # Use markdown with HTML for audio player
-                # Convert Windows backslashes to forward slashes for HTML
-                wav_path_url = wav_path.replace("\\", "/")
-                audio_html = f'<audio controls src="{wav_path_url}" style="width: 100%; height: 48px;"></audio>'
-                # Redo button with inline styles
-                redo_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Redo</button>'
-                table_data.append([char_name, char_desc, audio_html, redo_btn])
+                                # Play button with inline styles - using emoji symbol in Audio column
+                play_btn = f'<button style="background-color:#2196F3;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">▶</button>'
+                # Redo button with inline styles - using emoji symbol in Generate column
+                redo_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">↻</button>'
+                table_data.append([char_name, char_desc, play_btn, redo_btn])
             else:
-                # Generate button with inline styles
-                generate_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Generate</button>'
+                # Generate button with inline styles - using plus symbol in Generate column
+                generate_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">+</button>'
                 table_data.append([char_name, char_desc, "", generate_btn])
 
         # Use datatype=["str", "str", "markdown", "markdown"] to render HTML
         return gr.Dataframe(
-            headers=["Character", "Description", "Audio", "Action"],
+            headers=["Character", "Description", "Audio", "Generate"],
             datatype=["str", "str", "markdown", "markdown"],
             value=table_data,
             wrap=True
@@ -803,7 +801,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         # Character Descriptions Table (after Stage 4)
         with gr.Accordion("Character Descriptions Table", open=False) as char_table_accordion:
             character_table = gr.Dataframe(
-                headers=["Character", "Description", "Audio", "Action"],
+                headers=["Character", "Description", "Audio", "Generate"],
                 datatype=["str", "str", "markdown", "markdown"],
                 label="Characters",
                 wrap=True
@@ -895,16 +893,21 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             if not character_name:
                 return log, character_table
 
-            # Check if it's a redo button
-            if "Redo" in button_html:
+            # Check if it's a play button (triangle symbol)
+            if "▶" in button_html:
+                # The audio player in the Audio column handles playback
+                return log, character_table
+
+            # Check if it's a redo button (rotate symbol)
+            if "↻" in button_html:
                 # Call the regenerate function
                 new_log, _ = regenerate_voice_sample(character_name, _api_key, _port, log)
                 # Refresh the table
                 new_table = generate_character_table()
                 return new_log, new_table
 
-            # Check if it's a generate button
-            elif "Generate" in button_html:
+            # Check if it's a generate button (plus symbol)
+            elif "+" in button_html:
                 log += f"\n\nWould regenerate voice sample for: {character_name}"
                 # Call the regenerate function
                 new_log, _ = regenerate_voice_sample(character_name, _api_key, _port, log)

@@ -685,7 +685,7 @@ def update_character_table(characters_state):
         characters_state: gr.State containing dict of character_name -> description
 
     Returns:
-        Updated Dataframe component with character data (2 columns: name, description)
+        Updated Dataframe component with character data (2 columns: name, truncated_description)
     """
     descriptions_file = get_character_descriptions_file()
 
@@ -696,10 +696,12 @@ def update_character_table(characters_state):
         with open(descriptions_file, "r", encoding="utf-8") as f:
             descriptions = json.load(f)
 
-        # Build table data with only character name and description
+        # Build table data with only character name and truncated description
+        # Truncate to first 100 characters for table display
         table_data = []
         for char_name, char_desc in descriptions.items():
-            table_data.append([char_name, char_desc])
+            truncated_desc = char_desc[:100] + ("..." if len(char_desc) > 100 else "")
+            table_data.append([char_name, truncated_desc])
 
         return gr.Dataframe(
             headers=["Character", "Description"],
@@ -748,7 +750,6 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             label_btn = gr.Button("2. Label", variant="secondary", scale=1)
             describe_btn = gr.Button("3. Describe", variant="secondary", scale=1)
             voice_samples_btn = gr.Button("4. Voices", variant="secondary", scale=1)
-            generate_char_btn = gr.Button("5. Regen", variant="secondary", scale=1)
             tts_btn = gr.Button("6. Audiobook", variant="primary", scale=1)
 
         # Log output with state on same element
@@ -762,8 +763,12 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             max_height=100
         )
 
-        # Audio player (hidden until needed)
-        character_audio = gr.Audio(label="", type="filepath", visible=False)
+        # Audio player with Regen button
+        with gr.Row():
+            # Audio player (hidden until needed)
+            character_audio = gr.Audio(label="", type="filepath", visible=False)
+            # Regen button (only visible when audio is visible)
+            generate_char_btn = gr.Button("Regen", variant="secondary", scale=1, visible=False)
 
         # State to track characters
         characters_state = gr.State(None)
@@ -890,28 +895,61 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         )
 
         # Handle row selection in character table - show audio when character selected
-        def on_character_select_simple(evt: gr.SelectData, _characters_state):
+        def on_character_select(evt: gr.SelectData, characters_state):
             """Handle row selection in the character table."""
             if evt is None or evt.index is None:
-                return gr.update(visible=False)
+                return gr.update(visible=False, value=None), gr.update(visible=False)
 
             character_name = evt.row_value[0] if evt.row_value and len(evt.row_value) > 0 else None
 
             if not character_name:
-                return gr.update(visible=False)
+                return gr.update(visible=False, value=None), gr.update(visible=False)
 
             chapters_dir = get_chapters_dir()
             wav_path = get_character_wav_file(character_name, chapters_dir)
 
             if wav_path and os.path.exists(wav_path):
-                return gr.update(visible=True)
+                return gr.update(visible=True, value=wav_path), gr.update(visible=True)
             else:
-                return gr.update(visible=False)
+                return gr.update(visible=False, value=None), gr.update(visible=False)
 
         character_table.select(
-            fn=on_character_select_simple,
+            fn=on_character_select,
             inputs=[characters_state],
-            outputs=character_audio
+            outputs=[character_audio, generate_char_btn]
+        )
+
+        # Regenerate voice sample for selected character
+        def on_regenerate_click(selected_row, api_key, port, pipeline_state, log_output):
+            """Extract character name from selected row and regenerate voice sample."""
+            if selected_row is None:
+                return log_output, pipeline_state, None
+
+            # Get character name from the first column of the selected row
+            character_name = selected_row[0] if isinstance(selected_row, list) and len(selected_row) > 0 else None
+
+            if not character_name:
+                log_output += "\nNo character selected."
+                return log_output, pipeline_state, None
+
+            return regenerate_voice_sample(character_name, api_key, port, pipeline_state, log_output)
+
+        generate_char_btn.click(
+            fn=on_regenerate_click,
+            inputs=[character_table, api_key_input, port_input, pipeline_state, log_output],
+            outputs=[log_output, pipeline_state, character_audio]
+        ).then(
+            fn=update_button_visibility,
+            inputs=pipeline_state,
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
+        ).then(
+            fn=update_state_display,
+            inputs=pipeline_state,
+            outputs=log_output
+        ).then(
+            fn=update_character_table,
+            inputs=characters_state,
+            outputs=character_table
         )
 
         # Generate Full Audiobook - Stage 5

@@ -455,14 +455,15 @@ def regenerate_voice_sample(
 # ============================================================================
 
 
-def load_chapter_maps(chapters_dir: Path) -> Dict[int, Tuple[Dict, Dict]]:
+def load_chapter_maps(chapters_dir: Path, log_output: str = "") -> Tuple[Dict[int, Tuple[Dict, Dict]], str]:
     """Load all chapter map files from the chapters directory.
 
     Args:
         chapters_dir: Path to the chapters directory
+        log_output: Initial log output string
 
     Returns:
-        Dict mapping chapter index -> (character_map, line_map)
+        Tuple of (Dict mapping chapter index -> (character_map, line_map), updated log_output)
     """
     chapter_maps = {}
     map_files = sorted(glob.glob(str(chapters_dir / "*.map.json")))
@@ -490,7 +491,7 @@ def load_chapter_maps(chapters_dir: Path) -> Dict[int, Tuple[Dict, Dict]]:
         except Exception as e:
             log_output += f"\nError loading map file {map_file}: {e}"
 
-    return chapter_maps
+    return chapter_maps, log_output
 
 
 def generate_tts_audio(
@@ -539,7 +540,7 @@ def generate_tts_audio(
             return log_output, pipeline_state
 
         # Load chapter maps for character/line mapping
-        chapter_maps = load_chapter_maps(chapters_dir)
+        chapter_maps, log_output = load_chapter_maps(chapters_dir, log_output)
 
         # Count chapters for progress tracking
         chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))

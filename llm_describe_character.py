@@ -499,7 +499,7 @@ def main() -> None:
 # MODULE FUNCTIONS FOR GRADIO INTERFACE
 # ============================================================================
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 
 def describe_characters_in_dir(

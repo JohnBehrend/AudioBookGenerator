@@ -137,7 +137,6 @@ def get_characters_from_map_files(chapters_dir: Path) -> List[str]:
         except Exception:
             pass
 
-    characters.discard("narrator")
     return sorted(list(characters))
 
 
@@ -335,14 +334,6 @@ def describe_characters(
             "--verbose",
             "--output-dir", str(chapters_dir),
         ]
-
-        # Write characters to a temp file for the script to read
-        temp_characters_file = chapters_dir / "temp_characters.json"
-        with open(temp_characters_file, "w", encoding="utf-8") as f:
-            json.dump({"characters": characters}, f)
-
-        cmd.insert(2, str(temp_characters_file))
-        cmd.insert(3, str(chapters_dir))
 
         process = subprocess.Popen(
             cmd,

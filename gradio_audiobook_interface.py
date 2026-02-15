@@ -234,7 +234,7 @@ def describe_characters(api_key, port, log_output, progress=gr.Progress()):
         characters_file = chapters_dir / "characters.json"
         if not os.path.exists(str(characters_file)):
             log_output += "\ncharacters.json not found. Please run Stage 3 first."
-            return log_output
+            return log_output, None
 
         # Load characters to get count for progress
         with open(characters_file, "r", encoding="utf-8") as f:
@@ -285,11 +285,19 @@ def describe_characters(api_key, port, log_output, progress=gr.Progress()):
 
         progress(1, desc="Stage 4 Complete")
         log_output += "\n\nStage 4 complete!"
-        return log_output
+
+        # Load and return the character descriptions for state tracking
+        try:
+            with open(get_character_descriptions_file(), "r", encoding="utf-8") as f:
+                characters_state = json.load(f)
+        except Exception:
+            characters_state = {}
+
+        return log_output, characters_state
 
     except Exception as e:
         log_output += f"\nError describing characters: {str(e)}"
-        return log_output
+        return log_output, None
 
 
 # ============================================================================
@@ -691,12 +699,21 @@ def generate_full_audiobook(log_output, max_chapters=None, progress=gr.Progress(
     return log_output
 
 
-def generate_character_table():
-    """Generate a table showing character descriptions with audio players and redo buttons."""
+def update_character_table(characters_state):
+    """
+    Update the character table based on stored character state.
+    Uses gr.State to track characters after Stage 4.
+
+    Args:
+        characters_state: gr.State containing dict of character_name -> description
+
+    Returns:
+        Updated Dataframe component with character data
+    """
     chapters_dir = get_chapters_dir()
     descriptions_file = get_character_descriptions_file()
 
-    if not os.path.exists(str(descriptions_file)):
+    if not os.path.exists(str(descriptions_file)) or characters_state is None:
         return gr.Dataframe(value=[])
 
     try:
@@ -711,7 +728,7 @@ def generate_character_table():
         for char_name, char_desc in descriptions.items():
             wav_path = wav_files.get(char_name)
             if wav_path and os.path.exists(wav_path):
-                                # Play button with inline styles - using emoji symbol in Audio column
+                # Play button with inline styles - using emoji symbol in Audio column
                 play_btn = f'<button style="background-color:#2196F3;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">▶</button>'
                 # Redo button with inline styles - using emoji symbol in Generate column
                 redo_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">↻</button>'
@@ -807,6 +824,9 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
                 wrap=True
             )
 
+        # State to track characters after Stage 4
+        characters_state = gr.State(None)
+
         # Stage 5: Voice Samples
         with gr.Accordion("Stage 5: Voice Samples", open=False) as stage5:
             gr.Markdown("Generate voice samples for each character using TTS.")
@@ -859,9 +879,10 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         describe_btn.click(
             fn=describe_characters,
             inputs=[api_key_input, port_input, log_output],
-            outputs=descriptions_output
+            outputs=[descriptions_output, characters_state]
         ).then(
-            fn=generate_character_table,
+            fn=update_character_table,
+            inputs=characters_state,
             outputs=character_table
         )
 
@@ -870,12 +891,13 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             inputs=voice_samples_output,
             outputs=voice_samples_output
         ).then(
-            fn=generate_character_table,
+            fn=update_character_table,
+            inputs=characters_state,
             outputs=character_table
         )
 
         # Handle button clicks in character table
-        def on_table_select(evt: gr.SelectData, _api_key, _port, log):
+        def on_table_select(evt: gr.SelectData, _api_key, _port, _log, _characters_state):
             """Handle button clicks in the character table."""
 
             # evt.value contains the cell value (button HTML)
@@ -884,42 +906,42 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             row_value = evt.row_value if evt.row_value else None
 
             if row_value is None:
-                return log, character_table
+                return _log, _characters_state, character_table
 
             # Get character name from the row data (first column)
             # evt.row_value is a list, not a pandas Series
             character_name = row_value[0] if len(row_value) > 0 else None
 
             if not character_name:
-                return log, character_table
+                return _log, _characters_state, character_table
 
             # Check if it's a play button (triangle symbol)
             if "▶" in button_html:
                 # The audio player in the Audio column handles playback
-                return log, character_table
+                return _log, _characters_state, character_table
 
             # Check if it's a redo button (rotate symbol)
             if "↻" in button_html:
                 # Call the regenerate function
-                new_log, _ = regenerate_voice_sample(character_name, _api_key, _port, log)
-                # Refresh the table
-                new_table = generate_character_table()
-                return new_log, new_table
+                new_log, _ = regenerate_voice_sample(character_name, _api_key, _port, _log)
+                # Refresh the table using state
+                new_table = update_character_table(_characters_state)
+                return new_log, _characters_state, new_table
 
             # Check if it's a generate button (plus symbol)
             elif "+" in button_html:
-                log += f"\n\nWould regenerate voice sample for: {character_name}"
+                _log += f"\n\nWould regenerate voice sample for: {character_name}"
                 # Call the regenerate function
-                new_log, _ = regenerate_voice_sample(character_name, _api_key, _port, log)
-                new_table = generate_character_table()
-                return new_log, new_table
+                new_log, _ = regenerate_voice_sample(character_name, _api_key, _port, _log)
+                new_table = update_character_table(_characters_state)
+                return new_log, _characters_state, new_table
 
-            return log, character_table
+            return _log, _characters_state, character_table
 
         character_table.select(
             fn=on_table_select,
-            inputs=[api_key_input, port_input, log_output],
-            outputs=[log_output, character_table]
+            inputs=[api_key_input, port_input, log_output, characters_state],
+            outputs=[log_output, characters_state, character_table]
         )
 
         tts_btn.click(

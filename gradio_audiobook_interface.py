@@ -501,7 +501,7 @@ def generate_tts_audio(
     log_output: str,
     max_chapters: Optional[int],
 ) -> Tuple[str, Optional[str]]:
-    """Stage 5.1: Generate TTS audio for each line/voice using direct function calls."""
+    """Stage 5.1: Generate TTS audio for each line/voice."""
     log_output += "\n\n=== Stage 5.1: Generating TTS Audio ==="
 
     try:
@@ -564,116 +564,32 @@ def generate_tts_audio(
             log_output += "\nError: No chapters found in EPUB file."
             return log_output, pipeline_state
 
-        # Import and use the modular parse_epub functions
-        import torch
+        # Import parse_epub to use generate_audiobook_from_chapters
         import parse_epub
+        import torch
 
         # Determine device (use CUDA if available, default to cuda:0)
         device = "cuda" if torch.cuda.is_available() else "cpu"
         log_output += f"\nUsing device: {device}"
 
-        # Setup TTS engine and validation model
-        log_output += "\nInitializing TTS model..."
-        tts_model, processor, _ = parse_epub.setup_tts_engine(device)
-        log_output += "\nInitializing validation model..."
-        validation_model = parse_epub.setup_validation_model(device)
-        voice_mapper = parse_epub.VoiceMapper()
-
+        # Use the unified generate_audiobook_from_chapters function
+        verbose = True
+        tts_engine = os.environ.get('TTS_ENGINE', 'kugelaudio')
         cfg_scale = 1.30
-        short_text_postfix = "and also with you?"
-        postfix_detect_token = parse_epub.distill_string(short_text_postfix.strip().split(" ")[0])
 
-        # Process each chapter
-        for i, chapter in enumerate(chapters):
-            if i >= num_chapters:
-                break
+        status, processed = parse_epub.generate_audiobook_from_chapters(
+            chapters=chapters,
+            chapter_maps=chapter_maps,
+            voices_map=voices_map,
+            output_dir=str(chapters_dir),
+            device=device,
+            tts_engine=tts_engine,
+            cfg_scale=cfg_scale,
+            max_chapters=max_chapters,
+            verbose=verbose
+        )
 
-            # Check if already generated (resume mode)
-            if os.path.exists(chapters_dir / f"chapter_{str(i).zfill(2)}.mp3"):
-                log_output += f"\nSkipping chapter {i} (already exists)"
-                continue
-
-            log_output += f"\n[CHAPTER_START] Chapter {i}/{len(chapters)}"
-
-            # Get chapter map if available
-            chapter_map = chapter_maps.get(i)
-            if chapter_map:
-                character_map, line_map = chapter_map
-                line_to_character_map = {k: character_map[v] for k, v in line_map.items()}
-
-                # Assign speakers based on line map
-                for cobj in chapter:
-                    if cobj.has_quotes:
-                        if cobj.line_num in line_map.keys():
-                            char_name = line_to_character_map.get(cobj.line_num, "narrator")
-                            cobj.set_speaker(char_name)
-                        else:
-                            cobj.set_speaker("narrator")
-                    else:
-                        cobj.set_speaker("narrator")
-
-            # Get unique voices used in this chapter
-            voices_used = []
-            for chapter_obj in chapter:
-                speaker = chapter_obj.get_speaker()
-                if speaker not in voices_used:
-                    voices_used.append(speaker)
-
-            # Generate TTS for each voice in this chapter
-            for voice in voices_used:
-                already_generated = [
-                    int(x.split(".")[-2])
-                    for x in glob.glob(str(chapters_dir / f"chapter_{str(i).zfill(2)}.*.wav"))
-                    if not x.endswith(".tmp.wav")
-                ]
-
-                for j, chapter_obj in enumerate(chapter):
-                    if voice != chapter_obj.get_speaker():
-                        continue
-                    if j in already_generated:
-                        log_output += f"\nSkipping chapter {i}.{j} (already generated)"
-                        continue
-
-                    # Generate TTS for this line
-                    success, ratio = parse_epub.generate_tts_for_line(
-                        chapter_idx=i,
-                        line_idx=j,
-                        text=chapter_obj.text,
-                        voice_name=voice,
-                        tts_model=tts_model,
-                        processor=processor,
-                        voice_mapper=voice_mapper,
-                        device=device,
-                        tts_engine=os.environ.get('TTS_ENGINE', 'kugelaudio'),
-                        cfg_scale=cfg_scale,
-                        output_dir=str(chapters_dir),
-                        short_text_postfix=short_text_postfix,
-                        validation_model=validation_model,
-                        verbose=True
-                    )
-
-                    log_output += f"\n[LINE_PROGRESS] Chapter {i}, Line {j+1}/{len(chapter)}, Voice: {voice}, Ratio: {int(ratio * 100)}"
-
-            # Assemble chapter MP3 from WAV files
-            wav_files = sorted(glob.glob(str(chapters_dir / f"chapter_{str(i).zfill(2)}.*.wav")))
-            if wav_files:
-                audio = parse_epub.get_non_silent_audio_from_wavs(wav_files)
-                mp3_path = chapters_dir / f"chapter_{str(i).zfill(2)}.mp3"
-                audio.export(str(mp3_path), format="mp3")
-
-                # Clean up individual WAV files
-                for wav in wav_files:
-                    os.unlink(wav)
-
-                log_output += f"\nChapter {i}: Created {mp3_path.name} from {len(wav_files)} audio segments."
-            else:
-                log_output += f"\nChapter {i}: No WAV files generated."
-
-            log_output += f"\n[CHAPTER_COMPLETE] Chapter {i}/{len(chapters)}"
-
-            # Clear cache periodically
-            torch.cuda.empty_cache()
-
+        log_output += f"\n{status}"
         log_output += "\n\nStage 5.1 (TTS Audio) complete!"
         return log_output, pipeline_state
 

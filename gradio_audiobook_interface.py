@@ -790,7 +790,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
                 PipelineState.VOICE_SAMPLES_COMPLETE: "Voice Samples Ready",
                 PipelineState.AUDIOBOOK_COMPLETE: "Audiobook Complete"
             }
-            return (gr.update(value=state_labels.get(state, "Unknown")),)
+            return gr.update(value=state_labels.get(state, "Unknown"))
 
         def update_button_visibility(state):
             """
@@ -839,7 +839,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             fn=lambda: PipelineState.EPUB_PARSED,
             outputs=pipeline_state
         ).then(
-            fn=lambda s: update_button_visibility(s) + update_state_display(s),
+            fn=lambda s: list(update_button_visibility(s)) + [update_state_display(s)],
             inputs=pipeline_state,
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn, state_display]
         )

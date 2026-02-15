@@ -333,17 +333,20 @@ def generate_voice_samples(log_output, progress=gr.Progress()):
         )
 
         # Read output line by line to track progress
+        import re
         processed_chars = 0
         for line in iter(process.stdout.readline, ''):
             if line:
-                log_output += f"\n{line.strip()}"
+                line_stripped = line.strip()
+                log_output += f"\n{line_stripped}"
+
                 # Parse progress from output format: [1/10] character_name
-                import re
-                match = re.search(r'\[(\d+)/(\d+)\]', line)
+                match = re.search(r'\[(\d+)/(\d+)\]\s+(\w+)', line_stripped)
                 if match:
                     processed_chars = int(match.group(1))
                     total_chars = int(match.group(2))
-                    progress(processed_chars / total_chars, desc=f"Character {processed_chars}/{total_chars}")
+                    char_name = match.group(3)
+                    progress(processed_chars / total_chars, desc=f"Creating {char_name}.wav ({processed_chars}/{total_chars})")
 
         process.stdout.close()
         process.wait()

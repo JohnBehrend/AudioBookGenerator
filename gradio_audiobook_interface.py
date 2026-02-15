@@ -507,8 +507,9 @@ def create_interface():
     with gr.Blocks(theme=gr.themes.Soft()) as demo:
         gr.Markdown("# Audiobook Pipeline Interface")
 
-        # API Configuration
-        with gr.Accordion("API Configuration", open=False):
+        # Configuration and EPUB Parsing (required first step)
+        with gr.Accordion("Configuration & EPUB Parsing", open=True):
+            gr.Markdown("### Pipeline Settings")
             with gr.Row():
                 api_key_input = gr.Textbox(
                     label="LLM API Key",
@@ -527,14 +528,6 @@ def create_interface():
                     step=1,
                     label="Number of LLM Attempts"
                 )
-
-        # Stage 1: EPUB Parsing
-        with gr.Accordion("Stage 1: EPUB Parsing", open=True) as stage1:
-            gr.Markdown("Upload an EPUB file and parse it into chapter text files.")
-            epub_upload = gr.File(label="Upload EPUB File", file_types=[".epub"])
-            parse_btn = gr.Button("Parse EPUB", variant="primary")
-            parse_output = gr.Textbox(label="Status")
-            chapter_count_display = gr.Number(label="Chapters Created", precision=0)
             max_chapters_slider = gr.Slider(
                 minimum=1,
                 maximum=100,
@@ -543,32 +536,38 @@ def create_interface():
                 label="Max Chapters to Generate"
             )
 
+            gr.Markdown("### EPUB File")
+            epub_upload = gr.File(label="Upload EPUB File", file_types=[".epub"])
+            parse_btn = gr.Button("Parse EPUB", variant="primary")
+            parse_output = gr.Textbox(label="Status")
+            chapter_count_display = gr.Number(label="Chapters Created", precision=0)
+
         # Stage 2: LLM Speaker Labeling
-        with gr.Accordion("Stage 2: LLM Speaker Labeling", open=False) as stage2:
+        with gr.Accordion("Stage 2: Label Speakers", open=False) as stage2:
             gr.Markdown("Use LLM to identify speakers and attribute dialogue lines.")
             label_btn = gr.Button("Label All Chapters", variant="primary")
             log_output = gr.Textbox(label="Progress Log", lines=10, max_lines=20)
 
         # Stage 3: Chapter Analysis
-        with gr.Accordion("Stage 3: Chapter Analysis", open=False) as stage3:
+        with gr.Accordion("Stage 3: Analyze Chapters", open=False) as stage3:
             gr.Markdown("Analyze chapter map files and generate statistics.")
             analyze_btn = gr.Button("Analyze Chapters", variant="secondary")
             analysis_output = gr.Textbox(label="Analysis Results")
 
         # Stage 4: Character Descriptions
-        with gr.Accordion("Stage 4: Character Descriptions", open=False) as stage4:
+        with gr.Accordion("Stage 4: Describe Characters", open=False) as stage4:
             gr.Markdown("Generate voice profiles for each character using LLM.")
             describe_btn = gr.Button("Describe Characters", variant="secondary")
             descriptions_output = gr.Textbox(label="Character Descriptions")
 
         # Stage 5: Voice Samples
-        with gr.Accordion("Stage 5: Voice Sample Generation", open=False) as stage5:
+        with gr.Accordion("Stage 5: Voice Samples", open=False) as stage5:
             gr.Markdown("Generate voice samples for each character using TTS.")
             voice_samples_btn = gr.Button("Generate Voice Samples", variant="secondary")
             voice_samples_output = gr.Textbox(label="Voice Sample Results")
 
         # Stage 6: Full Audiobook
-        with gr.Accordion("Stage 6: Full Audiobook Generation", open=False) as stage6:
+        with gr.Accordion("Stage 6: Generate Audiobook", open=False) as stage6:
             gr.Markdown("Generate the complete audiobook with all voices applied.")
             audiobook_btn = gr.Button("Generate Full Audiobook", variant="primary")
             audiobook_output = gr.Textbox(label="Audiobook Generation Results")

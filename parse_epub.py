@@ -45,20 +45,6 @@ import whisperx
 import pydub
 from pydub import AudioSegment
 
-# Filter audio files - try to import from sidon_demo_app, provide fallback
-try:
-    from sidon_demo_app import denoise_speech
-except ImportError:
-    # Fallback: simple noise reduction using scipy
-    from scipy.signal import wiener
-
-    def denoise_speech(audio_data):
-        """Simple fallback denoising using Wiener filter."""
-        sample_rate, waveform = audio_data
-        # Apply Wiener filter for noise reduction
-        denoised = wiener(waveform.astype(np.float32))
-        return sample_rate, denoised.astype(np.int16)
-
 import pandas as pd
 
 # consistent seeding
@@ -404,7 +390,6 @@ def generate_tts_for_line(
 
         # send through a cleaning ML algo
         sample_rate, waveform = wavfile.read(output_path)
-        sample_rate, waveform = denoise_speech((sample_rate, waveform))
         wavfile.write(output_path, sample_rate, waveform)
 
         if validation_model is not None:

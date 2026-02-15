@@ -709,22 +709,22 @@ def generate_character_table():
         # Build table data
         table_data = []
         for char_name, char_desc in descriptions.items():
-            # Check if wav file exists for this character
             wav_path = wav_files.get(char_name)
             if wav_path and os.path.exists(wav_path):
-                # Create audio player HTML with fixed height for audio controls
+                # Use markdown with HTML for audio player
                 audio_html = f'<audio controls src="{wav_path}" style="width: 100%; height: 32px;"></audio>'
-                # Create redo button HTML with inline styles for better compatibility
-                redo_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Redo</button>'
+                # Redo button with inline styles
+                redo_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Redo</button>'
                 table_data.append([char_name, char_desc, audio_html, redo_btn])
             else:
-                generate_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Generate</button>'
+                # Generate button with inline styles
+                generate_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Generate</button>'
                 table_data.append([char_name, char_desc, "", generate_btn])
 
-        # Create dataframe with HTML datatype for audio and buttons
+        # Use datatype=["str", "str", "markdown", "markdown"] to render HTML
         return gr.Dataframe(
             headers=["Character", "Description", "Audio", "Action"],
-            datatype=["str", "str", "HTML", "HTML"],
+            datatype=["str", "str", "markdown", "markdown"],
             value=table_data,
             wrap=True
         )
@@ -802,7 +802,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         with gr.Accordion("Character Descriptions Table", open=False) as char_table_accordion:
             character_table = gr.Dataframe(
                 headers=["Character", "Description", "Audio", "Action"],
-                datatype=["str", "str", "HTML", "HTML"],
+                datatype=["str", "str", "markdown", "markdown"],
                 label="Characters",
                 wrap=True
             )
@@ -875,42 +875,40 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         )
 
         # Handle button clicks in character table
-        def on_table_select(evt: gr.SelectData, api_key, port, log):
+        def on_table_select(evt: gr.SelectData, _api_key, _port, log):
             """Handle button clicks in the character table."""
-            import re
 
-            # evt.value contains the cell value (the button HTML)
+            # evt.value contains the cell value (button HTML)
             button_html = evt.value if evt.value else ""
-            character_name = evt.row[0] if evt.row and len(evt.row) > 0 else None
+            # evt.row_value contains the full row as a pandas Series
+            row_value = evt.row_value if evt.row_value else None
+
+            if row_value is None:
+                return log, character_table
+
+            # Get character name from the row data (first column)
+            character_name = row_value.iloc[0] if len(row_value) > 0 else None
 
             if not character_name:
-                return log
+                return log, character_table
 
             # Check if it's a redo button
-            if "Redo" in button_html or "redo-btn" in button_html:
-                # Extract character name from data attribute
-                match = re.search(r'data-char="([^"]+)"', button_html)
-                if match:
-                    char_name = match.group(1)
-                    # Call the regenerate function
-                    new_log, _ = regenerate_voice_sample(char_name, api_key, port, log)
-                    # Refresh the table
-                    new_table = generate_character_table()
-                    return new_log, new_table
+            if "Redo" in button_html:
+                # Call the regenerate function
+                new_log, _ = regenerate_voice_sample(character_name, _api_key, _port, log)
+                # Refresh the table
+                new_table = generate_character_table()
+                return new_log, new_table
 
             # Check if it's a generate button
-            elif "Generate" in button_html or "generate-btn" in button_html:
-                # Extract character name from data attribute
-                match = re.search(r'data-char="([^"]+)"', button_html)
-                if match:
-                    char_name = match.group(1)
-                    log += f"\n\nWould regenerate voice sample for: {char_name}"
-                    # Call the regenerate function anyway
-                    new_log, _ = regenerate_voice_sample(char_name, api_key, port, log)
-                    new_table = generate_character_table()
-                    return new_log, new_table
+            elif "Generate" in button_html:
+                log += f"\n\nWould regenerate voice sample for: {character_name}"
+                # Call the regenerate function
+                new_log, _ = regenerate_voice_sample(character_name, _api_key, _port, log)
+                new_table = generate_character_table()
+                return new_log, new_table
 
-            return log, character_table  # Return unchanged
+            return log, character_table
 
         character_table.select(
             fn=on_table_select,

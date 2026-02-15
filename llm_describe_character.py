@@ -445,7 +445,13 @@ def main() -> None:
         for char, desc in deduped_descriptions.items():
             # Show first line of description
             first_line = desc.split('\n')[0][:80]
-            print(f"  - {char}: {first_line}...")
+            # Handle Windows console encoding issues
+            try:
+                print(f"  - {char}: {first_line}...")
+            except UnicodeEncodeError:
+                # Fallback for Windows console
+                safe_line = first_line.encode('utf-8', errors='replace').decode('utf-8')
+                print(f"  - {char}: {safe_line}...")
 
 
 if __name__ == "__main__":

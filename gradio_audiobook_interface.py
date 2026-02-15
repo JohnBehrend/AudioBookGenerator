@@ -773,6 +773,9 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         # State to track characters
         characters_state = gr.State(None)
 
+        # State to track selected character for Regen button
+        selected_character = gr.State(None)
+
         # State to track pipeline state
         pipeline_state = gr.State(None)
 
@@ -895,48 +898,42 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         )
 
         # Handle row selection in character table - show audio when character selected
-        def on_character_select(evt: gr.SelectData, characters_state):
+        def on_character_select(evt: gr.SelectData, characters_state, _selected_character):
             """Handle row selection in the character table."""
             if evt is None or evt.index is None:
-                return gr.update(visible=False, value=None), gr.update(visible=False)
+                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
 
             character_name = evt.row_value[0] if evt.row_value and len(evt.row_value) > 0 else None
 
             if not character_name:
-                return gr.update(visible=False, value=None), gr.update(visible=False)
+                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
 
             chapters_dir = get_chapters_dir()
             wav_path = get_character_wav_file(character_name, chapters_dir)
 
             if wav_path and os.path.exists(wav_path):
-                return gr.update(visible=True, value=wav_path), gr.update(visible=True)
+                return gr.update(visible=True, value=wav_path), gr.update(visible=True), gr.update(value=character_name)
             else:
-                return gr.update(visible=False, value=None), gr.update(visible=False)
+                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
 
         character_table.select(
             fn=on_character_select,
-            inputs=[characters_state],
-            outputs=[character_audio, generate_char_btn]
+            inputs=[characters_state, selected_character],
+            outputs=[character_audio, generate_char_btn, selected_character]
         )
 
         # Regenerate voice sample for selected character
-        def on_regenerate_click(selected_row, api_key, port, pipeline_state, log_output):
-            """Extract character name from selected row and regenerate voice sample."""
-            if selected_row is None:
-                return log_output, pipeline_state, None
-
-            # Get character name from the first column of the selected row
-            character_name = selected_row[0] if isinstance(selected_row, list) and len(selected_row) > 0 else None
-
-            if not character_name:
+        def on_regenerate_click(api_key, port, pipeline_state, log_output, selected_char):
+            """Regenerate voice sample for the selected character."""
+            if not selected_char:
                 log_output += "\nNo character selected."
                 return log_output, pipeline_state, None
 
-            return regenerate_voice_sample(character_name, api_key, port, pipeline_state, log_output)
+            return regenerate_voice_sample(selected_char, api_key, port, pipeline_state, log_output)
 
         generate_char_btn.click(
             fn=on_regenerate_click,
-            inputs=[character_table, api_key_input, port_input, pipeline_state, log_output],
+            inputs=[api_key_input, port_input, pipeline_state, log_output, selected_character],
             outputs=[log_output, pipeline_state, character_audio]
         ).then(
             fn=update_button_visibility,

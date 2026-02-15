@@ -679,13 +679,10 @@ def parse_epub():
 
     os.makedirs(output_dir, exist_ok=True)
     print(f"[OUTPUT_DIR] Using output directory: {output_dir}", flush=True)
-
-    # if args.alt_gpu:
-    #     target_device = "cuda:1"
-    #     torch.cuda.set_device(1)
-    # else:
-    #     target_device = "cuda:0"
-    #     torch.cuda.set_device(0)
+    target_device = "cuda"
+    if args.alt_gpu:
+        target_device = "cuda:1"
+        torch.cuda.set_device(1)
 
     cfg_scale = 1.30
 
@@ -868,7 +865,6 @@ def parse_epub():
                         torch.cuda.empty_cache()
 
                     sample_rate, waveform = wavfile.read(output_path)
-                    sample_rate, waveform = denoise_speech((sample_rate, waveform))
                     wavfile.write(output_path, sample_rate, waveform)
 
                     audio = whisperx.load_audio(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"))

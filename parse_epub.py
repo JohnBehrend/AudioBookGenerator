@@ -18,6 +18,7 @@ from typing import Dict, List, Tuple, Optional, Any
 
 import torch
 from scipy.io import wavfile
+import numpy as np
 
 # Text to speech generation
 TTS_ENGINE = os.environ.get('TTS_ENGINE', 'kugelaudio')
@@ -72,7 +73,7 @@ import parse_chapter
 # ============================================================================
 
 
-def initialize_tts_engine(device: str = "cuda:0", tts_engine: str = "kugelaudio"):
+def initialize_tts_engine(device: str = "cuda", tts_engine: str = "kugelaudio"):
     """Initialize and return the TTS model and processor.
 
     This is an alias for setup_tts_engine for consistency.
@@ -373,7 +374,7 @@ def generate_tts_for_line(
 
         outputs = tts_model.generate(
             **inputs,
-            max_new_tokens=None,
+            max_new_tokens=512,
             cfg_scale=cfg_scale,
             tokenizer=processor.tokenizer,
             do_sample=False,
@@ -488,7 +489,7 @@ def generate_tts_audio(
     chapter_maps: dict,
     voices_map: dict,
     output_dir: str,
-    device: str = "cuda:0",
+    device: str = "cuda",
     tts_engine: str = "kugelaudio",
     cfg_scale: float = 1.30,
     resume: bool = False,
@@ -694,12 +695,12 @@ def parse_epub():
     os.makedirs(output_dir, exist_ok=True)
     print(f"[OUTPUT_DIR] Using output directory: {output_dir}", flush=True)
 
-    if args.alt_gpu:
-        target_device = "cuda:1"
-        torch.cuda.set_device(1)
-    else:
-        target_device = "cuda:0"
-        torch.cuda.set_device(0)
+    # if args.alt_gpu:
+    #     target_device = "cuda:1"
+    #     torch.cuda.set_device(1)
+    # else:
+    #     target_device = "cuda:0"
+    #     torch.cuda.set_device(0)
 
     cfg_scale = 1.30
 
@@ -854,7 +855,7 @@ def parse_epub():
 
                     outputs = tts_model.generate(
                         **inputs,
-                        max_new_tokens=None,
+                        max_new_tokens=512,
                         cfg_scale=cfg_scale,
                         tokenizer=processor.tokenizer,
                         do_sample=False,
@@ -981,7 +982,7 @@ def generate_audiobook_from_chapters(
     chapter_maps: Dict[int, Tuple[Dict, Dict]],
     voices_map: Dict[str, str],
     output_dir: str,
-    device: str = "cuda:0",
+    device: str = "cuda",
     tts_engine: str = "kugelaudio",
     cfg_scale: float = 1.30,
     max_chapters: Optional[int] = None,

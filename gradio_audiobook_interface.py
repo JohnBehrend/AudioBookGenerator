@@ -742,17 +742,14 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             # EPUB upload
             epub_upload = gr.File(label="EPUB", file_types=[".epub"], value=epub_path_default)
 
-        # Buttons - always visible
+        # All 6 buttons in a single row
         with gr.Row():
             parse_btn = gr.Button("1. Parse", variant="primary", scale=1)
             label_btn = gr.Button("2. Label", variant="secondary", scale=1)
             describe_btn = gr.Button("3. Describe", variant="secondary", scale=1)
-
-        # Voice samples - single row
-        with gr.Row():
             voice_samples_btn = gr.Button("4. Voices", variant="secondary", scale=1)
             generate_char_btn = gr.Button("5. Regen", variant="secondary", scale=1)
-            tts_btn = gr.Button("6. Audiobook", variant="primary", scale=2)
+            tts_btn = gr.Button("6. Audiobook", variant="primary", scale=1)
 
         # Log output with state on same element
         log_output = gr.Textbox(label="Log (State: Ready)", lines=4, max_lines=6)

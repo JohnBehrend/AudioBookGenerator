@@ -57,8 +57,8 @@ cu128 = [
 [tool.setuptools.packages.find]
 include = ["gradio_audiobook_interface.py", "parse_epub.py", "llm_label_speakers.py", "analyze_chapters.py", "llm_describe_character.py", "generate_voice_samples.py", "analyze_chapters.py"]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest",
     "mypy",
     "black",
@@ -74,7 +74,7 @@ torchvision = [
 torchaudio = [
   { index = "pytorch-cu128" },
 ]
-flash-attn = { path = "flash_attn-2.7.4+cu128torch2.8-cp311-cp311-win_amd64.whl" }
+flash-attn = { path = "flash_attn-2.7.4-cp311-cp311-win_amd64.whl" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

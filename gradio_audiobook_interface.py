@@ -182,7 +182,7 @@ def progress_iterator(items, progress=None, desc="Processing"):
 
 
 def parse_epub_to_file(
-    epub_file, max_chapters: Optional[int]
+    epub_file, max_chapters: Optional[int], progress=gr.Progress()
 ) -> Tuple[str, int, List[str]]:
     """Stage 1: Parse EPUB file into chapter text files."""
     if epub_file is None:
@@ -199,7 +199,8 @@ def parse_epub_to_file(
         epub_dest = chapters_dir / "uploaded.epub"
         shutil.copy2(epub_file.name, str(epub_dest))
 
-        # Parse the EPUB with max_chapters limit if specified
+        # Parse the EPUB with progress tracking
+        progress(0, desc="Starting EPUB parsing...")
         chapters = parse_epub_to_chapters(
             epub_file.name,
             max_chapters=int(max_chapters) if max_chapters else None
@@ -208,10 +209,24 @@ def parse_epub_to_file(
         if not chapters:
             return "Error: No chapters found in EPUB file.", 0, []
 
-        # Save each chapter as a text file
-        chapter_files = []
+        # Count total lines across all chapters for progress tracking
+        total_lines = sum(len(chapter) for chapter in chapters)
         total_chapters = len(chapters)
+        progress(0, desc=f"Parsing {total_chapters} chapters with {total_lines} lines...")
+
+        # Save each chapter as a text file with progress updates
+        chapter_files = []
+        lines_processed = 0
         for i, chapter in enumerate(chapters):
+            chapter_line_count = len(chapter)
+            for j, cobj in enumerate(chapter):
+                lines_processed += 1
+                # Update progress for each line
+                progress(
+                    lines_processed / total_lines,
+                    desc=f"Parsing chapter {i + 1}/{total_chapters}: line {lines_processed}/{total_lines}..."
+                )
+
             output_file = chapters_dir / f"chapter_{i}.txt"
             with open(output_file, "w", encoding="utf-8") as f:
                 for cobj in chapter:
@@ -224,7 +239,8 @@ def parse_epub_to_file(
                     f.write("\n")
             chapter_files.append(str(output_file))
 
-        return f"Successfully parsed {len(chapters)} chapters.", len(chapters), chapter_files
+        progress(1.0, desc=f"Successfully parsed {total_chapters} chapters with {total_lines} lines.")
+        return f"Successfully parsed {total_chapters} chapters with {total_lines} lines.", total_chapters, chapter_files
 
     except Exception as e:
         return f"Error parsing EPUB: {str(e)}", 0, []
@@ -887,7 +903,7 @@ def create_interface(
         parse_btn.click(
             fn=parse_epub_to_file,
             inputs=[epub_upload, max_chapters_slider],
-            outputs=[log_output, log_output, log_output],  # dummy outputs to satisfy function signature
+            outputs=[log_output, log_output, log_output],
         ).then(
             # Reset log for new session
             fn=lambda: "=== Stage 1: EPUB Parsing Complete ===\n",

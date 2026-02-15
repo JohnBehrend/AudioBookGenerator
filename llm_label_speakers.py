@@ -484,4 +484,210 @@ if __name__ == "__main__":
         print(merged_line_map)
     with open(chapter_file_base+f".map.json", "w", encoding='utf-8') as f:
         f.write(json.dumps([merged_character_map, merged_line_map], indent=4))
-    exit()
+
+
+# ============================================================================
+# MODULE FUNCTIONS FOR GRADIO INTERFACE
+# ============================================================================
+
+from typing import Dict, Tuple, List
+
+
+def label_speakers_in_file(
+    txt_file: str,
+    api_key: str,
+    port: str,
+    num_attempts: int = 10,
+    old_format: bool = False,
+    skip_llm: bool = False,
+    verbose: bool = False
+) -> Tuple[str, Dict, Dict]:
+    """Label speakers in a chapter file using LLM.
+
+    This is a simplified interface for calling speaker labeling directly
+    from the Gradio UI without subprocess.
+
+    Args:
+        txt_file: Path to the chapter text file
+        api_key: API key for the LLM (can be any string for LM Studio)
+        port: Port for the LLM inference
+        num_attempts: Number of LLM attempts to make
+        old_format: Use older format for LLM query and parsing
+        skip_llm: Skip call to LLM and just try to process existing files
+        verbose: Print verbose output
+
+    Returns:
+        Tuple of (status_message, character_map, line_map)
+    """
+    try:
+        from openai import OpenAI
+
+        chapter_file_base, _ = os.path.splitext(txt_file)
+
+        client = OpenAI(base_url=f"http://localhost:{port}/v1", api_key=api_key)
+
+        if not skip_llm:
+            with open(txt_file, "r", encoding='utf-8') as f:
+                lines = f.readlines()
+
+            # Define chat messages
+            if old_format:
+                messages = [
+                    {"role": "system", "content": "You are a helpful assistant." + OLD_PROMPT_TXT}]
+            else:
+                messages = [
+                    {"role": "system", "content": PROMPT_TXT}]
+            messages.extend([{"role": "user", "content": x} for x in lines])
+
+            for a, attempt in enumerate(range(num_attempts)):
+                # Send the chat completion request
+                try:
+                    if verbose:
+                        print(f"Processing attempt {a}")
+                    response = client.chat.completions.create(
+                        model="local-model",
+                        messages=messages,
+                        temperature=0.7,
+                    ).choices[0].message
+                    try:
+                        if "</think>" in response.content:
+                            thought_process, result = response.content.split("</think>")
+                        else:
+                            result = response.content
+                            thought_process = response.reasoning
+                    except:
+                        result = response.content
+                        thought_process = None
+                    # Save think files
+                    if thought_process is not None:
+                        with open(chapter_file_base + f".think.{a}.txt", "w", encoding='utf-8') as f:
+                            f.write(thought_process)
+                    # Save result files
+                    with open(chapter_file_base + f".result.{a}.txt", "w", encoding='utf-8') as f:
+                        f.write(result)
+                except Exception as e:
+                    print(f"An error occurred: {e}", file=sys.stderr)
+
+        character_maps = []
+        line_maps = []
+        merged_character_map = {}
+        alternate_names = {}
+
+        for a in range(num_attempts):
+            try:
+                with open(chapter_file_base + f".result.{a}.txt", "r", encoding='utf-8') as f:
+                    result = f.readlines()
+                if old_format:
+                    character_map, line_map = interpret_result(result, a)
+                else:
+                    character_map, line_map = interpret_new_result(result, a)
+                    if verbose:
+                        print(character_map)
+            except Exception as e:
+                # Read and show the actual content for debugging
+                with open(chapter_file_base + f".result.{a}.txt", "r", encoding='utf-8') as f:
+                    debug_content = f.read()
+                print(f"Error parsing {chapter_file_base}.result.{a}.txt: {e}", file=sys.stderr)
+                print("\n--- LLM Output (for debugging) ---", file=sys.stderr)
+                print(debug_content, file=sys.stderr)
+                print("--- End of LLM Output ---\n", file=sys.stderr)
+                raise e
+
+            used_characters = set(line_map.values())
+            if len(merged_character_map) == 0:
+                merged_character_map = character_map.copy()
+                # Audit for character that is actually used.
+                for key, character in character_map.items():
+                    if key not in used_characters and character != "narrator":
+                        if verbose:
+                            print(f"Removing un-used character in first map:")
+                            print(key)
+                            print(f"[{key}]{character}")
+                            del merged_character_map[key]
+            else:
+                key_remap = {}
+                for key, character in character_map.items():
+                    existing_character = False
+                    for m_key, m_character in merged_character_map.items():
+                        if compare_characters(character, m_character):
+                            existing_character = True
+                            key_remap[key] = m_key
+                            if key == m_key:
+                                if verbose:
+                                    print(f"Matched character with same key: [{key}] {character}->{m_character}")
+                            else:
+                                if verbose:
+                                    print(f"Matched character with different key: [{key}->{m_key}] {character}->{m_character}")
+                        elif m_character in alternate_names.keys():
+                            # alternative name for same character
+                            for i, (alt_character, alt_count) in enumerate(alternate_names[m_character]):
+                                if character == alt_character:
+                                    existing_character = True
+                                    alternate_names[m_character][i] = (alt_character, alt_count + 1)
+                                    key_remap[key] = m_key
+                                    if key == m_key:
+                                        if verbose:
+                                            print(f"Matched alt_char with same key: [{key}] {character}->{m_character}")
+                                    else:
+                                        if verbose:
+                                            print(f"Matched alt_char with different key: [{key}->{m_key}] {character}->{m_character}")
+                    if not existing_character:
+                        character_is_used = key in line_map.values()
+                        if character_is_used:
+                            # check to see if we align to an existing character in prior run based on the lines spoken.
+                            found_match, m_key = is_same_character_by_line_mapping(key, character, line_map, merged_character_map, merge_line_maps(line_maps, verbose))
+                            if found_match:
+                                m_character = merged_character_map[m_key]
+                                key_remap[key] = m_key
+                                if key == m_key:
+                                    if verbose:
+                                        print(f"Alternate character with same key: [{key}->{m_key}] {character}->{m_character}.")
+                                else:
+                                    if verbose:
+                                        print(f"Alternate character with different key: [{key}->{m_key}] {character}->{m_character}.")
+                                if m_character in alternate_names.keys():
+                                    alternate_names[m_character].append((character, 1))
+                            else:
+                                new_m_key = max(merged_character_map.keys()) + 1
+                                merged_character_map[new_m_key] = character
+                                key_remap[new_m_key] = new_m_key
+                                if verbose:
+                                    print(f"New character with new key: [{new_m_key}] {character}")
+                        else:
+                            if verbose:
+                                print(f"Unused character '{character}', will not be added.")
+                # use key_remap on line_map
+                if verbose:
+                    print(key_remap)
+                line_map = {k: key_remap[v] for k, v in line_map.items() if v in key_remap.keys()}
+            line_maps.append(line_map)
+
+        if verbose:
+            print("Alternate names", alternate_names)
+        for alt_name, alt_map in alternate_names.items():
+            for other_name, other_count in alt_map:
+                if other_count >= (num_attempts / 2):
+                    orig_index = next((k for k, v in merged_character_map.items() if v == alt_name), None)
+                    if orig_index is not None:
+                        if verbose:
+                            print(f"Remapping index {orig_index} : '{alt_name}'->'{other_name}' [{other_count}/{num_attempts}]")
+                        merged_character_map[orig_index] = other_name
+
+        merged_line_map = merge_line_maps(line_maps, verbose)
+        merged_line_map = dict(sorted(merged_line_map.items(), key=lambda x: int(x[0])))
+
+        if verbose:
+            print("Overall line map:")
+            print(merged_line_map)
+
+        # Save the merged map
+        with open(chapter_file_base + f".map.json", "w", encoding='utf-8') as f:
+            f.write(json.dumps([merged_character_map, merged_line_map], indent=4))
+
+        return f"Successfully labeled speakers in {txt_file}", merged_character_map, merged_line_map
+
+    except Exception as e:
+        error_msg = f"Error labeling speakers: {str(e)}"
+        if verbose:
+            print(error_msg)
+        return error_msg, {}, {}

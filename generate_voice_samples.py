@@ -192,5 +192,122 @@ def main():
         print("  (This file maps characters to their voice samples for audiobook generation)")
 
 
+# ============================================================================
+# MODULE FUNCTIONS FOR GRADIO INTERFACE
+# ============================================================================
+
+from typing import Dict, Optional, Tuple
+
+
+def generate_voice_samples(
+    descriptions: Dict[str, str],
+    output_dir: str,
+    model_path: str = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+    device: str = "cuda:0",
+    max_tokens: int = 512,
+    single_character: Optional[str] = None,
+    verbose: bool = False
+) -> Tuple[str, Dict[str, str]]:
+    """Generate voice samples for characters using Qwen3-TTS.
+
+    This is a simplified interface for calling voice sample generation directly
+    from the Gradio UI without subprocess.
+
+    Args:
+        descriptions: Dict mapping character names to their descriptions
+        output_dir: Directory to save voice samples
+        model_path: HuggingFace model ID
+        device: CUDA device (e.g., cuda:0, cpu)
+        max_tokens: Max tokens for generation
+        single_character: Generate only one character
+        verbose: Print verbose output
+
+    Returns:
+        Tuple of (status_message, character_voice_paths)
+    """
+    try:
+        import time
+        import soundfile as sf
+
+        if single_character:
+            if single_character not in descriptions:
+                return f"Character '{single_character}' not found in descriptions.", {}
+            descriptions = {single_character: descriptions[single_character]}
+            if verbose:
+                print(f"Generating voice for single character: {single_character}")
+        else:
+            if verbose:
+                print(f"Found {len(descriptions)} characters")
+
+        if verbose:
+            print(f"\nLoading model: {model_path}")
+            print("  (First run downloads weights from HuggingFace)")
+        start_load = time.time()
+
+        try:
+            tts_model = Qwen3TTSModel.from_pretrained(
+                model_path,
+                device_map=device,
+                dtype="bfloat16",
+                attn_implementation=None,
+            )
+        except Exception as e:
+            return f"Error loading model: {e}", {}
+
+        load_time = time.time() - start_load
+        if verbose:
+            print(f"Model loaded in {load_time:.1f}s")
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        generated = {}
+        failed = []
+
+        for i, (char_name, char_desc) in enumerate(descriptions.items()):
+            if verbose:
+                print(f"[{i+1}/{len(descriptions)}] {char_name}")
+
+            success, output_file, duration = generate_voice_sample(
+                tts_model, char_name, char_desc, output_dir, max_new_tokens=max_tokens
+            )
+
+            if success:
+                generated[char_name] = output_file
+                if verbose:
+                    print(f"    Generated: {duration:.2f}s -> {output_file}")
+            else:
+                failed.append(char_name)
+                if verbose:
+                    print(f"    Failed")
+
+        if verbose:
+            print("\n" + "=" * 60)
+            print(f"Summary: {len(generated)} generated, {len(failed)} failed")
+            print("=" * 60)
+
+        if generated:
+            # Generate voices_map.json for use in audiobook generation
+            voices_map = {}
+            voices_map["narrator"] = "narrator.wav"
+            for char_name, path in generated.items():
+                voice_file = os.path.basename(path)
+                voices_map[char_name] = voice_file
+
+            voices_map_path = os.path.join(output_dir, "voices_map.json")
+            with open(voices_map_path, "w", encoding="utf-8") as f:
+                json.dump(voices_map, f, indent=2)
+            if verbose:
+                print(f"\nGenerated voices_map.json: {voices_map_path}")
+
+        return f"Successfully generated {len(generated)} voice sample(s).", generated
+
+    except Exception as e:
+        import traceback
+        error_msg = f"Error generating voice samples: {str(e)}\n{traceback.format_exc()}"
+        if verbose:
+            print(error_msg)
+        return error_msg, {}
+
+
 if __name__ == "__main__":
     main()

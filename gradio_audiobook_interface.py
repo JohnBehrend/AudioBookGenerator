@@ -14,12 +14,11 @@ State machine pattern ensures each stage only runs when dependencies are met.
 
 import gradio as gr
 import os
-import sys
 import json
 import glob
-import subprocess
 import tempfile
 import shutil
+import torch
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
 
@@ -259,31 +258,23 @@ def process_chapters_for_labels(
     for i, chapter_file in enumerate(chapter_files):
         log_output += f"\nProcessing: {chapter_file}"
 
-        cmd = [
-            sys.executable,
-            str(SCRIPT_DIR / "llm_label_speakers.py"),
-            "-txt_file", chapter_file,
-            "-num_llm_attempts", str(num_attempts),
-            "-api_key", api_key,
-            "-port", port,
-        ]
-
         try:
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=300,  # 5 minute timeout per chapter
-                cwd=str(SCRIPT_DIR),
+            # Import and call directly instead of subprocess
+            from llm_label_speakers import label_speakers_in_file
+
+            result_msg, char_map, line_map = label_speakers_in_file(
+                txt_file=chapter_file,
+                api_key=api_key,
+                port=port,
+                num_attempts=num_attempts,
+                verbose=False
             )
-            log_output += result.stdout
-            if result.stderr:
-                log_output += f"\nErrors: {result.stderr}"
-        except subprocess.TimeoutExpired:
-            log_output += "\nTimeout - chapter processing took too long."
+
+            log_output += f"\n{result_msg}"
+
         except Exception as e:
             log_output += f"\nError processing {chapter_file}: {str(e)}"
+            log_output += f"\n{traceback.format_exc()}"
 
     new_state = PIPELINE_STATE_LABELS_COMPLETE
     log_output += f"\n\nStage 2 complete! State: {new_state}"
@@ -325,38 +316,17 @@ def describe_characters(
 
         log_output += f"\nFound {num_characters} characters from map files."
 
-        # Run llm_describe_character.py
-        cmd = [
-            sys.executable,
-            str(SCRIPT_DIR / "llm_describe_character.py"),
-            "--api_key", api_key,
-            "--port", port,
-            "--verbose",
-            "--output-dir", str(chapters_dir),
-        ]
+        # Call describe_characters_in_dir directly instead of subprocess
+        from llm_describe_character import describe_characters_in_dir
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=str(SCRIPT_DIR),
+        result_msg, character_descriptions = describe_characters_in_dir(
+            output_dir=str(chapters_dir),
+            api_key=api_key,
+            port=port,
+            verbose=False
         )
 
-        # Read output line by line to track progress
-        for line in iter(process.stdout.readline, ""):
-            if line:
-                log_output += f"\n{line.strip()}"
-
-        process.stdout.close()
-        process.wait()
-
-        if process.returncode != 0:
-            if process.stderr:
-                log_output += f"\nErrors: {process.stderr.read()}"
-            log_output += "\nWarning: Process exited with non-zero code."
-
-        log_output += "\n\nStage 3 complete!"
+        log_output += f"\n{result_msg}"
 
         # Load and return the character descriptions for state tracking
         descriptions_file = get_characters_descriptions_file()
@@ -371,7 +341,9 @@ def describe_characters(
         return log_output, new_state, characters_state
 
     except Exception as e:
+        import traceback
         log_output += f"\nError describing characters: {str(e)}"
+        log_output += f"\n{traceback.format_exc()}"
         return log_output, pipeline_state, None
 
 
@@ -404,43 +376,25 @@ def generate_voice_samples(
         num_characters = len(descriptions)
         log_output += f"\nFound {num_characters} characters to process."
 
-        # Run generate_voice_samples.py
-        cmd = [
-            sys.executable,
-            str(SCRIPT_DIR / "generate_voice_samples.py"),
-            "--descriptions", str(descriptions_file),
-            "--output-dir", str(chapters_dir),
-        ]
+        # Call generate_voice_samples directly instead of subprocess
+        from generate_voice_samples import generate_voice_samples as gen_voices
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=str(SCRIPT_DIR),
+        result_msg, generated_voices = gen_voices(
+            descriptions=descriptions,
+            output_dir=str(chapters_dir),
+            verbose=False
         )
 
-        # Read output line by line to track progress
-        for line in iter(process.stdout.readline, ""):
-            if line:
-                log_output += f"\n{line.strip()}"
-
-        process.stdout.close()
-        process.wait()
-
-        if process.returncode != 0:
-            if process.stderr:
-                log_output += f"\nErrors: {process.stderr.read()}"
-            log_output += "\nWarning: Process exited with non-zero code."
-
-        log_output += "\n\nStage 4 complete!"
+        log_output += f"\n{result_msg}"
 
         new_state = PIPELINE_STATE_VOICE_SAMPLES_COMPLETE
         log_output += f" State: {new_state}"
         return log_output, new_state
 
     except Exception as e:
+        import traceback
         log_output += f"\nError generating voice samples: {str(e)}"
+        log_output += f"\n{traceback.format_exc()}"
         return log_output, pipeline_state
 
 
@@ -472,35 +426,17 @@ def regenerate_voice_sample(
 
         char_description = descriptions[character_name]
 
-        # Build command to regenerate just this character
-        cmd = [
-            sys.executable,
-            str(SCRIPT_DIR / "generate_voice_samples.py"),
-            "--descriptions", str(descriptions_file),
-            "--output-dir", str(chapters_dir),
-            "--single-character", character_name,
-        ]
+        # Call generate_voice_samples directly instead of subprocess
+        from generate_voice_samples import generate_voice_samples as gen_voices
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=str(SCRIPT_DIR),
+        result_msg, generated_voices = gen_voices(
+            descriptions={character_name: char_description},
+            output_dir=str(chapters_dir),
+            single_character=character_name,
+            verbose=False
         )
 
-        for line in iter(process.stdout.readline, ""):
-            if line:
-                log_output += f"\n{line.strip()}"
-
-        process.stdout.close()
-        process.wait()
-
-        if process.returncode != 0:
-            if process.stderr:
-                log_output += f"\nErrors: {process.stderr.read()}"
-            log_output += "\nWarning: Process exited with non-zero code."
-            return log_output, pipeline_state, None
+        log_output += f"\n{result_msg}"
 
         # Return the path to the regenerated file
         wav_path = get_character_wav_file(character_name, chapters_dir)
@@ -508,7 +444,9 @@ def regenerate_voice_sample(
         return log_output, pipeline_state, wav_path
 
     except Exception as e:
+        import traceback
         log_output += f"\nError regenerating voice sample: {str(e)}"
+        log_output += f"\n{traceback.format_exc()}"
         return log_output, pipeline_state, None
 
 
@@ -517,12 +455,50 @@ def regenerate_voice_sample(
 # ============================================================================
 
 
+def load_chapter_maps(chapters_dir: Path) -> Dict[int, Tuple[Dict, Dict]]:
+    """Load all chapter map files from the chapters directory.
+
+    Args:
+        chapters_dir: Path to the chapters directory
+
+    Returns:
+        Dict mapping chapter index -> (character_map, line_map)
+    """
+    chapter_maps = {}
+    map_files = sorted(glob.glob(str(chapters_dir / "*.map.json")))
+
+    for map_file in map_files:
+        try:
+            with open(map_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # data is typically [character_map, line_map] or {"character_map": ..., "line_map": ...}
+            if isinstance(data, list) and len(data) >= 2:
+                character_map = data[0]
+                line_map = data[1]
+            elif isinstance(data, dict):
+                character_map = data.get("character_map", {})
+                line_map = data.get("line_map", {})
+            else:
+                continue
+
+            # Convert keys to proper types
+            character_map = {int(k): v for k, v in character_map.items()}
+            line_map = {int(k): v for k, v in line_map.items()}
+
+            chapter_idx = int(Path(map_file).stem.replace("chapter_", ""))
+            chapter_maps[chapter_idx] = (character_map, line_map)
+        except Exception as e:
+            log_output += f"\nError loading map file {map_file}: {e}"
+
+    return chapter_maps
+
+
 def generate_tts_audio(
     pipeline_state: Optional[str],
     log_output: str,
     max_chapters: Optional[int],
 ) -> Tuple[str, Optional[str]]:
-    """Stage 5.1: Generate TTS audio for each line/voice."""
+    """Stage 5.1: Generate TTS audio for each line/voice using direct function calls."""
     log_output += "\n\n=== Stage 5.1: Generating TTS Audio ==="
 
     try:
@@ -542,11 +518,28 @@ def generate_tts_audio(
             log_output += "\ncharacters_descriptions.json not found. Please run Stage 3 (Describe Characters) first."
             return log_output, pipeline_state
 
-        # Check if uploaded EPUB exists in temp directory
-        epub_path = str(chapters_dir / "uploaded.epub")
-        if not os.path.exists(epub_path):
-            log_output += "\nUploaded EPUB file not found. Please run Stage 1 (Parse EPUB) first."
+        # Load character descriptions as voices_map
+        with open(descriptions_file, "r", encoding="utf-8") as f:
+            descriptions = json.load(f)
+
+        # Create voices_map: character_name -> voice_path (wav file)
+        voices_map = {}
+        for char_name in descriptions.keys():
+            wav_path = get_character_wav_file(char_name, chapters_dir)
+            if wav_path and os.path.exists(wav_path):
+                voices_map[char_name] = wav_path
+            else:
+                # Use a default narrator voice if no sample found
+                narrator_path = get_character_wav_file("narrator", chapters_dir)
+                if narrator_path and os.path.exists(narrator_path):
+                    voices_map[char_name] = narrator_path
+
+        if not voices_map:
+            log_output += "\nNo voice samples found. Please run Stage 4 (Generate Voices) first."
             return log_output, pipeline_state
+
+        # Load chapter maps for character/line mapping
+        chapter_maps = load_chapter_maps(chapters_dir)
 
         # Count chapters for progress tracking
         chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
@@ -555,42 +548,136 @@ def generate_tts_audio(
             num_chapters = min(num_chapters, int(max_chapters))
         log_output += f"\nGenerating TTS audio for {num_chapters} chapters..."
 
-        # Run parse_epub.py with --resume to generate TTS audio only
-        cmd = [
-            sys.executable,
-            str(SCRIPT_DIR / "parse_epub.py"),
-            epub_path,
-            "--resume",
-            "--output-dir",
-            str(chapters_dir),
-        ]
-        if max_chapters:
-            cmd.extend(["--max-chapters", str(max_chapters)])
+        # Parse the EPUB to get chapters (same as Stage 1)
+        from parse_chapter import parse_epub_to_chapters
+        epub_path = str(chapters_dir / "uploaded.epub")
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            cwd=str(SCRIPT_DIR),
+        chapters = parse_epub_to_chapters(
+            epub_path,
+            max_chapters=int(max_chapters) if max_chapters else None
         )
 
-        # Track TTS generation progress - stream output line by line
-        for line in iter(process.stdout.readline, ""):
-            if line:
-                log_output += f"\n{line.strip()}"
+        if not chapters:
+            log_output += "\nError: No chapters found in EPUB file."
+            return log_output, pipeline_state
 
-        process.stdout.close()
-        process.wait()
+        # Determine device (use CUDA if available, default to cuda:0)
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        log_output += f"\nUsing device: {device}"
 
-        if process.returncode != 0:
-            log_output += f"\nWarning: Process exited with non-zero code: {process.returncode}"
+        # Import and use the modular parse_epub functions
+        import torch
+        import parse_epub
+
+        # Setup TTS engine and validation model
+        log_output += "\nInitializing TTS model..."
+        tts_model, processor, _ = parse_epub.setup_tts_engine(device)
+        log_output += "\nInitializing validation model..."
+        validation_model = parse_epub.setup_validation_model(device)
+        voice_mapper = parse_epub.VoiceMapper()
+
+        cfg_scale = 1.30
+        short_text_postfix = "and also with you?"
+        postfix_detect_token = parse_epub.distill_string(short_text_postfix.strip().split(" ")[0])
+
+        # Process each chapter
+        for i, chapter in enumerate(chapters):
+            if i >= num_chapters:
+                break
+
+            # Check if already generated (resume mode)
+            if os.path.exists(chapters_dir / f"chapter_{str(i).zfill(2)}.mp3"):
+                log_output += f"\nSkipping chapter {i} (already exists)"
+                continue
+
+            log_output += f"\n[CHAPTER_START] Chapter {i}/{len(chapters)}"
+
+            # Get chapter map if available
+            chapter_map = chapter_maps.get(i)
+            if chapter_map:
+                character_map, line_map = chapter_map
+                line_to_character_map = {k: character_map[v] for k, v in line_map.items()}
+
+                # Assign speakers based on line map
+                for cobj in chapter:
+                    if cobj.has_quotes:
+                        if cobj.line_num in line_map.keys():
+                            char_name = line_to_character_map.get(cobj.line_num, "narrator")
+                            cobj.set_speaker(char_name)
+                        else:
+                            cobj.set_speaker("narrator")
+                    else:
+                        cobj.set_speaker("narrator")
+
+            # Get unique voices used in this chapter
+            voices_used = []
+            for chapter_obj in chapter:
+                speaker = chapter_obj.get_speaker()
+                if speaker not in voices_used:
+                    voices_used.append(speaker)
+
+            # Generate TTS for each voice in this chapter
+            for voice in voices_used:
+                already_generated = [
+                    int(x.split(".")[-2])
+                    for x in glob.glob(str(chapters_dir / f"chapter_{str(i).zfill(2)}.*.wav"))
+                    if not x.endswith(".tmp.wav")
+                ]
+
+                for j, chapter_obj in enumerate(chapter):
+                    if voice != chapter_obj.get_speaker():
+                        continue
+                    if j in already_generated:
+                        log_output += f"\nSkipping chapter {i}.{j} (already generated)"
+                        continue
+
+                    # Generate TTS for this line
+                    success, ratio = parse_epub.generate_tts_for_line(
+                        chapter_idx=i,
+                        line_idx=j,
+                        text=chapter_obj.text,
+                        voice_name=voice,
+                        tts_model=tts_model,
+                        processor=processor,
+                        voice_mapper=voice_mapper,
+                        device=device,
+                        tts_engine=os.environ.get('TTS_ENGINE', 'kugelaudio'),
+                        cfg_scale=cfg_scale,
+                        output_dir=str(chapters_dir),
+                        short_text_postfix=short_text_postfix,
+                        validation_model=validation_model,
+                        verbose=True
+                    )
+
+                    log_output += f"\n[LINE_PROGRESS] Chapter {i}, Line {j+1}/{len(chapter)}, Voice: {voice}, Ratio: {int(ratio * 100)}"
+
+            # Assemble chapter MP3 from WAV files
+            wav_files = sorted(glob.glob(str(chapters_dir / f"chapter_{str(i).zfill(2)}.*.wav")))
+            if wav_files:
+                audio = parse_epub.get_non_silent_audio_from_wavs(wav_files)
+                mp3_path = chapters_dir / f"chapter_{str(i).zfill(2)}.mp3"
+                audio.export(str(mp3_path), format="mp3")
+
+                # Clean up individual WAV files
+                for wav in wav_files:
+                    os.unlink(wav)
+
+                log_output += f"\nChapter {i}: Created {mp3_path.name} from {len(wav_files)} audio segments."
+            else:
+                log_output += f"\nChapter {i}: No WAV files generated."
+
+            log_output += f"\n[CHAPTER_COMPLETE] Chapter {i}/{len(chapters)}"
+
+            # Clear cache periodically
+            torch.cuda.empty_cache()
 
         log_output += "\n\nStage 5.1 (TTS Audio) complete!"
         return log_output, pipeline_state
 
     except Exception as e:
+        import traceback
         log_output += f"\nError generating TTS audio: {str(e)}"
+        log_output += f"\n{traceback.format_exc()}"
         return log_output, pipeline_state
 
 
@@ -606,6 +693,9 @@ def assemble_chapter_audiobooks(
         if not chapters_dir:
             return log_output + "\nError: Chapters directory not initialized.", pipeline_state
 
+        import torch
+        import parse_epub
+
         chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
         if not chapter_files:
             log_output += "\nNo chapter text files found. Please run Stage 5.1 first."
@@ -614,24 +704,8 @@ def assemble_chapter_audiobooks(
         num_chapters = len(chapter_files)
         log_output += f"\nFound {num_chapters} chapters to assemble."
 
-        def get_non_silent_audio_from_wavs(wav_filepath_list, min_silence_len=1250, silence_thresh=-60):
-            """Remove silent audio from list of wave filepaths."""
-            all_audio_segments = None
-            for wav in wav_filepath_list:
-                raw_audio_segment = gr.Audio.from_wav(wav)
-                this_audio_segment = gr.Audio.empty()
-                for (start_time, end_time) in gr.Audio.silence.detect_nonsilent(
-                    raw_audio_segment, min_silence_len=min_silence_len, silence_thresh=silence_thresh
-                ):
-                    this_audio_segment += raw_audio_segment[start_time:end_time]
-                if all_audio_segments is None:
-                    all_audio_segments = this_audio_segment
-                else:
-                    all_audio_segments = all_audio_segments + this_audio_segment
-            return all_audio_segments
-
         # Process each chapter
-        for i in range(len(chapter_files)):
+        for i in range(num_chapters):
             # Find all WAV files for this chapter
             wav_files = sorted(glob.glob(str(chapters_dir / f"chapter_{str(i).zfill(2)}.*.wav")))
 
@@ -639,8 +713,8 @@ def assemble_chapter_audiobooks(
                 log_output += f"\nNo WAV files found for chapter {i}, skipping."
                 continue
 
-            # Combine audio files
-            audio = get_non_silent_audio_from_wavs(wav_files)
+            # Combine audio files using parse_epub function
+            audio = parse_epub.get_non_silent_audio_from_wavs(wav_files)
             output_mp3 = chapters_dir / f"chapter_{str(i).zfill(2)}.mp3"
             audio.export(str(output_mp3), format="mp3")
 

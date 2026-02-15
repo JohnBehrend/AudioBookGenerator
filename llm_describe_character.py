@@ -495,5 +495,121 @@ def main() -> None:
                 print(f"  - {char}: {safe_line}...")
 
 
+# ============================================================================
+# MODULE FUNCTIONS FOR GRADIO INTERFACE
+# ============================================================================
+
+from typing import Dict, Optional
+
+
+def describe_characters_in_dir(
+    output_dir: str,
+    api_key: str,
+    port: str,
+    model: str = "local-model",
+    single_character: Optional[str] = None,
+    verbose: bool = False
+) -> Tuple[str, Dict[str, str]]:
+    """Describe characters in a directory using LLM.
+
+    This is a simplified interface for calling character description directly
+    from the Gradio UI without subprocess.
+
+    Args:
+        output_dir: Directory containing chapter map files and chapter text files
+        api_key: API key for the LLM (can be any string for LM Studio)
+        port: Port for the LLM inference
+        model: Model name to use for inference
+        single_character: Describe only one specific character
+        verbose: Print verbose output
+
+    Returns:
+        Tuple of (status_message, character_descriptions)
+    """
+    try:
+        from pathlib import Path
+        from openai import OpenAI
+
+        chapters_path = Path(output_dir)
+
+        # Load characters from map files
+        characters = get_characters_from_map_files(chapters_path)
+
+        if not characters:
+            return "No characters found in map files.", {}
+
+        if single_character:
+            if single_character not in characters:
+                return f"Character '{single_character}' not found.", {}
+            characters = [single_character]
+
+        # Load chapter texts for context
+        chapter_texts = []
+        chapter_files = []
+        if chapters_path.is_dir():
+            chapter_files = sorted(chapters_path.glob("chapter_*.txt"))
+            for chapter_file in chapter_files:
+                chapter_texts.append(load_chapter_text(str(chapter_file)))
+            if verbose:
+                print(f"Loaded {len(chapter_texts)} chapter files for context")
+
+        # Build context
+        context = build_character_context(characters, chapter_texts, chapter_files, "")
+
+        # Initialize client
+        client = OpenAI(
+            base_url=f"http://localhost:{port}/v1",
+            api_key=api_key
+        )
+
+        # Find duplicate characters before describing
+        duplicates = find_duplicate_characters(characters)
+        if verbose and duplicates:
+            print(f"Found duplicate character names: {duplicates}")
+
+        # Create a map from duplicate names to canonical names
+        duplicate_replacement_map = create_duplicate_replacement_map(duplicates)
+        if verbose and duplicate_replacement_map:
+            print(f"Duplicate replacement map: {duplicate_replacement_map}")
+
+        # Get list of canonical characters (exclude duplicates)
+        canonical_characters = [
+            char for char in characters
+            if char not in duplicate_replacement_map
+        ]
+        if verbose:
+            print(f"Canonical characters to describe: {canonical_characters}")
+
+        # Describe only canonical characters
+        descriptions = describe_all_characters(client, model, canonical_characters, context)
+
+        deduped_descriptions = descriptions
+
+        # Save duplicate replacement map to file
+        replacement_map_file = os.path.join(output_dir, "duplicate_replacement_map.json")
+        with open(replacement_map_file, 'w', encoding='utf-8') as f:
+            json.dump(duplicate_replacement_map, f, indent=2, ensure_ascii=False)
+
+        # Save results (replacing em dashes with regular hyphens)
+        output_file = os.path.join(output_dir, "characters_descriptions.json")
+        with open(output_file, 'w', encoding='utf-8') as f:
+            # Convert descriptions to JSON string and replace em dash with hyphen
+            json_content = json.dumps(deduped_descriptions, indent=2, ensure_ascii=False)
+            json_content = json_content.replace('\u2014', '-')
+            f.write(json_content)
+
+        if verbose:
+            print(f"Character descriptions saved to: {output_file}")
+
+        return f"Successfully described {len(deduped_descriptions)} characters.", deduped_descriptions
+
+    except Exception as e:
+        import traceback
+        error_msg = f"Error describing characters: {str(e)}\n{traceback.format_exc()}"
+        if verbose:
+            print(error_msg)
+        return error_msg, {}
+
+
 if __name__ == "__main__":
     main()

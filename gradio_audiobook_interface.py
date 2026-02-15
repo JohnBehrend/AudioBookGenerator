@@ -783,6 +783,18 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         # STATE TRANSITION HANDLERS - Define which buttons are enabled based on state
         # ============================================================================
 
+        def get_next_step_recommendation(state):
+            """Get a recommendation for the next step based on pipeline state."""
+            recommendations = {
+                None: "Upload an EPUB file and click '1. Parse' to begin.",
+                PipelineState.EPUB_PARSED: "Click '2. Label' to use LLM for speaker labeling.",
+                PipelineState.LABELS_COMPLETE: "Click '3. Describe' to generate character descriptions.",
+                PipelineState.CHARACTERS_DESCRIBED: "Click '4. Voices' to generate voice samples for each character.",
+                PipelineState.VOICE_SAMPLES_COMPLETE: "Click '6. Audiobook' to generate the full audiobook.",
+                PipelineState.AUDIOBOOK_COMPLETE: "Audiobook generation complete! You can start a new project."
+            }
+            return recommendations.get(state, "Unknown state.")
+
         def update_state_display(state, log_output_component=None):
             """Update log label with state based on pipeline state."""
             state_labels = {
@@ -794,7 +806,8 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
                 PipelineState.AUDIOBOOK_COMPLETE: "Audiobook Complete"
             }
             state_text = state_labels.get(state, "Unknown")
-            return gr.update(label=f"Log (State: {state_text})")
+            next_step = get_next_step_recommendation(state)
+            return gr.update(label=f"Log (State: {state_text}) - {next_step}")
 
         def update_button_visibility(state):
             """

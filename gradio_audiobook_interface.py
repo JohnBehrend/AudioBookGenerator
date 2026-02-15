@@ -732,42 +732,6 @@ def generate_character_table():
         return gr.Dataframe(value=[])
 
 
-def on_character_table_select(evt: gr.SelectData, table_state, api_key, port, log_output):
-    """Handle button clicks in the character table."""
-    import re
-
-    # evt.value contains the cell value (the button HTML)
-    button_html = evt.value if evt.value else ""
-    character_name = evt.row[0] if evt.row and len(evt.row) > 0 else None
-
-    if not character_name:
-        return gr.State(None), log_output
-
-    # Check if it's a redo button
-    if "Redo" in button_html or "redo-btn" in button_html:
-        # Extract character name from data attribute
-        match = re.search(r'data-char="([^"]+)"', button_html)
-        if match:
-            char_name = match.group(1)
-            # Call the regenerate function
-            new_log, wav_path = regenerate_voice_sample(char_name, api_key, port, log_output)
-            # Refresh the table
-            new_table = generate_character_table()
-            return gr.State(new_table), new_log
-
-    # Check if it's a generate button
-    elif "Generate" in button_html or "generate-btn" in button_html:
-        # Extract character name from data attribute
-        match = re.search(r'data-char="([^"]+)"', button_html)
-        if match:
-            char_name = match.group(1)
-            log_output += f"\n\nWould regenerate voice sample for: {char_name}"
-            # Call the regenerate function anyway
-            new_log, wav_path = regenerate_voice_sample(char_name, api_key, port, log_output)
-            new_table = generate_character_table()
-            return gr.State(new_table), new_log
-
-    return gr.State(None), log_output
 
 
 # ============================================================================
@@ -777,7 +741,7 @@ def on_character_table_select(evt: gr.SelectData, table_state, api_key, port, lo
 def create_interface(api_key_default="lm-studio", port_default="1234", num_attempts_default=10, epub_path_default=None, max_chapters_default=10):
     """Create the Gradio interface with all stages."""
 
-    with gr.Blocks(theme=gr.themes.Soft()) as demo:
+    with gr.Blocks() as demo:
         gr.Markdown("# Audiobook Pipeline Interface")
 
         # Configuration and EPUB Parsing (required first step)
@@ -870,8 +834,6 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         # Output file display
         with gr.Accordion("Generated Files", open=False):
             files_output = gr.Textbox(label="Chapter Files")
-
-        # Hidden state for character table updates
         table_state = gr.State(None)
 
         # Event handlers
@@ -908,14 +870,50 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             outputs=voice_samples_output
         ).then(
             fn=generate_character_table,
-            outputs=character_table
         )
 
         # Handle button clicks in character table
+        def on_table_select(evt: gr.SelectData, api_key, port, log):
+            """Handle button clicks in the character table."""
+            import re
+
+            # evt.value contains the cell value (the button HTML)
+            button_html = evt.value if evt.value else ""
+            character_name = evt.row[0] if evt.row and len(evt.row) > 0 else None
+
+            if not character_name:
+                return log
+
+            # Check if it's a redo button
+            if "Redo" in button_html or "redo-btn" in button_html:
+                # Extract character name from data attribute
+                match = re.search(r'data-char="([^"]+)"', button_html)
+                if match:
+                    char_name = match.group(1)
+                    # Call the regenerate function
+                    new_log, _ = regenerate_voice_sample(char_name, api_key, port, log)
+                    # Refresh the table
+                    new_table = generate_character_table()
+                    return new_log, new_table
+
+            # Check if it's a generate button
+            elif "Generate" in button_html or "generate-btn" in button_html:
+                # Extract character name from data attribute
+                match = re.search(r'data-char="([^"]+)"', button_html)
+                if match:
+                    char_name = match.group(1)
+                    log += f"\n\nWould regenerate voice sample for: {char_name}"
+                    # Call the regenerate function anyway
+                    new_log, _ = regenerate_voice_sample(char_name, api_key, port, log)
+                    new_table = generate_character_table()
+                    return new_log, new_table
+
+            return log, character_table  # Return unchanged
+
         character_table.select(
-            fn=on_character_table_select,
-            inputs=[character_table, table_state, api_key_input, port_input, log_output],
-            outputs=[table_state, log_output]
+            fn=on_table_select,
+            inputs=[api_key_input, port_input, log_output],
+            outputs=[log_output, character_table]
         )
 
         tts_btn.click(
@@ -981,6 +979,6 @@ if __name__ == "__main__":
     )
 
     try:
-        demo.launch(share=False)
+        demo.launch(share=False, theme=gr.themes.Soft())
     finally:
         cleanup_temp_dir()

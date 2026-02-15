@@ -778,7 +778,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         # STATE TRANSITION HANDLERS - Define which buttons are enabled based on state
         # ============================================================================
 
-        def update_state_display(state, log_label="Log"):
+        def update_state_display(state, log_output_component=None):
             """Update log label with state based on pipeline state."""
             state_labels = {
                 None: "Ready",
@@ -789,7 +789,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
                 PipelineState.AUDIOBOOK_COMPLETE: "Audiobook Complete"
             }
             state_text = state_labels.get(state, "Unknown")
-            return gr.update(label=f"{log_label} (State: {state_text})")
+            return gr.update(label=f"Log (State: {state_text})")
 
         def update_button_visibility(state):
             """
@@ -854,7 +854,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         ).then(
             fn=update_state_display,
-            inputs=[pipeline_state, gr.Textbox(value="Log")],
+            inputs=pipeline_state,
             outputs=log_output
         )
 
@@ -873,7 +873,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         ).then(
             fn=update_state_display,
-            inputs=[pipeline_state, gr.Textbox(value="Log")],
+            inputs=pipeline_state,
             outputs=log_output
         )
 
@@ -888,7 +888,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         ).then(
             fn=update_state_display,
-            inputs=[pipeline_state, gr.Textbox(value="Log")],
+            inputs=pipeline_state,
             outputs=log_output
         )
 
@@ -928,7 +928,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         ).then(
             fn=update_state_display,
-            inputs=[pipeline_state, gr.Textbox(value="Log")],
+            inputs=pipeline_state,
             outputs=log_output
         )
 

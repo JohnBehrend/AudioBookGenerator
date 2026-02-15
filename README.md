@@ -64,6 +64,27 @@ pip install -r requirements.txt
 - **scipy** for signal processing
 - **pandas** for data handling
 
+### System Dependencies
+
+- **FFmpeg** - Required for audio processing via pydub
+
+  **Windows (using winget):**
+  ```bash
+  winget install Gyan.FFmpeg
+  ```
+
+  **macOS (using Homebrew):**
+  ```bash
+  brew install ffmpeg
+  ```
+
+  **Linux (using apt):**
+  ```bash
+  sudo apt update && sudo apt install ffmpeg
+  ```
+
+  Ensure ffmpeg is on your system PATH. Verify with `ffmpeg -version`.
+
 ### EPUB Processing
 
 - **ebooklib** for EPUB parsing

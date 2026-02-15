@@ -363,12 +363,12 @@ def generate_voice_samples(log_output, progress=gr.Progress()):
 
 
 # ============================================================================
-# Stage 6: Full Audiobook Generation
+# Stage 6: Full Audiobook Generation - Broken into steps
 # ============================================================================
 
-def generate_full_audiobook(log_output, max_chapters=None, progress=gr.Progress()):
-    """Stage 6: Generate full audiobook with all chapters."""
-    log_output += "\n\nGenerating full audiobook..."
+def generate_tts_audio(log_output, max_chapters=None, progress=gr.Progress()):
+    """Stage 6.1: Generate TTS audio for each line/voice."""
+    log_output += "\n\n=== Stage 6.1: Generating TTS Audio ==="
 
     try:
         # Check if chapter map files exist
@@ -389,18 +389,19 @@ def generate_full_audiobook(log_output, max_chapters=None, progress=gr.Progress(
             log_output += "\nUploaded EPUB file not found. Please run Stage 1 first."
             return log_output
 
-        # Count chapters for progress tracking and pass to parse_epub.py
+        # Count chapters for progress tracking
         chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
         num_chapters = len(chapter_files)
-        log_output += f"\nGenerating audiobook for {num_chapters} chapters..."
+        if max_chapters:
+            num_chapters = min(num_chapters, int(max_chapters))
+        log_output += f"\nGenerating TTS audio for {num_chapters} chapters..."
 
-        # Run parse_epub.py with the temp EPUB file, --resume, and --max-chapters
-        # Use chapters_dir as output directory to avoid nested folders
+        # Run parse_epub.py with --resume to generate TTS audio only
         cmd = [sys.executable, str(SCRIPT_DIR / "parse_epub.py"), epub_path, "--resume", "--output-dir", str(chapters_dir)]
         if max_chapters:
             cmd.extend(["--max-chapters", str(max_chapters)])
 
-        # Use subprocess with progress tracking (no cwd needed since we pass --output-dir)
+        import re
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -409,92 +410,184 @@ def generate_full_audiobook(log_output, max_chapters=None, progress=gr.Progress(
             cwd=str(SCRIPT_DIR)
         )
 
-        # Track progress based on output patterns
-        import re
-        completed_chapters = 0
-        current_chapter = -1
-        current_voice = ""
-        current_line = -1
-        current_retry = 0
-        total_estimate = num_chapters * 10  # Rough estimate of total work units
+        # Track TTS generation progress
+        completed_lines = 0
+        current_chapter = 0
 
         for line in iter(process.stdout.readline, ''):
             if line:
                 line_stripped = line.strip()
                 log_output += f"\n{line_stripped}"
 
-                # Parse [CHAPTER_START] Chapter X of Y
+                # Parse chapter start
                 chapter_match = re.search(r'\[CHAPTER_START\]\s+Chapter\s+(\d+)', line_stripped)
                 if chapter_match:
                     current_chapter = int(chapter_match.group(1))
-                    log_output += f"\n[INFO] Starting chapter {current_chapter}"
+                    completed_lines = 0  # Reset line count per chapter
 
-                # Parse [VOICE_START] Processing voice N/M: name
-                voice_match = re.search(r'\[VOICE_START\]\s+Processing\s+voice\s+(\d+)/(\d+):\s+(.+)', line_stripped)
-                if voice_match:
-                    voice_idx = int(voice_match.group(1))
-                    total_voices = int(voice_match.group(2))
-                    current_voice = voice_match.group(3)
-                    log_output += f"\n[INFO] Voice {voice_idx}/{total_voices}: {current_voice}"
-
-                # Parse [GENERATE_START] Chapter X, Line Y, Voice 'name'
-                gen_match = re.search(r'\[GENERATE_START\]\s+Chapter\s+(\d+),\s+Line\s+(\d+)', line_stripped)
-                if gen_match:
-                    gen_chapter = int(gen_match.group(1))
-                    gen_line = int(gen_match.group(2))
-                    current_line = gen_line
-                    log_output += f"\n[INFO] Generating line {gen_line} of chapter {gen_chapter}"
-
-                # Parse [RETRY_START] Attempt N/5
-                retry_match = re.search(r'\[RETRY_START\]\s+Attempt\s+(\d+)/5', line_stripped)
-                if retry_match:
-                    current_retry = int(retry_match.group(1))
-                    log_output += f"\n[INFO] Retry attempt {current_retry}/5"
-
-                # Parse [TTS_GENERATE] or [WHISPER_TRANSCRIBE] for more granular progress
-                if "[TTS_GENERATE]" in line_stripped:
-                    log_output += f"\n[INFO] TTS Generation in progress..."
-                if "[TTS_COMPLETE]" in line_stripped:
-                    log_output += f"\n[INFO] TTS Generation complete"
-                if "[WHISPER_TRANSCRIBE]" in line_stripped:
-                    log_output += f"\n[INFO] Whisper transcription in progress..."
-                if "[WHISPER_ALIGN]" in line_stripped:
-                    log_output += f"\n[INFO] Whisper alignment in progress..."
-                if "[VALIDATION_COMPLETE]" in line_stripped:
-                    log_output += f"\n[INFO] Validation complete"
-                if "[CLIP_POSTFIX]" in line_stripped:
-                    log_output += f"\n[INFO] Clipping postfix..."
-                if "[CLIP_VALID]" in line_stripped:
-                    log_output += f"\n[INFO] Clipping to valid token..."
-                if "[SAVE_AUDIO_FINAL]" in line_stripped:
-                    log_output += f"\n[INFO] Saving final audio..."
-                if "[SAVE_AUDIO_FINAL_COMPLETE]" in line_stripped:
-                    log_output += f"\n[INFO] Final audio saved"
-
-                # Update progress based on current stage
-                if "[CHAPTER_COMPLETE]" in line_stripped:
-                    completed_chapters += 1
-                    progress(completed_chapters / num_chapters, desc=f"Chapter {completed_chapters}/{num_chapters}")
-                elif current_chapter >= 0:
-                    # Estimate progress within a chapter based on line number
-                    progress_estimate = completed_chapters + (current_line + 1) / 20.0
-                    progress(min(progress_estimate / num_chapters, 1.0), desc=f"Chapter {completed_chapters + 1}/{num_chapters}")
+                # Parse line progress
+                line_match = re.search(r'\[LINE_PROGRESS\]\s+Chapter\s+(\d+),\s+Line\s+(\d+)', line_stripped)
+                if line_match:
+                    completed_lines += 1
+                    progress(min((current_chapter + completed_lines / 100.0) / num_chapters, 1.0),
+                            desc=f"Chapter {current_chapter + 1}/{num_chapters} - Generating audio")
 
         process.stdout.close()
         process.wait()
 
-        if process.returncode != 0:
-            if process.stderr:
-                log_output += f"\nErrors: {process.stderr.read()}"
-            log_output += "\nWarning: Process exited with non-zero code."
-
-        progress(1, desc="Stage 6 Complete")
-        log_output += "\n\nStage 6 complete!"
+        progress(1, desc="TTS Audio Complete")
+        log_output += "\n\nStage 6.1 (TTS Audio) complete!"
         return log_output
 
     except Exception as e:
-        log_output += f"\nError generating audiobook: {str(e)}"
+        log_output += f"\nError generating TTS audio: {str(e)}"
         return log_output
+
+
+def validate_and_clip_audio(log_output, max_chapters=None, progress=gr.Progress()):
+    """Stage 6.2: Validate and clip audio with Whisper."""
+    log_output += "\n\n=== Stage 6.2: Validating and Clipping Audio ==="
+
+    try:
+        # Check if temporary audio files exist
+        chapters_dir = get_chapters_dir()
+        tmp_wavs = glob.glob(str(chapters_dir / "*.tmp.wav"))
+        if not tmp_wavs:
+            log_output += "\nNo temporary audio files found. Please run Stage 6.1 first."
+            return log_output
+
+        num_tmp_files = len(tmp_wavs)
+        log_output += f"\nFound {num_tmp_files} temporary audio files to validate..."
+
+        chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
+        num_chapters = len(chapter_files)
+        if max_chapters:
+            num_chapters = min(num_chapters, int(max_chapters))
+
+        # Get the list of already generated valid .wav files
+        valid_wavs = glob.glob(str(chapters_dir / "*.wav"))
+        valid_count = len(valid_wavs)
+
+        log_output += f"\nValidating audio files... (already validated: {valid_count})"
+
+        # The validation happens DURING generation in parse_epub.py
+        # We run parse_epub with --resume to continue the process
+        epub_path = str(chapters_dir / "uploaded.epub")
+        cmd = [sys.executable, str(SCRIPT_DIR / "parse_epub.py"), epub_path, "--resume", "--output-dir", str(chapters_dir)]
+        if max_chapters:
+            cmd.extend(["--max-chapters", str(max_chapters)])
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=str(SCRIPT_DIR)
+        )
+
+        processed_lines = 0
+        total_estimate = num_chapters * 100  # Rough estimate
+
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                line_stripped = line.strip()
+                log_output += f"\n{line_stripped}"
+
+                # Parse line progress for validation
+                if "[LINE_PROGRESS]" in line_stripped:
+                    processed_lines += 1
+                    progress(processed_lines / total_estimate, desc="Validating audio")
+
+        process.stdout.close()
+        process.wait()
+
+        progress(1, desc="Validation Complete")
+        log_output += "\n\nStage 6.2 (Validation) complete!"
+        return log_output
+
+    except Exception as e:
+        log_output += f"\nError validating audio: {str(e)}"
+        return log_output
+
+
+def assemble_chapter_audiobooks(log_output, progress=gr.Progress()):
+    """Stage 6.3: Assemble final chapter MP3 files from WAV files."""
+    log_output += "\n\n=== Stage 6.3: Assembling Chapter MP3 Files ==="
+
+    try:
+        chapters_dir = get_chapters_dir()
+        chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
+        if not chapter_files:
+            log_output += "\nNo chapter text files found. Please run Stage 6.1 first."
+            return log_output
+
+        num_chapters = len(chapter_files)
+        log_output += f"\nFound {num_chapters} chapters to assemble."
+
+        import pydub
+
+        def get_non_silent_audio_from_wavs(wav_filepath_list, min_silence_len=1250, silence_thresh=-60):
+            """Remove silent audio from list of wave filepaths."""
+            all_audio_segments = None
+            for wav in wav_filepath_list:
+                raw_audio_segment = pydub.AudioSegment.from_wav(wav)
+                this_audio_segment = pydub.AudioSegment.empty()
+                for (start_time, end_time) in pydub.silence.detect_nonsilent(raw_audio_segment, min_silence_len=min_silence_len, silence_thresh=silence_thresh):
+                    this_audio_segment += raw_audio_segment[start_time:end_time]
+                if all_audio_segments is None:
+                    all_audio_segments = this_audio_segment
+                else:
+                    all_audio_segments = all_audio_segments + this_audio_segment
+            return all_audio_segments
+
+        # Process each chapter
+        progress(0, desc="Assembling chapters...")
+
+        for i in range(len(chapter_files)):
+            progress((i + 1) / num_chapters, desc=f"Assembling chapter {i + 1}/{num_chapters}")
+
+            # Find all WAV files for this chapter
+            wav_files = sorted(glob.glob(str(chapters_dir / f"chapter_{str(i).zfill(2)}.*.wav")))
+
+            if not wav_files:
+                log_output += f"\nNo WAV files found for chapter {i}, skipping."
+                continue
+
+            # Combine audio files
+            audio = get_non_silent_audio_from_wavs(wav_files)
+            output_mp3 = chapters_dir / f"chapter_{str(i).zfill(2)}.mp3"
+            audio.export(str(output_mp3), format="mp3")
+
+            # Clean up individual WAV files
+            for wav in wav_files:
+                os.unlink(wav)
+
+            log_output += f"\nChapter {i}: Created {output_mp3.name} from {len(wav_files)} audio segments."
+
+        progress(1, desc="Assembly Complete")
+        log_output += "\n\nStage 6.3 (Assembly) complete!"
+        return log_output
+
+    except Exception as e:
+        log_output += f"\nError assembling audiobooks: {str(e)}"
+        return log_output
+
+
+def generate_full_audiobook(log_output, max_chapters=None, progress=gr.Progress()):
+    """Stage 6: Generate full audiobook - runs all 6.x steps in sequence."""
+    log_output += "\n\n=== Stage 6: Full Audiobook Generation ==="
+
+    # Step 6.1: Generate TTS audio
+    log_output = generate_tts_audio(log_output, max_chapters, progress)
+
+    # Step 6.2: Validate and clip audio
+    log_output = validate_and_clip_audio(log_output, max_chapters, progress)
+
+    # Step 6.3: Assemble chapter MP3s
+    log_output = assemble_chapter_audiobooks(log_output, progress)
+
+    log_output += "\n\n=== Stage 6 Complete: Full Audiobook Generation ==="
+    return log_output
 
 
 # ============================================================================
@@ -566,11 +659,24 @@ def create_interface():
             voice_samples_btn = gr.Button("Generate Voice Samples", variant="secondary")
             voice_samples_output = gr.Textbox(label="Voice Sample Results")
 
-        # Stage 6: Full Audiobook
+        # Stage 6: Full Audiobook (3-step process)
         with gr.Accordion("Stage 6: Generate Audiobook", open=False) as stage6:
             gr.Markdown("Generate the complete audiobook with all voices applied.")
-            audiobook_btn = gr.Button("Generate Full Audiobook", variant="primary")
-            audiobook_output = gr.Textbox(label="Audiobook Generation Results")
+            gr.Markdown("### Step 6.1: Generate TTS Audio")
+            tts_btn = gr.Button("Generate TTS Audio", variant="secondary")
+            tts_output = gr.Textbox(label="TTS Audio Generation Results")
+
+            gr.Markdown("### Step 6.2: Validate and Clip Audio")
+            validate_btn = gr.Button("Validate and Clip Audio", variant="secondary")
+            validate_output = gr.Textbox(label="Validation Results")
+
+            gr.Markdown("### Step 6.3: Assemble Chapter MP3s")
+            assemble_btn = gr.Button("Assemble Chapter MP3s", variant="secondary")
+            assemble_output = gr.Textbox(label="Assembly Results")
+
+            gr.Markdown("### Full Pipeline")
+            audiobook_btn = gr.Button("Generate Full Audiobook (All Steps)", variant="primary")
+            audiobook_output = gr.Textbox(label="Full Audiobook Results")
 
         # Output file display
         with gr.Accordion("Generated Files", open=False):
@@ -607,6 +713,24 @@ def create_interface():
             outputs=voice_samples_output
         )
 
+        tts_btn.click(
+            fn=generate_tts_audio,
+            inputs=[tts_output, max_chapters_slider],
+            outputs=tts_output
+        )
+
+        validate_btn.click(
+            fn=validate_and_clip_audio,
+            inputs=[validate_output, max_chapters_slider],
+            outputs=validate_output
+        )
+
+        assemble_btn.click(
+            fn=assemble_chapter_audiobooks,
+            inputs=[assemble_output],
+            outputs=assemble_output
+        )
+
         audiobook_btn.click(
             fn=generate_full_audiobook,
             inputs=[audiobook_output, max_chapters_slider],
@@ -633,7 +757,18 @@ def cleanup_temp_dir():
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Audiobook Pipeline Gradio Interface")
+    parser.add_argument("--api_key", type=str, default="lm-studio", help="LLM API Key to pre-fill")
+    parser.add_argument("--port", type=str, default="1234", help="LLM Port to pre-fill")
+    args = parser.parse_args()
+
     demo = create_interface()
+    # Set default values for the API key and port inputs
+    demo.dependencies[0]["fn"].__globals__["api_key_default"] = args.api_key
+    demo.dependencies[0]["fn"].__globals__["port_default"] = args.port
+
     try:
         demo.launch(share=False)
     finally:

@@ -594,7 +594,7 @@ def generate_full_audiobook(log_output, max_chapters=None, progress=gr.Progress(
 # Gradio Interface
 # ============================================================================
 
-def create_interface():
+def create_interface(api_key_default="lm-studio", port_default="1234", num_attempts_default=10, epub_path_default=None, max_chapters_default=10):
     """Create the Gradio interface with all stages."""
 
     with gr.Blocks(theme=gr.themes.Soft()) as demo:
@@ -606,31 +606,31 @@ def create_interface():
             with gr.Row():
                 api_key_input = gr.Textbox(
                     label="LLM API Key",
-                    value="lm-studio",
+                    value=api_key_default,
                     placeholder="Enter your API key (default: lm-studio)"
                 )
                 port_input = gr.Textbox(
                     label="LLM Port",
-                    value="1234",
+                    value=port_default,
                     placeholder="Port for LLM inference"
                 )
                 num_attempts_input = gr.Slider(
                     minimum=1,
                     maximum=50,
-                    value=10,
+                    value=num_attempts_default,
                     step=1,
                     label="Number of LLM Attempts"
                 )
             max_chapters_slider = gr.Slider(
                 minimum=1,
                 maximum=100,
-                value=10,
+                value=max_chapters_default,
                 step=1,
                 label="Max Chapters to Generate"
             )
 
             gr.Markdown("### EPUB File")
-            epub_upload = gr.File(label="Upload EPUB File", file_types=[".epub"])
+            epub_upload = gr.File(label="Upload EPUB File", file_types=[".epub"], value=epub_path_default)
             parse_btn = gr.Button("Parse EPUB", variant="primary")
             parse_output = gr.Textbox(label="Status")
             chapter_count_display = gr.Number(label="Chapters Created", precision=0)
@@ -762,12 +762,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Audiobook Pipeline Gradio Interface")
     parser.add_argument("--api_key", type=str, default="lm-studio", help="LLM API Key to pre-fill")
     parser.add_argument("--port", type=str, default="1234", help="LLM Port to pre-fill")
+    parser.add_argument("--num_llm_attempts", type=int, default=10, help="Number of LLM attempts to pre-fill")
+    parser.add_argument("--epub", type=str, help="EPUB file path to pre-load")
+    parser.add_argument("--max_chapters", type=int, default=10, help="Max chapters to pre-fill")
     args = parser.parse_args()
 
-    demo = create_interface()
-    # Set default values for the API key and port inputs
-    demo.dependencies[0]["fn"].__globals__["api_key_default"] = args.api_key
-    demo.dependencies[0]["fn"].__globals__["port_default"] = args.port
+    demo = create_interface(
+        api_key_default=args.api_key,
+        port_default=args.port,
+        num_attempts_default=args.num_llm_attempts,
+        epub_path_default=args.epub,
+        max_chapters_default=args.max_chapters
+    )
 
     try:
         demo.launch(share=False)

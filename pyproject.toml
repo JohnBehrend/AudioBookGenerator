@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "JAB Audiobook Pipeline"
 # Note: requires-python must be <3.11 due to qwen-tts dependencies.
 # qwen-tts -> librosa -> numba -> llvmlite (which only supports Python <3.11)
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "torch",
     "torchaudio>=2.8.0",
@@ -34,6 +34,9 @@ dependencies = [
     # numba>=0.57.0 needed to get llvmlite>=0.40 which supports Python 3.10
     # (llvmlite 0.36.0 only supports Python <3.10)
     "numba>=0.57.0",
+    "ffmpeg-python==0.2.0",
+    "flash-attn",
+    "torchcodec==0.9.0"
 ]
 
 [project.scripts]
@@ -71,7 +74,7 @@ torchvision = [
 torchaudio = [
   { index = "pytorch-cu128" },
 ]
-flash-attn = { path = "flash_attn-2.7.4+cu128torch2.7-cp311-cp311-win_amd64.whl" }
+flash-attn = { path = "flash_attn-2.7.4+cu128torch2.8-cp311-cp311-win_amd64.whl" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

@@ -708,9 +708,8 @@ def update_character_table(characters_state):
         characters_state: gr.State containing dict of character_name -> description
 
     Returns:
-        Updated Dataframe component with character data
+        Updated Dataframe component with character data (2 columns: name, description)
     """
-    chapters_dir = get_chapters_dir()
     descriptions_file = get_character_descriptions_file()
 
     if not os.path.exists(str(descriptions_file)) or characters_state is None:
@@ -720,34 +719,52 @@ def update_character_table(characters_state):
         with open(descriptions_file, "r", encoding="utf-8") as f:
             descriptions = json.load(f)
 
-        # Get all generated wav files
-        wav_files = get_all_character_wav_files(chapters_dir)
-
-        # Build table data
+        # Build table data with only character name and description
         table_data = []
         for char_name, char_desc in descriptions.items():
-            wav_path = wav_files.get(char_name)
-            if wav_path and os.path.exists(wav_path):
-                # Play button with inline styles - using emoji symbol in Audio column
-                play_btn = f'<button style="background-color:#2196F3;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">▶</button>'
-                # Redo button with inline styles - using emoji symbol in Generate column
-                redo_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">↻</button>'
-                table_data.append([char_name, char_desc, play_btn, redo_btn])
-            else:
-                # Generate button with inline styles - using plus symbol in Generate column
-                generate_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">+</button>'
-                table_data.append([char_name, char_desc, "", generate_btn])
+            table_data.append([char_name, char_desc])
 
-        # Use datatype=["str", "str", "markdown", "markdown"] to render HTML
         return gr.Dataframe(
-            headers=["Character", "Description", "Audio", "Generate"],
-            datatype=["str", "str", "markdown", "markdown"],
+            headers=["Character", "Description"],
+            datatype=["str", "str"],
             value=table_data,
             wrap=True
         )
 
     except Exception as e:
         return gr.Dataframe(value=[])
+
+
+def on_character_select(evt: gr.SelectData, characters_state):
+    """
+    Handle character table row selection.
+    Updates the audio player and generate button based on selected character.
+
+    Args:
+        evt: Gradio SelectData containing selection information
+        characters_state: Current characters state
+
+    Returns:
+        Tuple of (audio_visible, audio_label_visible, audio_filepath, generate_label)
+    """
+    if evt is None or evt.row_value is None:
+        return False, True, None, "Select a character to generate voice sample"
+
+    # Get character name from the row data (first column)
+    character_name = evt.row_value[0] if len(evt.row_value) > 0 else None
+
+    if not character_name:
+        return False, True, None, "Select a character to generate voice sample"
+
+    chapters_dir = get_chapters_dir()
+    wav_path = get_character_wav_file(character_name, chapters_dir)
+
+    if wav_path and os.path.exists(wav_path):
+        # Audio exists - show audio player, hide label
+        return True, False, wav_path, f"Generate voice sample for: {character_name}"
+    else:
+        # Audio doesn't exist - hide audio player, show label with character name
+        return False, True, None, f"Generate voice sample for: {character_name}"
 
 
 
@@ -818,14 +835,33 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         # Character Descriptions Table (after Stage 4)
         with gr.Accordion("Character Descriptions Table", open=False) as char_table_accordion:
             character_table = gr.Dataframe(
-                headers=["Character", "Description", "Audio", "Generate"],
-                datatype=["str", "str", "markdown", "markdown"],
+                headers=["Character", "Description"],
+                datatype=["str", "str"],
                 label="Characters",
                 wrap=True
             )
 
         # State to track characters after Stage 4
         characters_state = gr.State(None)
+
+        # Selected character audio and generation controls
+        with gr.Accordion("Selected Character", open=False) as char_detail_accordion:
+            with gr.Row():
+                with gr.Column():
+                    gr.Markdown("### Character Audio")
+                    character_audio = gr.Audio(
+                        label="Character Voice Sample",
+                        type="filepath",
+                        visible=False
+                    )
+                    character_audio_label = gr.Label(
+                        label="No audio available",
+                        visible=True
+                    )
+                with gr.Column():
+                    gr.Markdown("### Generate Voice Sample")
+                    generate_char_btn = gr.Button("Generate Voice Sample", variant="primary")
+                    generate_char_output = gr.Textbox(label="Generation Status")
 
         # Stage 5: Voice Samples
         with gr.Accordion("Stage 5: Voice Samples", open=False) as stage5:
@@ -855,7 +891,6 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         # Output file display
         with gr.Accordion("Generated Files", open=False):
             files_output = gr.Textbox(label="Chapter Files")
-        table_state = gr.State(None)
 
         # Event handlers
         parse_btn.click(
@@ -896,52 +931,72 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             outputs=character_table
         )
 
-        # Handle button clicks in character table
-        def on_table_select(evt: gr.SelectData, _api_key, _port, _log, _characters_state):
-            """Handle button clicks in the character table."""
+        # State to track selected character
+        selected_char_state = gr.State(None)
 
-            # evt.value contains the cell value (button HTML)
-            button_html = evt.value if evt.value else ""
-            # evt.row_value contains the full row as a pandas Series
-            row_value = evt.row_value if evt.row_value else None
-
-            if row_value is None:
-                return _log, _characters_state, character_table
+        # Handle row selection in character table
+        def on_character_select(evt: gr.SelectData, _characters_state):
+            """Handle row selection in the character table."""
+            # unused parameter to satisfy function signature
+            _ = _characters_state
+            if evt is None or evt.row_value is None:
+                return gr.update(visible=False), gr.update(visible=True), None, gr.update(value="Select a character to generate voice sample"), None
 
             # Get character name from the row data (first column)
-            # evt.row_value is a list, not a pandas Series
-            character_name = row_value[0] if len(row_value) > 0 else None
+            character_name = evt.row_value[0] if len(evt.row_value) > 0 else None
 
             if not character_name:
-                return _log, _characters_state, character_table
+                return gr.update(visible=False), gr.update(visible=True), None, gr.update(value="Select a character to generate voice sample"), None
 
-            # Check if it's a play button (triangle symbol)
-            if "▶" in button_html:
-                # The audio player in the Audio column handles playback
-                return _log, _characters_state, character_table
+            chapters_dir = get_chapters_dir()
+            wav_path = get_character_wav_file(character_name, chapters_dir)
 
-            # Check if it's a redo button (rotate symbol)
-            if "↻" in button_html:
-                # Call the regenerate function
-                new_log, _ = regenerate_voice_sample(character_name, _api_key, _port, _log)
-                # Refresh the table using state
-                new_table = update_character_table(_characters_state)
-                return new_log, _characters_state, new_table
-
-            # Check if it's a generate button (plus symbol)
-            elif "+" in button_html:
-                _log += f"\n\nWould regenerate voice sample for: {character_name}"
-                # Call the regenerate function
-                new_log, _ = regenerate_voice_sample(character_name, _api_key, _port, _log)
-                new_table = update_character_table(_characters_state)
-                return new_log, _characters_state, new_table
-
-            return _log, _characters_state, character_table
+            if wav_path and os.path.exists(wav_path):
+                # Audio exists - show audio player, hide label
+                return (
+                    gr.update(visible=True),
+                    gr.update(visible=False),
+                    wav_path,
+                    gr.update(value=f"Voice sample available for: {character_name}"),
+                    character_name
+                )
+            else:
+                # Audio doesn't exist - hide audio player, show label with character name
+                return (
+                    gr.update(visible=False),
+                    gr.update(visible=True),
+                    None,
+                    gr.update(value=f"Generate voice sample for: {character_name}"),
+                    character_name
+                )
 
         character_table.select(
-            fn=on_table_select,
-            inputs=[api_key_input, port_input, log_output, characters_state],
-            outputs=[log_output, characters_state, character_table]
+            fn=on_character_select,
+            inputs=characters_state,
+            outputs=[character_audio, character_audio_label, character_audio, generate_char_output, selected_char_state]
+        )
+
+        # Handle generate character voice sample button
+        def on_generate_voice_sample(_char_name, _api_key, _port, _log):
+            """Generate voice sample for selected character."""
+            if not _char_name:
+                return "No character selected.", None
+
+            new_log, wav_path = regenerate_voice_sample(_char_name, _api_key, _port, _log)
+            return new_log, wav_path
+
+        generate_char_btn.click(
+            fn=on_generate_voice_sample,
+            inputs=[selected_char_state, api_key_input, port_input, generate_char_output],
+            outputs=[generate_char_output, character_audio]
+        ).then(
+            fn=update_character_table,
+            inputs=characters_state,
+            outputs=character_table
+        ).then(
+            fn=on_character_select,
+            inputs=characters_state,
+            outputs=[character_audio, character_audio_label, character_audio, generate_char_output, selected_char_state]
         )
 
         tts_btn.click(

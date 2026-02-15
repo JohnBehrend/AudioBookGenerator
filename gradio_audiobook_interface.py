@@ -853,6 +853,10 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             fn=update_button_visibility,
             inputs=pipeline_state,
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
+        ).then(
+            fn=update_state_display,
+            inputs=pipeline_state,
+            outputs=state_display
         )
 
         # Describe Characters - Stage 3
@@ -868,6 +872,10 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             fn=update_button_visibility,
             inputs=pipeline_state,
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
+        ).then(
+            fn=update_state_display,
+            inputs=pipeline_state,
+            outputs=state_display
         )
 
         # Generate All Voice Samples - Stage 4
@@ -879,6 +887,10 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             fn=update_button_visibility,
             inputs=pipeline_state,
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
+        ).then(
+            fn=update_state_display,
+            inputs=pipeline_state,
+            outputs=state_display
         )
 
         # Handle row selection in character table - show audio when character selected
@@ -915,6 +927,10 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             fn=update_button_visibility,
             inputs=pipeline_state,
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
+        ).then(
+            fn=update_state_display,
+            inputs=pipeline_state,
+            outputs=state_display
         )
 
         

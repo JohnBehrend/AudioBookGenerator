@@ -714,11 +714,12 @@ def generate_character_table():
             if wav_path and os.path.exists(wav_path):
                 # Create audio player HTML with fixed height for audio controls
                 audio_html = f'<audio controls src="{wav_path}" style="width: 100%; height: 32px;"></audio>'
-                # Create redo button HTML
-                redo_btn = f'<button class="redo-btn" data-char="{char_name}">Redo</button>'
+                # Create redo button HTML with inline styles for better compatibility
+                redo_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Redo</button>'
                 table_data.append([char_name, char_desc, audio_html, redo_btn])
             else:
-                table_data.append([char_name, char_desc, "", "<button class=\"generate-btn\" data-char=\"{}\">Generate</button>".format(char_name)])
+                generate_btn = f'<button style="background-color:#4a4a4a;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Generate</button>'
+                table_data.append([char_name, char_desc, "", generate_btn])
 
         # Create dataframe with HTML datatype for audio and buttons
         return gr.Dataframe(
@@ -870,6 +871,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             outputs=voice_samples_output
         ).then(
             fn=generate_character_table,
+            outputs=character_table
         )
 
         # Handle button clicks in character table

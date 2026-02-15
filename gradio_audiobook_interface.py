@@ -729,22 +729,20 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         # Progress bar at top
         progress_bar = gr.Progress()
 
-        # State display
-        state_display = gr.Label(label="State", value="Ready", show_label=True)
+        # Collapsible input area (settings only, buttons stay visible)
+        with gr.Accordion(label="Settings", open=False):
+            with gr.Row():
+                api_key_input = gr.Textbox(label="API", value=api_key_default, scale=2)
+                port_input = gr.Textbox(label="Port", value=port_default, scale=1)
+                num_attempts_input = gr.Slider(minimum=1, maximum=50, value=num_attempts_default,
+                                               step=1, label="LLM Attempts", scale=2)
+                max_chapters_slider = gr.Slider(minimum=1, maximum=100, value=max_chapters_default,
+                                                step=1, label="Max", scale=2)
 
-        # Settings - compact
-        with gr.Row():
-            api_key_input = gr.Textbox(label="API", value=api_key_default, scale=2)
-            port_input = gr.Textbox(label="Port", value=port_default, scale=1)
-            num_attempts_input = gr.Slider(minimum=1, maximum=50, value=num_attempts_default,
-                                           step=1, label="LLM Attempts", scale=2)
-            max_chapters_slider = gr.Slider(minimum=1, maximum=100, value=max_chapters_default,
-                                            step=1, label="Max", scale=2)
+            # EPUB upload
+            epub_upload = gr.File(label="EPUB", file_types=[".epub"], value=epub_path_default)
 
-        # EPUB upload
-        epub_upload = gr.File(label="EPUB", file_types=[".epub"], value=epub_path_default)
-
-        # Main buttons - single row
+        # Buttons - always visible
         with gr.Row():
             parse_btn = gr.Button("1. Parse", variant="primary", scale=1)
             label_btn = gr.Button("2. Label", variant="secondary", scale=1)
@@ -756,8 +754,8 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             generate_char_btn = gr.Button("5. Regen", variant="secondary", scale=1)
             tts_btn = gr.Button("6. Audiobook", variant="primary", scale=2)
 
-        # Log output
-        log_output = gr.Textbox(label="Log", lines=4, max_lines=6)
+        # Log output with state on same element
+        log_output = gr.Textbox(label="Log (State: Ready)", lines=4, max_lines=6)
 
         # Character info
         character_table = gr.Dataframe(
@@ -780,8 +778,8 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         # STATE TRANSITION HANDLERS - Define which buttons are enabled based on state
         # ============================================================================
 
-        def update_state_display(state):
-            """Update state display based on pipeline state."""
+        def update_state_display(state, log_label="Log"):
+            """Update log label with state based on pipeline state."""
             state_labels = {
                 None: "Ready",
                 PipelineState.EPUB_PARSED: "EPUB Parsed",
@@ -790,7 +788,8 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
                 PipelineState.VOICE_SAMPLES_COMPLETE: "Voice Samples Ready",
                 PipelineState.AUDIOBOOK_COMPLETE: "Audiobook Complete"
             }
-            return gr.update(value=state_labels.get(state, "Unknown"))
+            state_text = state_labels.get(state, "Unknown")
+            return gr.update(label=f"{log_label} (State: {state_text})")
 
         def update_button_visibility(state):
             """
@@ -841,7 +840,7 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
         ).then(
             fn=lambda s: list(update_button_visibility(s)) + [update_state_display(s)],
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn, state_display]
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn, log_output]
         )
 
         # Label Speakers - Stage 2
@@ -855,8 +854,8 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         ).then(
             fn=update_state_display,
-            inputs=pipeline_state,
-            outputs=state_display
+            inputs=[pipeline_state, gr.Textbox(value="Log")],
+            outputs=log_output
         )
 
         # Describe Characters - Stage 3
@@ -874,8 +873,8 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         ).then(
             fn=update_state_display,
-            inputs=pipeline_state,
-            outputs=state_display
+            inputs=[pipeline_state, gr.Textbox(value="Log")],
+            outputs=log_output
         )
 
         # Generate All Voice Samples - Stage 4
@@ -889,8 +888,8 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         ).then(
             fn=update_state_display,
-            inputs=pipeline_state,
-            outputs=state_display
+            inputs=[pipeline_state, gr.Textbox(value="Log")],
+            outputs=log_output
         )
 
         # Handle row selection in character table - show audio when character selected
@@ -929,11 +928,11 @@ def create_interface(api_key_default="lm-studio", port_default="1234", num_attem
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         ).then(
             fn=update_state_display,
-            inputs=pipeline_state,
-            outputs=state_display
+            inputs=[pipeline_state, gr.Textbox(value="Log")],
+            outputs=log_output
         )
 
-        
+
     return demo
 
 

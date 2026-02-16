@@ -12,7 +12,6 @@ import argparse
 import json
 import os
 import sys
-import time
 
 # Add parent directory to path to import qwen_tts
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -107,6 +106,11 @@ def main():
         "--single-character",
         help="Generate only one character"
     )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose printing for debug."
+    )
 
     args = parser.parse_args()
 
@@ -114,7 +118,6 @@ def main():
         print(f"Error: Descriptions file not found: {args.descriptions}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Loading character descriptions from: {args.descriptions}")
     descriptions = load_character_descriptions(args.descriptions)
 
     if args.single_character:
@@ -122,74 +125,18 @@ def main():
             print(f"Error: Character '{args.single_character}' not found.", file=sys.stderr)
             sys.exit(1)
         descriptions = {args.single_character: descriptions[args.single_character]}
-        print(f"Generating voice for single character: {args.single_character}")
-    else:
-        print(f"Found {len(descriptions)} characters")
 
-    print(f"\nLoading model: {args.model_path}")
-    print("  (First run downloads weights from HuggingFace)")
-    start_load = time.time()
+    status, generated = generate_voice_samples(
+        descriptions=descriptions,
+        output_dir=args.output_dir,
+        model_path=args.model_path,
+        device=args.device,
+        max_tokens=args.max_tokens,
+        single_character=args.single_character,
+        verbose=args.verbose
+    )
 
-    try:
-        tts_model = Qwen3TTSModel.from_pretrained(
-            args.model_path,
-            device_map=args.device,
-            dtype="bfloat16",
-            attn_implementation=None,
-        )
-    except Exception as e:
-        print(f"Error loading model: {e}", file=sys.stderr)
-        print("\nNote: You may need to manually download the model first.", file=sys.stderr)
-        sys.exit(1)
-
-    load_time = time.time() - start_load
-    print(f"Model loaded in {load_time:.1f}s")
-
-    output_dir = args.output_dir
-    print(f"\nGenerating voice samples to: {output_dir}\n")
-
-    generated = []
-    failed = []
-
-    for i, (char_name, char_desc) in enumerate(descriptions.items()):
-        print(f"[{i+1}/{len(descriptions)}] {char_name}")
-
-        success, output_file, duration = generate_voice_sample(
-            tts_model, char_name, char_desc, output_dir,
-            max_new_tokens=args.max_tokens
-        )
-
-        if success:
-            generated.append((char_name, output_file, duration))
-            print(f"    Generated: {duration:.2f}s -> {output_file}")
-        else:
-            failed.append((char_name, None))
-            print(f"    Failed")
-
-    print("\n" + "=" * 60)
-    print(f"Summary: {len(generated)} generated, {len(failed)} failed")
-    print("=" * 60)
-
-    if generated:
-        print("\nGenerated voice samples:")
-        for char_name, path, duration in generated:
-            print(f"  {char_name}: {path} ({duration:.2f}s)")
-
-        # Generate voices_map.json for use in audiobook generation
-        voices_map = {}
-        # Add narrator as default (will be used for non-character speech)
-        voices_map["narrator"] = "narrator.wav"
-        # Map character names to their voice samples
-        for char_name, path, duration in generated:
-            # Extract just the filename from the path
-            voice_file = os.path.basename(path)
-            voices_map[char_name] = voice_file
-
-        voices_map_path = os.path.join(output_dir, "voices_map.json")
-        with open(voices_map_path, "w", encoding="utf-8") as f:
-            json.dump(voices_map, f, indent=2)
-        print(f"\nGenerated voices_map.json: {voices_map_path}")
-        print("  (This file maps characters to their voice samples for audiobook generation)")
+    print(status)
 
 
 # ============================================================================

@@ -90,9 +90,6 @@ pip install -r requirements.txt
 - **ebooklib** for EPUB parsing
 - **beautifulsoup4** for HTML parsing
 
-## Configuration
-
-## Configuration
 
 ### LLM Settings
 

@@ -862,7 +862,7 @@ def get_next_step_recommendation(state: Optional[str]) -> str:
         PIPELINE_STATE_EPUB_PARSED: "Click '2. Label' to use LLM for speaker labeling.",
         PIPELINE_STATE_LABELS_COMPLETE: "Click '3. Describe' to generate character descriptions.",
         PIPELINE_STATE_CHARACTERS_DESCRIBED: "Click '4. Voices' to generate voice samples for each character.",
-        PIPELINE_STATE_VOICE_SAMPLES_COMPLETE: "Click '6. Audiobook' to generate the full audiobook.",
+        PIPELINE_STATE_VOICE_SAMPLES_COMPLETE: "Click 'Read Chapters' to generate the full audiobook.",
         PIPELINE_STATE_AUDIOBOOK_COMPLETE: "Audiobook generation complete! You can start a new project.",
     }
     return recommendations.get(state, "Unknown state.")
@@ -898,7 +898,7 @@ def update_button_visibility(state: Optional[str]):
     elif state == PIPELINE_STATE_CHARACTERS_DESCRIBED:
         _states = [True,  True,  True,  True,  True, False, False]
     elif state == PIPELINE_STATE_VOICE_SAMPLES_COMPLETE:
-        _states = [True,  True,  True,  True,  True,  True, False]
+        _states = [True,  True,  True,  True,  True,  True, True]
     else:  # AUDIOBOOK_COMPLETE or beyond
         _states = [True,  True,  True,  True,  True,  True,  True]
     return tuple(gr.update(interactive=state) for state in _states)

@@ -708,6 +708,75 @@ def generate_full_audiobook(
 # ============================================================================
 
 
+def count_lines_per_character(chapters_dir: Path) -> Dict[str, int]:
+    """
+    Count lines spoken per character from map.json files.
+
+    Args:
+        chapters_dir: Path to the chapters directory
+
+    Returns:
+        Dict mapping character name to line count (including narrator for unlabeled lines)
+    """
+    character_lines = {}
+
+    map_files = sorted(glob.glob(str(chapters_dir / "*.map.json")))
+    for map_file in map_files:
+        try:
+            with open(map_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # data is typically [character_map, line_map]
+            if isinstance(data, list) and len(data) >= 2:
+                character_map = data[0]
+                line_map = data[1]
+            elif isinstance(data, dict):
+                character_map = data.get("character_map", {})
+                line_map = data.get("line_map", {})
+            else:
+                continue
+
+            # Convert character_map values to get character names by ID
+            char_by_id = {int(k): v for k, v in character_map.items()}
+
+            # Count total spoken lines in this chapter from the corresponding txt file
+            # Only count lines that actually have content (not just line headers)
+            txt_file = map_file.replace(".map.json", ".txt")
+            spoken_lines = set()
+            if os.path.exists(txt_file):
+                with open(txt_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        # Only count lines that start with "Line N:" and have content after
+                        if line.startswith("Line ") and ": " in line:
+                            # Extract line number and check if there's actual content
+                            try:
+                                line_num_str = line.split(": ", 1)[0].replace("Line ", "")
+                                line_num = int(line_num_str)
+                                content = line.split(": ", 1)[1] if ": " in line else ""
+                                if content.strip():
+                                    spoken_lines.add(line_num)
+                            except (ValueError, IndexError):
+                                pass
+
+            # Count labeled lines for each character
+            labeled_count = 0
+            for char_id in line_map.values():
+                char_name = char_by_id.get(char_id)
+                if char_name:
+                    character_lines[char_name] = character_lines.get(char_name, 0) + 1
+                    labeled_count += 1
+
+            # Add unlabeled spoken lines to narrator
+            narrator_lines = len(spoken_lines) - labeled_count
+            if narrator_lines > 0:
+                character_lines["narrator"] = character_lines.get("narrator", 0) + narrator_lines
+
+        except Exception:
+            pass
+
+    return character_lines
+
+
 def update_character_table(characters_state: Optional[Dict[str, Any]]) -> gr.Dataframe:
     """
     Update the character table based on stored character state.
@@ -716,7 +785,8 @@ def update_character_table(characters_state: Optional[Dict[str, Any]]) -> gr.Dat
         characters_state: gr.State containing dict of character_name -> description
 
     Returns:
-        Updated Dataframe component with character data (2 columns: name, truncated_description)
+        Updated Dataframe component with character data (3 columns: name, description, lines_spoken)
+        sorted by lines spoken (descending)
     """
     descriptions_file = get_characters_descriptions_file()
     if not descriptions_file or not descriptions_file.exists() or characters_state is None:
@@ -726,15 +796,23 @@ def update_character_table(characters_state: Optional[Dict[str, Any]]) -> gr.Dat
         with open(descriptions_file, "r", encoding="utf-8") as f:
             descriptions = json.load(f)
 
-        # Build table data with only character name and truncated description
+        # Get character lines from map files
+        chapters_dir = get_chapters_dir()
+        character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
+
+        # Build table data with character name, truncated description, and lines spoken
         table_data = []
         for char_name, char_desc in descriptions.items():
             truncated_desc = char_desc[:100] + ("..." if len(char_desc) > 100 else "")
-            table_data.append([char_name, truncated_desc])
+            lines_spoken = character_lines.get(char_name, 0)
+            table_data.append([char_name, truncated_desc, lines_spoken])
+
+        # Sort by lines spoken (descending)
+        table_data.sort(key=lambda x: x[2], reverse=True)
 
         return gr.Dataframe(
-            headers=["Character", "Description"],
-            datatype=["str", "str"],
+            headers=["Character", "Description", "Lines Spoken"],
+            datatype=["str", "str", "int"],
             value=table_data,
             wrap=True,
         )

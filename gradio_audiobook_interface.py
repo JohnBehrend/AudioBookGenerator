@@ -193,6 +193,14 @@ def parse_epub_to_file(
     if not chapters_dir:
         return "Error: Failed to create temporary directory.", None
 
+    # Clean up existing files in the chapters directory before starting fresh
+    if chapters_dir.exists():
+        for item in chapters_dir.iterdir():
+            if item.is_file():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item)
+
     # Copy the EPUB file to temp directory for Stage 6
     epub_dest = chapters_dir / "uploaded.epub"
     shutil.copy2(epub_file.name, str(epub_dest))

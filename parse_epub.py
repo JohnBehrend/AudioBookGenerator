@@ -969,7 +969,7 @@ def generate_audiobook_from_chapters(
                 continue
 
             if progress is not None:
-                progress(i + 1, len(chapters_to_process), desc=f"Processing Chapter {i}")
+                progress((i + 1)/len(chapters_to_process), desc=f"Processing Chapter {i}")
             if verbose:
                 print(f"[CHAPTER_START] Chapter {i}/{len(chapters_to_process)}")
 
@@ -1005,7 +1005,7 @@ def generate_audiobook_from_chapters(
             # Generate TTS for each voice in this chapter
             for voice in voices_used:
                 if progress is not None:
-                    progress(0, len(voices_used), desc=f"Processing Chapter {i} Voice {voice}")
+                    progress(0, desc=f"Processing Chapter {i} Voice {voice}")
 
                 # Check what's already generated
                 already_generated = [
@@ -1016,7 +1016,7 @@ def generate_audiobook_from_chapters(
 
                 for j, chapter_obj in enumerate(chapter):
                     if progress is not None:
-                        progress(j + 1, len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j}")
+                        progress((j + 1)/ len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j}")
                     if voice != chapter_obj.get_speaker():
                         continue
                     if j in already_generated:
@@ -1048,12 +1048,12 @@ def generate_audiobook_from_chapters(
                         verbose=verbose
                     )
                     if progress is not None:
-                        progress(j + 1, len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j} Ratio {int(ratio * 100)}")
+                        progress((j + 1)/len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j} Ratio {int(ratio * 100)}")
                     if verbose:
                         print(f"[LINE_PROGRESS] Chapter {i}, Line {j+1}/{len(chapter)}, Voice: {voice}, Ratio: {int(ratio * 100)}")
 
             # Assemble chapter MP3 from WAV files
-            progress(1, 1, desc=f"Assembling Chapters")
+            progress(1, desc=f"Assembling Chapters")
             wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")))
             if wav_files:
                 audio = get_non_silent_audio_from_wavs(wav_files)

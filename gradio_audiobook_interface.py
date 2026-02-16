@@ -21,8 +21,7 @@ import shutil
 import traceback
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
-
-
+from time import sleep
 # ============================================================================
 # CONSTANTS
 # ============================================================================
@@ -257,21 +256,25 @@ def process_chapters_for_labels(
     num_attempts: int,
     pipeline_state: Optional[str],
     log_output: str,
+    progress=gr.Progress()
 ) -> Tuple[str, str]:
     """Stage 2: Run LLM to label speakers in all chapters."""
     chapters_dir = get_chapters_dir()
     if not chapters_dir:
+        progress(1.0, desc="Error: Chapters directory not initialized.")
         return log_output + "\nError: Chapters directory not initialized.", pipeline_state
 
     chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
 
     if not chapter_files:
+        progress(1.0, desc="No chapter files found. Please run Stage 1 (Parse EPUB) first.")
         return log_output + "\nNo chapter files found. Please run Stage 1 (Parse EPUB) first.", pipeline_state
 
     num_chapters = len(chapter_files)
     log_output += f"\nProcessing {num_chapters} chapters with LLM..."
 
     for i, chapter_file in enumerate(chapter_files):
+        progress(i / num_chapters, desc=f"Labeling speakers in chapter {i + 1}/{num_chapters}...")
         log_output += f"\nProcessing: {chapter_file}"
 
         try:
@@ -294,6 +297,7 @@ def process_chapters_for_labels(
 
     new_state = PIPELINE_STATE_LABELS_COMPLETE
     log_output += f"\n\nStage 2 complete! State: {new_state}"
+    progress(1.0, desc="LLM speaker labeling complete.")
     return log_output, new_state
 
 
@@ -307,8 +311,10 @@ def describe_characters(
     port: str,
     pipeline_state: Optional[str],
     log_output: str,
+    progress=gr.Progress()
 ) -> Tuple[str, str, Optional[Dict[str, Any]]]:
     """Stage 3: Use LLM to describe characters."""
+    progress(0, desc="Starting character description generation...")
     log_output += "\n\nGenerating character descriptions..."
 
     try:
@@ -334,7 +340,7 @@ def describe_characters(
 
         # Call describe_characters_in_dir directly instead of subprocess
         from llm_describe_character import describe_characters_in_dir
-
+        progress(0.5, desc=f"Describing {num_characters} characters with LLM...")
         result_msg, character_descriptions = describe_characters_in_dir(
             output_dir=str(chapters_dir),
             api_key=api_key,
@@ -343,7 +349,7 @@ def describe_characters(
         )
 
         log_output += f"\n{result_msg}"
-
+        progress(1.0, desc="Character description generation complete.")
         # Load and return the character descriptions for state tracking
         descriptions_file = get_characters_descriptions_file()
         try:
@@ -371,11 +377,13 @@ def describe_characters(
 def generate_voice_samples(
     pipeline_state: Optional[str],
     log_output: str,
+    progress=gr.Progress()
 ) -> Tuple[str, str]:
     """Stage 4: Generate voice samples for each character."""
     log_output += "\n\nGenerating voice samples..."
 
     try:
+        progress(0, desc="Starting voice sample generation...")
         chapters_dir = get_chapters_dir()
         if not chapters_dir:
             return log_output + "\nError: Chapters directory not initialized.", pipeline_state
@@ -393,16 +401,16 @@ def generate_voice_samples(
         log_output += f"\nFound {num_characters} characters to process."
 
         # Call generate_voice_samples directly instead of subprocess
-        from generate_voice_samples import generate_voice_samples as gen_voices
-
-        result_msg, generated_voices = gen_voices(
+        from generate_voice_samples import generate_voice_samples
+        progress(0.5, desc=f"Generating voice samples for {num_characters} characters with TTS engine...")
+        result_msg, generated_voices = generate_voice_samples(
             descriptions=descriptions,
             output_dir=str(chapters_dir),
             verbose=False
         )
 
         log_output += f"\n{result_msg}"
-
+        progress(1.0, desc="Voice sample generation complete.")
         new_state = PIPELINE_STATE_VOICE_SAMPLES_COMPLETE
         log_output += f" State: {new_state}"
         return log_output, new_state
@@ -418,6 +426,7 @@ def regenerate_voice_sample(
     character_name: str,
     pipeline_state: Optional[str],
     log_output: str,
+    progress=gr.Progress()
 ) -> Tuple[str, Optional[str], Optional[str]]:
     """Regenerate a single voice sample for a character."""
     log_output += f"\n\nRegenerating voice sample for: {character_name}"
@@ -444,7 +453,7 @@ def regenerate_voice_sample(
 
         # Call generate_voice_samples directly instead of subprocess
         from generate_voice_samples import generate_voice_samples as gen_voices
-
+        progress(0.5, desc=f"Regenerating voice sample for {character_name} with TTS engine...")
         result_msg, generated_voices = gen_voices(
             descriptions={character_name: char_description},
             output_dir=str(chapters_dir),
@@ -516,10 +525,11 @@ def generate_tts_audio(
     pipeline_state: Optional[str],
     log_output: str,
     max_chapters: Optional[int],
+    progress=gr.Progress()
 ) -> Tuple[str, Optional[str]]:
     """Stage 5.1: Generate TTS audio for each line/voice."""
     log_output += "\n\n=== Stage 5.1: Generating TTS Audio ==="
-
+    progress(0, desc="Starting TTS audio generation...")
     try:
         chapters_dir = get_chapters_dir()
         if not chapters_dir:
@@ -544,6 +554,7 @@ def generate_tts_audio(
         # Create voices_map: character_name -> voice_path (wav file)
         voices_map = {}
         for char_name in descriptions.keys():
+            progress(0, desc=f"Finding voice sample for character: {char_name}...")
             wav_path = get_character_wav_file(char_name, chapters_dir)
             if wav_path and os.path.exists(wav_path):
                 voices_map[char_name] = wav_path
@@ -552,7 +563,7 @@ def generate_tts_audio(
                 narrator_path = get_character_wav_file("narrator", chapters_dir)
                 if narrator_path and os.path.exists(narrator_path):
                     voices_map[char_name] = narrator_path
-
+        progress(0.5, desc=f"Prepared voices for {len(voices_map)} characters.")
         if not voices_map:
             log_output += "\nNo voice samples found. Please run Stage 4 (Generate Voices) first."
             return log_output, pipeline_state
@@ -602,7 +613,8 @@ def generate_tts_audio(
             tts_engine=tts_engine,
             cfg_scale=cfg_scale,
             max_chapters=max_chapters,
-            verbose=verbose
+            verbose=verbose,
+            progress=progress
         )
 
         log_output += f"\n{status}"
@@ -832,7 +844,7 @@ def create_interface(
     """Create the Gradio interface with all stages using a state machine pattern."""
 
     with gr.Blocks() as demo:
-        gr.Markdown("# Audiobook Pipeline")
+        gr.Markdown("# Audiobook Voice Generator")
 
         # Progress bar at top
         progress_bar = gr.Progress()
@@ -868,23 +880,22 @@ def create_interface(
             label_btn = gr.Button("2. Label", variant="secondary", scale=1)
             describe_btn = gr.Button("3. Describe", variant="secondary", scale=1)
             voice_samples_btn = gr.Button("4. Voices", variant="secondary", scale=1)
-            tts_btn = gr.Button("6. Audiobook", variant="primary", scale=1)
+            tts_btn = gr.Button("Read Chapters", variant="primary", scale=1)
+        with gr.Row():
+            # Log output with state on same element
+            log_output = gr.Textbox(label="Log (State: Ready)", lines=4, max_lines=6)
 
-        # Log output with state on same element
-        log_output = gr.Textbox(label="Log (State: Ready)", lines=4, max_lines=6)
-
-        # Character info
-        character_table = gr.Dataframe(
-            headers=["Character", "Description"],
-            datatype=["str", "str"],
-            wrap=True,
-            max_height=100,
-        )
+            # Character info
+            character_table = gr.Dataframe(
+                headers=["Character", "Description"],
+                datatype=["str", "str"],
+                wrap=True
+            )
 
         # Audio player with Regen button
         with gr.Row():
-            character_audio = gr.Audio(label="", type="filepath", visible=False)
-            generate_char_btn = gr.Button("Regen", variant="secondary", scale=1, visible=False)
+            character_audio = gr.Audio(label="", type="filepath", visible=False, scale=1)
+            generate_char_btn = gr.Button("Regen", variant="secondary", scale=0, visible=False)
 
         # State to track characters
         characters_state = gr.State(None)
@@ -903,7 +914,7 @@ def create_interface(
         parse_btn.click(
             fn=parse_epub_to_file,
             inputs=[epub_upload, max_chapters_slider],
-            outputs=[log_output, log_output, log_output],
+            outputs=log_output,
         ).then(
             # Reset log for new session
             fn=lambda: "=== Stage 1: EPUB Parsing Complete ===\n",
@@ -914,7 +925,7 @@ def create_interface(
         ).then(
             fn=lambda s: list(update_button_visibility(s)) + [update_state_display(s)],
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn, log_output],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
         )
 
         # Label Speakers - Stage 2

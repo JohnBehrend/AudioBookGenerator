@@ -261,21 +261,23 @@ def process_chapters_for_labels(
     pipeline_state: Optional[str],
     log_output: str,
     progress=gr.Progress()
-) -> Tuple[str, str]:
+) -> Tuple[str, str, List[str]]:
     """Stage 2: Run LLM to label speakers in all chapters."""
     chapters_dir = get_chapters_dir()
     if not chapters_dir:
         progress(1.0, desc="Error: Chapters directory not initialized.")
-        return log_output + "\nError: Chapters directory not initialized.", pipeline_state
+        return log_output + "\nError: Chapters directory not initialized.", pipeline_state, []
 
     chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
 
     if not chapter_files:
         progress(1.0, desc="No chapter files found. Please run Stage 1 (Parse EPUB) first.")
-        return log_output + "\nNo chapter files found. Please run Stage 1 (Parse EPUB) first.", pipeline_state
+        return log_output + "\nNo chapter files found. Please run Stage 1 (Parse EPUB) first.", pipeline_state, []
 
     num_chapters = len(chapter_files)
     log_output += f"\nProcessing {num_chapters} chapters with LLM..."
+
+    all_character_names = set()
 
     for i, chapter_file in enumerate(chapter_files):
         progress(i / num_chapters, desc=f"Labeling speakers in chapter {i + 1}/{num_chapters}...")
@@ -295,14 +297,25 @@ def process_chapters_for_labels(
 
             log_output += f"\n{result_msg}"
 
+            # Extract character names from char_map (char_map is {key: "char_name"})
+            if isinstance(char_map, dict):
+                for char_name in char_map.values():
+                    if isinstance(char_name, str):
+                        all_character_names.add(char_name)
+
         except Exception as e:
             log_output += f"\nError processing {chapter_file}: {str(e)}"
             log_output += f"\n{traceback.format_exc()}"
 
     new_state = PIPELINE_STATE_LABELS_COMPLETE
     log_output += f"\n\nStage 2 complete! State: {new_state}"
+
+    # Convert to sorted list for consistent ordering
+    character_list = sorted(list(all_character_names))
+    log_output += f"\nFound {len(character_list)} characters: {', '.join(character_list)}"
+
     progress(1.0, desc="LLM speaker labeling complete.")
-    return log_output, new_state
+    return log_output, new_state, character_list
 
 
 # ============================================================================
@@ -777,48 +790,69 @@ def count_lines_per_character(chapters_dir: Path) -> Dict[str, int]:
     return character_lines
 
 
-def update_character_table(characters_state: Optional[Dict[str, Any]]) -> gr.Dataframe:
+def update_character_table(
+    pipeline_state: Optional[str],
+    characters_state: Optional[Any]
+) -> gr.Dataframe:
     """
     Update the character table based on stored character state.
 
     Args:
-        characters_state: gr.State containing dict of character_name -> description
+        pipeline_state: Current pipeline state to determine what data is available
+        characters_state: gr.State containing either:
+            - dict of character_name -> description (after Stage 3)
+            - list of character names (after Stage 2)
+            - None (before Stage 2)
 
     Returns:
         Updated Dataframe component with character data (3 columns: name, description, lines_spoken)
         sorted by lines spoken (descending)
     """
+    chapters_dir = get_chapters_dir()
+
+    # Check if we have descriptions (Stage 3+)
     descriptions_file = get_characters_descriptions_file()
-    if not descriptions_file or not descriptions_file.exists() or characters_state is None:
-        return gr.Dataframe(value=[])
+    if descriptions_file and descriptions_file.exists() and characters_state is not None:
+        try:
+            with open(descriptions_file, "r", encoding="utf-8") as f:
+                descriptions = json.load(f)
 
-    try:
-        with open(descriptions_file, "r", encoding="utf-8") as f:
-            descriptions = json.load(f)
+            # Get character lines from map files
+            character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
 
-        # Get character lines from map files
-        chapters_dir = get_chapters_dir()
-        character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
+            # Build table data with character name, truncated description, and lines spoken
+            table_data = []
+            for char_name, char_desc in descriptions.items():
+                truncated_desc = char_desc[:100] + ("..." if len(char_desc) > 100 else "")
+                lines_spoken = character_lines.get(char_name, 0)
+                table_data.append([char_name, truncated_desc, lines_spoken])
 
-        # Build table data with character name, truncated description, and lines spoken
-        table_data = []
-        for char_name, char_desc in descriptions.items():
-            truncated_desc = char_desc[:100] + ("..." if len(char_desc) > 100 else "")
-            lines_spoken = character_lines.get(char_name, 0)
-            table_data.append([char_name, truncated_desc, lines_spoken])
+            # Sort by lines spoken (descending)
+            table_data.sort(key=lambda x: x[2], reverse=True)
 
-        # Sort by lines spoken (descending)
-        table_data.sort(key=lambda x: x[2], reverse=True)
+            return gr.Dataframe(
+                headers=["Character", "Description", "Lines Spoken"],
+                datatype=["str", "str", "int"],
+                value=table_data,
+                wrap=True,
+            )
+        except Exception:
+            return gr.Dataframe(value=[])
 
-        return gr.Dataframe(
-            headers=["Character", "Description", "Lines Spoken"],
-            datatype=["str", "str", "int"],
-            value=table_data,
-            wrap=True,
-        )
+    # Check if we have character list but no descriptions (Stage 2)
+    if characters_state is not None:
+        # characters_state is a list of character names
+        if isinstance(characters_state, list):
+            # Build table data with just character names (no descriptions or line counts yet)
+            table_data = [[char_name, "", 0] for char_name in sorted(characters_state)]
+            return gr.Dataframe(
+                headers=["Character", "Description", "Lines Spoken"],
+                datatype=["str", "str", "int"],
+                value=table_data,
+                wrap=True,
+            )
 
-    except Exception:
-        return gr.Dataframe(value=[])
+    return gr.Dataframe(value=[])
 
 
 def get_next_step_recommendation(state: Optional[str]) -> str:
@@ -977,7 +1011,11 @@ def create_interface(
         label_btn.click(
             fn=process_chapters_for_labels,
             inputs=[api_key_input, port_input, num_attempts_input, pipeline_state, log_output],
-            outputs=[log_output, pipeline_state],
+            outputs=[log_output, pipeline_state, characters_state],
+        ).then(
+            fn=update_character_table,
+            inputs=[pipeline_state, characters_state],
+            outputs=character_table,
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
@@ -995,7 +1033,7 @@ def create_interface(
             outputs=[log_output, pipeline_state, characters_state],
         ).then(
             fn=update_character_table,
-            inputs=characters_state,
+            inputs=[pipeline_state, characters_state],
             outputs=character_table,
         ).then(
             fn=update_button_visibility,
@@ -1065,7 +1103,7 @@ def create_interface(
             outputs=[log_output, pipeline_state, character_audio],
         ).then(
             fn=update_character_table,
-            inputs=characters_state,
+            inputs=[pipeline_state, characters_state],
             outputs=character_table,
         ).then(
             fn=update_button_visibility,

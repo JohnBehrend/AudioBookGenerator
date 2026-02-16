@@ -774,60 +774,18 @@ def update_button_visibility(state: Optional[str]):
     """
     if state is None:
         # Initial state: only Parse EPUB is enabled
-        return (
-            gr.update(interactive=True),
-            gr.update(interactive=False),
-            gr.update(interactive=False),
-            gr.update(interactive=False),
-            gr.update(interactive=False),
-            gr.update(interactive=False),
-        )
+        _states = [True, False, False, False, False, False, False]
     elif state == PIPELINE_STATE_EPUB_PARSED:
-        return (
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=False),
-            gr.update(interactive=False),
-            gr.update(interactive=False),
-            gr.update(interactive=False),
-        )
+        _states = [True,  True, False, False, False, False, False]
     elif state == PIPELINE_STATE_LABELS_COMPLETE:
-        return (
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=False),
-            gr.update(interactive=False),
-            gr.update(interactive=False),
-        )
+        _states = [True,  True,  True, False, False, False, False]
     elif state == PIPELINE_STATE_CHARACTERS_DESCRIBED:
-        return (
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=False),
-        )
+        _states = [True,  True,  True,  True,  True, False, False]
     elif state == PIPELINE_STATE_VOICE_SAMPLES_COMPLETE:
-        return (
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-        )
+        _states = [True,  True,  True,  True,  True,  True, False]
     else:  # AUDIOBOOK_COMPLETE or beyond
-        return (
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-        )
-
+        _states = [True,  True,  True,  True,  True,  True,  True]
+    return tuple(gr.update(interactive=state) for state in _states)
 
 # ============================================================================
 # GRADIO INTERFACE
@@ -845,9 +803,6 @@ def create_interface(
 
     with gr.Blocks() as demo:
         gr.Markdown("# Audiobook Voice Generator")
-
-        # Progress bar at top
-        progress_bar = gr.Progress()
 
         # Collapsible input area (settings only, buttons stay visible)
         with gr.Accordion(label="Settings", open=False):
@@ -883,20 +838,27 @@ def create_interface(
             tts_btn = gr.Button("Read Chapters", variant="primary", scale=1)
         with gr.Row():
             # Log output with state on same element
-            log_output = gr.Textbox(label="Log (State: Ready)", lines=4, max_lines=6)
-
-            # Character info
-            character_table = gr.Dataframe(
-                headers=["Character", "Description"],
-                datatype=["str", "str"],
-                wrap=True
-            )
-
-        # Audio player with Regen button
+            log_output = gr.Textbox(label="Log (State: Ready)", lines=3, max_lines=3, interactive=False)
         with gr.Row():
-            character_audio = gr.Audio(label="", type="filepath", visible=False, scale=1)
-            generate_char_btn = gr.Button("Regen", variant="secondary", scale=0, visible=False)
-
+            with gr.Tab("Characters"):
+                # Character info
+                character_table = gr.Dataframe(
+                    headers=["Character", "Description"],
+                    datatype=["str", "str"],
+                    wrap=True
+                )
+                character_audio = gr.Audio(label="", type="filepath", visible=False, scale=1)
+                generate_char_btn = gr.Button("Regen", variant="secondary", scale=0, visible=False)
+            with gr.Tab("Chapters"):
+                chapter_table = gr.Dataframe(
+                    headers=["Chapter", "Line", "Character", "Text"],
+                    datatype=["str", "str", "str", "str"],
+                    wrap=True,
+                    max_height=300,
+                )
+                chapter_audio = gr.Audio(label="", type="filepath", visible=False, scale=1)
+                generate_chap_btn = gr.Button("Regen", variant="secondary", scale=0, visible=False)
+            
         # State to track characters
         characters_state = gr.State(None)
 
@@ -925,7 +887,7 @@ def create_interface(
         ).then(
             fn=lambda s: list(update_button_visibility(s)) + [update_state_display(s)],
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
         )
 
         # Label Speakers - Stage 2
@@ -936,7 +898,7 @@ def create_interface(
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
         ).then(
             fn=update_state_display,
             inputs=pipeline_state,
@@ -955,7 +917,7 @@ def create_interface(
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
         ).then(
             fn=update_state_display,
             inputs=pipeline_state,
@@ -970,7 +932,7 @@ def create_interface(
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
         ).then(
             fn=update_state_display,
             inputs=pipeline_state,
@@ -1021,7 +983,7 @@ def create_interface(
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
         ).then(
             fn=update_state_display,
             inputs=pipeline_state,
@@ -1040,7 +1002,7 @@ def create_interface(
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
         ).then(
             fn=update_state_display,
             inputs=pipeline_state,

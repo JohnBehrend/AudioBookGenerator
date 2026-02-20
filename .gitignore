@@ -60,3 +60,6 @@ chapters/
 *.bak
 *.swp
 *.tmp
+
+# Claude
+.claude/*

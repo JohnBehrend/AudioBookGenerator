@@ -22,23 +22,40 @@ from config import LLM_SETTINGS, OUTPUT_DIR
 CHARACTER_DESCRIPTION_PROMPT = """
 You are an expert voice actor and audiobook narrator. Your task is to create short, distinctive voice profiles for characters.
 
-Each description should be **one concise sentence (10-20 words)** covering:
-1. Gender and age (e.g., "Young female", "Middle-aged male")
-2. 1-2 key voice qualities (e.g., "bright and slightly edgy", "warm and gentle", "gruff and gravelly")
-3. Optional: accent/dialect if distinctive
+Focus on the most distinctive, memorable traits that would help a voice actor embody the character.
 
-Focus on the most distinctive, memorable trait.
+FOLLOW THE EXACT FORMAT shown in the examples below - use key-value pairs with colons, covering all voice characteristics:
+- gender, pitch, speed, volume, age, clarity, fluency, accent, texture, emotion, tone, personality
 
-Examples:
-- Vivian: "Bright, slightly edgy young female voice."
-- Serena: "Warm, gentle young female voice."
-- Uncle_Fu: "Seasoned male voice with a low, mellow timbre."
-- Dylan: "Youthful male voice with a clear, natural timbre."
-- Eric: "Lively male voice with a slightly husky brightness."
-- Ryan: "Dynamic male voice with strong rhythmic drive."
-- Aiden: "Sunny American male voice with a clear midrange."
+example_one: Ewin
+gender: Male.
+pitch: Low male pitch with significant upward inflections for emphasis and excitement.
+speed: Fast-paced delivery with deliberate pauses for dramatic effect.
+volume: Loud and projecting, increasing notably during moments of praise and announcements.
+age: Young adult to middle-aged adult.
+clarity: Highly articulate and distinct pronunciation.
+fluency: Very fluent speech with no hesitations.
+accent: British English.
+texture: Bright and clear vocal texture.
+emotion: Enthusiastic and excited, especially when complimenting.
+tone: Upbeat, authoritative, and performative.
+personality: Confident, extroverted, and engaging.
 
-Format your response as a JSON object where keys are character names and values are voice descriptions (just the description text, not including the character name).
+example_two: Sandra.
+gender: Female.
+pitch: Mid-range female pitch, rising sharply with frustration.
+speed: Starts measured, then accelerates rapidly during emotional outburst.
+volume: Begins conversational, escalates quickly to loud and forceful.
+age: Young adult to middle-aged.
+clarity: High clarity and distinct articulation throughout.
+fluency: Highly fluent with no significant pauses or fillers.
+accent: General American English.
+texture: Bright and clear vocal quality.
+emotion: Shifts abruptly from neutral acceptance to intense resentment and anger.
+tone: Initially accepting, becomes sharply accusatory and confrontational.
+personality: Assertive and emotionally expressive when provoked.
+
+For multiple characters, return a JSON object where keys are character names and values are the voice descriptions in the exact format above (just the description text with key-value pairs, NOT including the character name in the value).
 """
 
 

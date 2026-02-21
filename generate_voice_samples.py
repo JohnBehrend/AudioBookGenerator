@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import sys
+import torch
 
 # Add parent directory to path to import qwen_tts
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))

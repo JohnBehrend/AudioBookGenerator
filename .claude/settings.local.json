@@ -3,18 +3,14 @@
     "allow": [
       "Bash(echo:*)",
       "Bash(xxd:*)",
-      "Bash(uv pip install:*)",
-      "Bash(git -C \"c:/Users/j3p3/Documents/JBAB\" status --short)",
       "Bash(uv sync:*)",
-      "Bash(.venv/Scripts/python:*)",
       "Bash(tee:*)",
-      "Bash(.venv/Scripts/python.exe:*)",
       "Bash(python -m py_compile:*)",
-      "Bash(.venv/Scripts/uv pip install pydub-ffmpeg moviepy)",
       "Bash(uv run pip install:*)",
       "Bash(uv run python:*)",
       "Bash(uv run pytest:*)",
-      "Bash(git -C*"
+      "Bash(git -C *)",
+      "Bash(sed -n *)"
     ]
   }
 }

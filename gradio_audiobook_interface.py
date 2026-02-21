@@ -977,9 +977,10 @@ def create_interface(
             with gr.Tab("Characters"):
                 # Character info
                 character_table = gr.Dataframe(
-                    headers=["Character", "Description"],
-                    datatype=["str", "str"],
-                    wrap=True
+                    headers=["Character", "Description", "Lines Spoken"],
+                    datatype=["str", "str", "int"],
+                    wrap=True,
+                    max_height=300,
                 )
                 character_audio = gr.Audio(label="", type="filepath", visible=False, scale=1)
                 generate_char_btn = gr.Button("Regen", variant="secondary", scale=0, visible=False)
@@ -1081,24 +1082,26 @@ def create_interface(
         # Handle row selection in character table - show audio when character selected
         def on_character_select(evt: gr.SelectData, _characters_state, _selected_character):
             """Handle row selection in the character table."""
+            # If clicking away (no row selected), preserve the existing selected character
             if evt is None or evt.index is None:
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
+                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=_selected_character)
 
             character_name = evt.row_value[0] if evt.row_value and len(evt.row_value) > 0 else None
 
             if not character_name:
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
+                # If no character name, preserve existing selection
+                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=_selected_character)
 
             chapters_dir = get_chapters_dir()
             if not chapters_dir:
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
+                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=_selected_character)
 
             wav_path = get_character_wav_file(character_name, chapters_dir)
 
             if wav_path and os.path.exists(wav_path):
                 return gr.update(visible=True, value=wav_path), gr.update(visible=True), gr.update(value=character_name)
             else:
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
+                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=_selected_character)
 
         character_table.select(
             fn=on_character_select,

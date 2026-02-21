@@ -33,8 +33,10 @@ dependencies = [
     "diffusers>=0.25.0",
     "qwen-tts",
     "kugelaudio-open @ git+https://github.com/Kugelaudio/kugelaudio-open.git@c2047edda01aa31e9472d29eac498881e907d628",
-    # flash-attn removed - requires complex CUDA setup, not essential
-    # "flash-attn",
+    # Note: flash-attn requires --no-build-isolation due to CUDA version mismatch
+    # between system CUDA (13.1) and PyTorch (12.8). Install with:
+    # uv pip install flash-attn --no-build-isolation
+    # "flash-attn>=2.7.0",
     # librosa constraint needed to avoid newer versions that require incompatible numba
     "librosa>=0.10.0,<0.11.0",
     # numba>=0.57.0 needed to get llvmlite>=0.40 which supports Python 3.10
@@ -51,12 +53,6 @@ analyze-chapters = "analyze_chapters:main"
 llm-describe-character = "llm_describe_character:main"
 generate-voice-samples = "generate_voice_samples:main"
 
-[project.optional-dependencies]
-cu128 = [
-  "torch",
-  "torchvision",
-  "torchaudio",
-]
 
 [tool.setuptools.packages.find]
 include = ["gradio_audiobook_interface.py", "parse_epub.py", "llm_label_speakers.py", "analyze_chapters.py", "llm_describe_character.py", "generate_voice_samples.py", "analyze_chapters.py"]
@@ -70,15 +66,29 @@ dev = [
 
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cu128" },
+  { index = "pytorch-cu128", marker = "sys_platform != 'win32'" },
+  { index = "pypi", marker = "sys_platform == 'win32'" },
 ]
 torchvision = [
-  { index = "pytorch-cu128" },
+  { index = "pytorch-cu128", marker = "sys_platform != 'win32'" },
+  { index = "pypi", marker = "sys_platform == 'win32'" },
 ]
 torchaudio = [
-  { index = "pytorch-cu128" },
+  { index = "pytorch-cu128", marker = "sys_platform != 'win32'" },
+  { index = "pypi", marker = "sys_platform == 'win32'" },
 ]
+flash-attn = [
+  { index = "pypi" },
+]
+
 [[tool.uv.index]]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+explicit = false
+
+

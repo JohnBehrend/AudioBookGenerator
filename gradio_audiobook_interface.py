@@ -857,12 +857,27 @@ def update_character_table(
         except Exception:
             return gr.Dataframe(value=[])
 
-    # Check if we have character list but no descriptions (Stage 2)
+    # Check if we have character list (Stage 2)
     if characters_state is not None:
-        # characters_state is a list of character names
         if isinstance(characters_state, list):
             # Build table data with just character names (no descriptions or line counts yet)
             table_data = [[char_name, "", 0] for char_name in sorted(characters_state)]
+            return gr.Dataframe(
+                headers=["Character", "Description", "Lines Spoken"],
+                datatype=["str", "str", "int"],
+                value=table_data,
+                wrap=True,
+            )
+        # Check if we have character descriptions as a dict (Stage 3+)
+        elif isinstance(characters_state, dict):
+            # Build table from characters_state dict (character_name -> description)
+            character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
+            table_data = []
+            for char_name, char_desc in characters_state.items():
+                truncated_desc = char_desc[:100] + ("..." if len(char_desc) > 100 else "")
+                lines_spoken = character_lines.get(char_name, 0)
+                table_data.append([char_name, truncated_desc, lines_spoken])
+            table_data.sort(key=lambda x: x[2], reverse=True)
             return gr.Dataframe(
                 headers=["Character", "Description", "Lines Spoken"],
                 datatype=["str", "str", "int"],

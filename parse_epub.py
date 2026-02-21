@@ -258,7 +258,7 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio"):
             device_map=device,
             **attn_kwargs,
         ).to(device)
-        tts_model.set_ddpm_inference_steps(num_steps=13)
+        # tts_model.set_ddpm_inference_steps(num_steps=13)
         tts_model.eval()
         processor = KugelAudioProcessor.from_pretrained(model_path)
     else:
@@ -270,7 +270,7 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio"):
             device_map=device,
             **attn_kwargs,
         )
-        tts_model.set_ddpm_inference_steps(num_steps=13)
+        # tts_model.set_ddpm_inference_steps(num_steps=13)
         tts_model.eval()
         processor = VibeVoiceProcessor.from_pretrained(model_path)
 
@@ -303,7 +303,8 @@ def generate_tts_for_line(
     output_dir: str,
     short_text_postfix: str = "and also with you?",
     validation_model = None,
-    verbose: bool = False
+    verbose: bool = False,
+    voice_path: str = None,
 ):
     """Generate TTS audio for a single line.
 
@@ -317,6 +318,7 @@ def generate_tts_for_line(
         voice_mapper: VoiceMapper instance
         device: Device to run on
         tts_engine: 'kugelaudio' or 'vibevoice'
+        voice_path: Optional path to voice sample file. If not provided, uses voice_mapper.
         cfg_scale: CFG scale value
         output_dir: Output directory for audio files
         short_text_postfix: Postfix for validation
@@ -348,7 +350,9 @@ def generate_tts_for_line(
 
         if tts_engine == 'kugelaudio':
             # Use KugelAudio processor with voice prompt
-            voice_path = voice_mapper.get_voice_path(voice_name)
+            # Use provided voice_path if available, otherwise look up via voice_mapper
+            if voice_path is None:
+                voice_path = voice_mapper.get_voice_path(voice_name)
             inputs = processor(
                 text=full_script,
                 voice_prompt=voice_path,
@@ -357,9 +361,11 @@ def generate_tts_for_line(
             )
         else:
             # Use VibeVoice processor with voice_samples
+            if voice_path is None:
+                voice_path = voice_mapper.get_voice_path(voice_name)
             inputs = processor(
                 text=["Speaker 1: ? " + full_script],
-                voice_samples=[voice_mapper.get_voice_path(voice_name)],
+                voice_samples=[voice_path],
                 padding=True,
                 return_tensors="pt",
                 return_attention_mask=True,
@@ -1059,7 +1065,8 @@ def generate_audiobook_from_chapters(
                         output_dir=output_dir,
                         short_text_postfix=short_text_postfix,
                         validation_model=validation_model,
-                        verbose=verbose
+                        verbose=verbose,
+                        voice_path=voice_path
                     )
                     if progress is not None:
                         progress((j + 1)/len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j} Ratio {int(ratio * 100)}")

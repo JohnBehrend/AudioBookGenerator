@@ -1029,9 +1029,9 @@ def create_interface(
             inputs=[api_key_input, port_input, num_attempts_input, pipeline_state, log_output],
             outputs=[log_output, pipeline_state, characters_state],
         ).then(
-            fn=update_character_table,
-            inputs=[pipeline_state, characters_state],
-            outputs=character_table,
+            fn=lambda log, state, chars: (update_character_table(state, chars), state),
+            inputs=[log_output, pipeline_state, characters_state],
+            outputs=[character_table, pipeline_state],
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
@@ -1048,9 +1048,9 @@ def create_interface(
             inputs=[api_key_input, port_input, pipeline_state, log_output],
             outputs=[log_output, pipeline_state, characters_state],
         ).then(
-            fn=update_character_table,
-            inputs=[pipeline_state, characters_state],
-            outputs=character_table,
+            fn=lambda log, state, chars: (update_character_table(state, chars), state),
+            inputs=[log_output, pipeline_state, characters_state],
+            outputs=[character_table, pipeline_state],
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
@@ -1118,9 +1118,9 @@ def create_interface(
             inputs=[pipeline_state, log_output, selected_character],
             outputs=[log_output, pipeline_state, character_audio],
         ).then(
-            fn=update_character_table,
-            inputs=[pipeline_state, characters_state],
-            outputs=character_table,
+            fn=lambda log, state, chars: (update_character_table(state, chars), state),
+            inputs=[log_output, pipeline_state, characters_state],
+            outputs=[character_table, pipeline_state],
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,

@@ -409,6 +409,13 @@ def generate_tts_for_line(
         sample_rate, waveform = wavfile.read(output_path)
         wavfile.write(output_path, sample_rate, waveform)
 
+        # Initialize variables for clipping/validation logic
+        detected_string = ""
+        segments = []
+        start_times = []
+        end_times = []
+        last_valid_token = None
+
         if validation_model is not None:
             audio = whisperx.load_audio(output_path)
             result = validation_model.transcribe(audio, batch_size=1)
@@ -431,8 +438,8 @@ def generate_tts_for_line(
             detected_string = " ".join(segments)
             ratio, last_valid_token = score_strings_pop(input_string, detected_string, lookahead=5, postfix=distill_string(short_text_postfix))
 
-        # Clipping based on postfix detection
-        if short_text_flag:
+        # Clipping based on postfix detection (only when validation is available)
+        if short_text_flag and validation_model is not None:
             if (distill_string(short_text_postfix) in detected_string) and (postfix_detect_token in segments):
                 if detected_string.startswith(distill_string(short_text_postfix)):
                     if verbose:
@@ -940,7 +947,8 @@ def generate_audiobook_from_chapters(
     cfg_scale: float = 1.30,
     max_chapters: Optional[int] = None,
     verbose: bool = False,
-    progress: Optional[callable] = None
+    progress: Optional[callable] = None,
+    validation_model = None
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -957,6 +965,7 @@ def generate_audiobook_from_chapters(
         cfg_scale: CFG scale value
         max_chapters: Maximum number of chapters to process
         verbose: Print verbose output
+        validation_model: Optional WhisperX validation model. If not provided, validation is skipped.
 
     Returns:
         Tuple of (status_message, chapters_processed)
@@ -972,7 +981,8 @@ def generate_audiobook_from_chapters(
 
         # Setup models
         tts_model, processor, _ = setup_tts_engine(device, tts_engine)
-        validation_model = setup_validation_model(device)
+        # Only setup validation model if explicitly provided (not None)
+        # This avoids crashes from whisperx/pyannote dependencies
         voice_mapper = VoiceMapper()
 
         short_text_postfix = DEFAULTS["short_text_postfix"]

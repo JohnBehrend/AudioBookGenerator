@@ -9,6 +9,8 @@ import json
 from collections import Counter
 from openai import OpenAI
 
+from config import LLM_SETTINGS
+
 def add_quotes_around_keys(json_body):
     """For some json text, we don't have quotes around keys. Example:
     char_map : {1: "narrator", 2: "char1", 3: "char2", 4: "char3"}

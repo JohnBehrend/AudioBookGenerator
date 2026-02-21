@@ -16,7 +16,6 @@ from gradio_audiobook_interface import (
     get_chapters_dir,
     parse_epub_to_file,
     process_chapters_for_labels,
-    analyze_chapters,
     describe_characters,
     generate_voice_samples,
     generate_full_audiobook,
@@ -430,78 +429,6 @@ class TestProcessChaptersForLabels:
                 )
 
                 assert mock_run.call_count == 1
-
-
-# ============================================================================
-# Tests for analyze_chapters()
-# ============================================================================
-
-class TestAnalyzeChapters:
-    """Tests for analyze_chapters function (Stage 3)."""
-
-    def test_returns_error_when_no_map_files(self, reset_temp_globals):
-        """Test error handling when no .map.json files exist."""
-        log_output = ""
-        result = analyze_chapters(log_output)
-
-        assert "No .map.json files found" in result
-
-    def test_successfully_analyzes_chapters(self, temp_dir, reset_temp_globals):
-        """Test successful chapter analysis."""
-        chapters_dir = temp_dir / "chapters"
-        chapters_dir.mkdir(parents=True, exist_ok=True)
-
-        for i in range(2):
-            map_file = chapters_dir / f"chapter_{i}.map.json"
-            content = [
-                {"1": "narrator", "2": "character"},
-                {"1": 1, "2": 2}
-            ]
-            map_file.write_text(json.dumps(content))
-
-        log_output = ""
-        with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(stdout="Analysis complete\n", stderr="")
-
-                result = analyze_chapters(log_output)
-
-                assert "Stage 3 complete" in result
-                mock_run.assert_called_once()
-
-    def test_logs_stderr_from_analysis(self, temp_dir, reset_temp_globals):
-        """Test that stderr from analysis is logged."""
-        chapters_dir = temp_dir / "chapters"
-        chapters_dir.mkdir(parents=True, exist_ok=True)
-        map_file = chapters_dir / "chapter_0.map.json"
-        map_file.write_text(json.dumps([{"1": "narrator"}, {"1": 1}]))
-
-        log_output = ""
-        with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(
-                    stdout="Analysis complete\n", stderr="Warning: some issues"
-                )
-
-                result = analyze_chapters(log_output)
-
-                assert "Errors: Warning: some issues" in result
-
-    def test_handles_analysis_error(self, temp_dir, reset_temp_globals):
-        """Test error handling when analysis fails."""
-        chapters_dir = temp_dir / "chapters"
-        chapters_dir.mkdir(parents=True, exist_ok=True)
-        map_file = chapters_dir / "chapter_0.map.json"
-        map_file.write_text(json.dumps([{"1": "narrator"}, {"1": 1}]))
-
-        log_output = ""
-        with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.side_effect = Exception("Analysis failed")
-
-                result = analyze_chapters(log_output)
-
-                assert "Error analyzing chapters" in result
 
 
 # ============================================================================

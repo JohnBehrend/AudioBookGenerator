@@ -356,33 +356,29 @@ if __name__ == "__main__":
 
         for a, attempt in enumerate(range(args.num_llm_attempts)):
             # Send the chat completion request
+            print(f"Processing attempt {a}")
+            response = client.chat.completions.create(
+                model="local-model",  # Use a placeholder model name or the specific ID from LM Studio
+                messages=messages,
+                temperature=0.7,
+                #stream=True # Set to True for streaming responses
+            ).choices[0].message
             try:
-                print(f"Processing attempt {a}")
-                response = client.chat.completions.create(
-                    model="local-model",  # Use a placeholder model name or the specific ID from LM Studio
-                    messages=messages,
-                    temperature=0.7,
-                    #stream=True # Set to True for streaming responses
-                ).choices[0].message
-                try:
-                    if "</think>" in response.content:
-                        thought_process, result = response.content.split("</think>")
-                    else:
-                        result = response.content
-                        thought_process = response.reasoning
-                except:
+                if "</think>" in response.content:
+                    thought_process, result = response.content.split("</think>")
+                else:
                     result = response.content
-                    thought_process = None
-                # Save think files
-                if thought_process is not None:
-                    with open(chapter_file_base+f".think.{a}.txt", "w", encoding='utf-8') as f:
-                        f.write(thought_process)
-                # Save result files
-                with open(chapter_file_base+f".result.{a}.txt", "w", encoding='utf-8') as f:
-                    f.write(result)
-            except Exception as e:
-                print(f"An error occurred: {e}", file=sys.stderr)
-    
+                    thought_process = response.reasoning
+            except:
+                result = response.content
+                thought_process = None
+            # Save think files
+            if thought_process is not None:
+                with open(chapter_file_base+f".think.{a}.txt", "w", encoding='utf-8') as f:
+                    f.write(thought_process)
+            # Save result files
+            with open(chapter_file_base+f".result.{a}.txt", "w", encoding='utf-8') as f:
+                f.write(result)
     character_maps = []
     line_maps = []
     merged_character_map = {}
@@ -543,32 +539,29 @@ def label_speakers_in_file(
 
             for a, attempt in enumerate(range(num_attempts)):
                 # Send the chat completion request
+                if verbose:
+                    print(f"Processing attempt {a}")
+                response = client.chat.completions.create(
+                    model="local-model",
+                    messages=messages,
+                    temperature=0.7,
+                ).choices[0].message
                 try:
-                    if verbose:
-                        print(f"Processing attempt {a}")
-                    response = client.chat.completions.create(
-                        model="local-model",
-                        messages=messages,
-                        temperature=0.7,
-                    ).choices[0].message
-                    try:
-                        if "</think>" in response.content:
-                            thought_process, result = response.content.split("</think>")
-                        else:
-                            result = response.content
-                            thought_process = response.reasoning
-                    except:
+                    if "</think>" in response.content:
+                        thought_process, result = response.content.split("</think>")
+                    else:
                         result = response.content
-                        thought_process = None
-                    # Save think files
-                    if thought_process is not None:
-                        with open(chapter_file_base + f".think.{a}.txt", "w", encoding='utf-8') as f:
-                            f.write(thought_process)
-                    # Save result files
-                    with open(chapter_file_base + f".result.{a}.txt", "w", encoding='utf-8') as f:
-                        f.write(result)
-                except Exception as e:
-                    print(f"An error occurred: {e}", file=sys.stderr)
+                        thought_process = response.reasoning
+                except:
+                    result = response.content
+                    thought_process = None
+                # Save think files
+                if thought_process is not None:
+                    with open(chapter_file_base + f".think.{a}.txt", "w", encoding='utf-8') as f:
+                        f.write(thought_process)
+                # Save result files
+                with open(chapter_file_base + f".result.{a}.txt", "w", encoding='utf-8') as f:
+                    f.write(result)
 
         character_maps = []
         line_maps = []

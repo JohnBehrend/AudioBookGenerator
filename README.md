@@ -31,9 +31,6 @@ python parse_epub.py <epub_file> [-voices_map voices_map.json] [--resume] [--alt
 # Label speakers in a chapter using LLM
 python llm_label_speakers.py -txt_file chapters/chapter_0.txt [--skip_llm] [--old_format]
 
-# Analyze chapter maps
-python analyze_chapters.py chapters [--json-output] [--csv-output] [--verbose]
-
 # Describe characters using LLM
 python llm_describe_character.py characters.json chapters [--api_key] [--port]
 

@@ -430,11 +430,12 @@ def generate_voice_samples(
 
         # Call generate_voice_samples directly instead of subprocess
         from generate_voice_samples import generate_voice_samples
-        progress(0.5, desc=f"Generating voice samples for {num_characters} characters with TTS engine... (temp: {chapters_dir.parent})")
+        progress(0, desc=f"Generating voice samples for {num_characters} characters with TTS engine... (temp: {chapters_dir.parent})")
         result_msg, generated_voices = generate_voice_samples(
             descriptions=descriptions,
             output_dir=str(chapters_dir),
-            verbose=False
+            verbose=False,
+            progress=progress
         )
 
         log_output += f"\n{result_msg}"
@@ -481,12 +482,13 @@ def regenerate_voice_sample(
 
         # Call generate_voice_samples directly instead of subprocess
         from generate_voice_samples import generate_voice_samples as gen_voices
-        progress(0.5, desc=f"Regenerating voice sample for {character_name} with TTS engine... (temp: {chapters_dir.parent})")
+        progress(0, desc=f"Regenerating voice sample for {character_name} with TTS engine...")
         result_msg, generated_voices = gen_voices(
             descriptions={character_name: char_description},
             output_dir=str(chapters_dir),
             single_character=character_name,
-            verbose=False
+            verbose=False,
+            progress=progress
         )
 
         log_output += f"\n{result_msg}"

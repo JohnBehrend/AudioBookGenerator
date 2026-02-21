@@ -158,7 +158,8 @@ def generate_voice_samples(
     device: str = "cuda:0",
     max_tokens: int = DEFAULTS["max_new_tokens"],
     single_character: Optional[str] = None,
-    verbose: bool = False
+    verbose: bool = False,
+    progress=None
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters using Qwen3-TTS.
 
@@ -173,6 +174,7 @@ def generate_voice_samples(
         max_tokens: Max tokens for generation
         single_character: Generate only one character
         verbose: Print verbose output
+        progress: Gradio progress bar to update during generation
 
     Returns:
         Tuple of (status_message, character_voice_paths)
@@ -214,10 +216,15 @@ def generate_voice_samples(
 
         generated = {}
         failed = []
+        total_chars = len(descriptions)
 
         for i, (char_name, char_desc) in enumerate(descriptions.items()):
             if verbose:
-                print(f"[{i+1}/{len(descriptions)}] {char_name}")
+                print(f"[{i+1}/{total_chars}] {char_name}")
+
+            # Update progress bar for each character
+            if progress is not None:
+                progress((i + 1) / total_chars, desc=f"Generating voice for '{char_name}'...")
 
             success, output_file, duration = generate_voice_sample(
                 tts_model, char_name, char_desc, output_dir, max_new_tokens=max_tokens

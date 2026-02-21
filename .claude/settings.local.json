@@ -12,7 +12,8 @@
       "Bash(git -C *)",
       "Bash(sed -n *)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(ls:*)"
     ]
   }
 }

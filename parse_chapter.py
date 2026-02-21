@@ -116,7 +116,6 @@ def parse_epub_to_chapters(epub_path, max_chapters=None):
                     .replace(u"\u205F"," ") # medium mathematical space
                     .replace(u"\u2060","-") # word joiner
                     .replace(u"\u3000"," ") # ideographic space
-                    .encode('ascii')
                     , 'html.parser').get_text(separator=" ", strip=False)
                 if txt.strip():  # Only add non-empty chapters
                     chapters.append(get_chapter_objs(txt))

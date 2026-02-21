@@ -10,7 +10,9 @@
       "Bash(tee:*)",
       "Bash(.venv/Scripts/python.exe:*)",
       "Bash(python -m py_compile:*)",
-      "Bash(.venv/Scripts/uv pip install pydub-ffmpeg moviepy)"
+      "Bash(.venv/Scripts/uv pip install pydub-ffmpeg moviepy)",
+      "Bash(uv run pip install:*)",
+      "Bash(uv run python:*)"
     ]
   }
 }

@@ -15,10 +15,9 @@ Then open the provided URL (typically http://127.0.0.1:7860) in your browser.
 
 1. **EPUB Parsing** - Upload an EPUB file and parse it into chapter text files
 2. **LLM Speaker Labeling** - Use an LLM to identify speakers and attribute dialogue lines
-3. **Chapter Analysis** - Generate statistics from chapter map files
-4. **Character Descriptions** - Generate voice profiles for each character
-5. **Voice Sample Generation** - Generate TTS voice samples for each character
-6. **Full Audiobook Generation** - Generate complete audiobook MP3 files
+3. **Character Descriptions** - Generate voice profiles for each character
+4. **Voice Sample Generation** - Generate TTS voice samples for each character
+5. **Full Audiobook Generation** - Generate complete audiobook MP3 files
 
 ## Individual Commands
 
@@ -32,7 +31,7 @@ python parse_epub.py <epub_file> [-voices_map voices_map.json] [--resume] [--alt
 python llm_label_speakers.py -txt_file chapters/chapter_0.txt [--skip_llm] [--old_format]
 
 # Describe characters using LLM
-python llm_describe_character.py characters.json chapters [--api_key] [--port]
+python llm_describe_character.py chapters [--api_key] [--port]
 
 # Generate voice samples
 python generate_voice_samples.py [--descriptions] [--output-dir]
@@ -115,8 +114,6 @@ The pipeline uses an OpenAI-compatible API (LM Studio by default):
 - `chapters/chapter_*.map.json` - Speaker attribution maps
 - `chapters/chapter_*.wav` - Individual voice samples
 - `chapters/chapter_*.mp3` - Final audiobook chapters
-- `chapter_analysis.json` - Analysis statistics
-- `characters.json` - List of characters
 - `characters_descriptions.json` - Character voice descriptions
 
 ## Notes

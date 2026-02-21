@@ -20,6 +20,15 @@ import torch
 from scipy.io import wavfile
 import numpy as np
 
+# Helper to check if flash-attn is available
+def _get_attn_implementation() -> Optional[str]:
+    """Return flash_attention_2 if available, otherwise None."""
+    try:
+        import flash_attn
+        return "flash_attention_2"
+    except ImportError:
+        return None
+
 # Text to speech generation
 TTS_ENGINE = os.environ.get('TTS_ENGINE', 'kugelaudio')
 
@@ -236,24 +245,27 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio"):
     Returns:
         Tuple of (model, processor, model_path)
     """
+    attn_impl = _get_attn_implementation()
     if tts_engine == 'kugelaudio':
         model_path = "kugelaudio/kugelaudio-0-open"
+        attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
         tts_model = KugelAudioForConditionalGenerationInference.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
             device_map=device,
-            attn_implementation="flash_attention_2",
-        )
+            **attn_kwargs,
+        ).to(device)
         tts_model.set_ddpm_inference_steps(num_steps=13)
         tts_model.eval()
         processor = KugelAudioProcessor.from_pretrained(model_path)
     else:
         model_path = "Jmica/VibeVoice7B"
+        attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
         tts_model = VibeVoiceForConditionalGenerationInference.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
             device_map=device,
-            attn_implementation="flash_attention_2",
+            **attn_kwargs,
         )
         tts_model.set_ddpm_inference_steps(num_steps=13)
         tts_model.eval()
@@ -684,25 +696,28 @@ def parse_epub():
     postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0])
     validation_model = whisperx.load_model("distil-medium.en", "cuda", compute_type="float16")
 
+    attn_impl = _get_attn_implementation()
     if TTS_ENGINE == 'kugelaudio':
         # Initialize KugelAudio model and processor
+        attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
         tts_model = KugelAudioForConditionalGenerationInference.from_pretrained(
             "kugelaudio/kugelaudio-0-open",
             torch_dtype=torch.bfloat16,
             device_map=target_device,
-            attn_implementation="flash_attention_2",
-        )
+            **attn_kwargs,
+        ).to(target_device)
         tts_model.set_ddpm_inference_steps(num_steps=13)
         tts_model.eval()
 
         processor = KugelAudioProcessor.from_pretrained("kugelaudio/kugelaudio-0-open")
     else:
         # Initialize VibeVoice model and processor
+        attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
         tts_model = VibeVoiceForConditionalGenerationInference.from_pretrained(
             "Jmica/VibeVoice7B",
             torch_dtype=torch.bfloat16,
             device_map=target_device,
-            attn_implementation="flash_attention_2",
+            **attn_kwargs,
         )
         tts_model.set_ddpm_inference_steps(num_steps=13)
         tts_model.eval()

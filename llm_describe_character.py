@@ -461,8 +461,6 @@ def main() -> None:
                 # Fallback for Windows console
                 safe_line = first_line.encode('utf-8', errors='replace').decode('utf-8')
                 print(f"  - {char}: {safe_line}...")
-
-
 # ============================================================================
 # SHARED CHARACTER DESCRIPTION LOGIC
 # ============================================================================

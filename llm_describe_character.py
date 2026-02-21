@@ -20,25 +20,25 @@ from config import LLM_SETTINGS, OUTPUT_DIR
 
 # Default prompt for character description
 CHARACTER_DESCRIPTION_PROMPT = """
-You are an expert voice actor and audiobook narrator. Your task is to create unique voice profiles for characters based on their names and the context in which they appear in an audiobook.
+You are an expert voice actor and audiobook narrator. Your task is to create short, distinctive voice profiles for characters.
 
-For each character, provide a detailed voice profile that includes:
-1. **Gender first**: Start with "Male" or "Female" (e.g., "Male", "Female")
-2. **Age range**: Young adult, middle-aged, elderly, teenager, etc.
-3. **Emotional base state**: Confident, nervous, authoritative, meek, playful, etc.
-4. **Accent**: Regional (Southern drawl, Boston accent, British RP), socio-economic (posh, working-class), or neutral
-5. **Speaking style**: Fast/talkative, slow/deliberate, formal/informal, gruff/smooth, etc.
-6. **Unique vocal characteristics**: Any notable speech patterns, quirks, or distinctive features
+Each description should be **one concise sentence (10-20 words)** covering:
+1. Gender and age (e.g., "Young female", "Middle-aged male")
+2. 1-2 key voice qualities (e.g., "bright and slightly edgy", "warm and gentle", "gruff and gravelly")
+3. Optional: accent/dialect if distinctive
 
-Format your response as a JSON object where keys are character names and values are voice profiles.
-Each description MUST begin with "Male" or "Female" followed by the age and other characteristics.
-The description should be a single concise paragraph that illustrates how the character sounds when speaking.
+Focus on the most distinctive, memorable trait.
 
-Example format:
-Male, elderly farmer with a meek and rustic lisp, speaks slowly with a drawl. His voice carries the weariness of decades on the land, often pausing mid-sentence as if remembering something.
+Examples:
+- Vivian: "Bright, slightly edgy young female voice."
+- Serena: "Warm, gentle young female voice."
+- Uncle_Fu: "Seasoned male voice with a low, mellow timbre."
+- Dylan: "Youthful male voice with a clear, natural timbre."
+- Eric: "Lively male voice with a slightly husky brightness."
+- Ryan: "Dynamic male voice with strong rhythmic drive."
+- Aiden: "Sunny American male voice with a clear midrange."
 
-Another example:
-Female, mid-30s detective with a sharp, no-nonsense tone. She speaks in quick, clipped sentences with a slight Chicago accent, exuding quiet authority and weary skepticism.
+Format your response as a JSON object where keys are character names and values are voice descriptions (just the description text, not including the character name).
 """
 
 

@@ -253,7 +253,7 @@ def parse_epub_to_file(
                     f.write("\n")
 
         progress(1.0, desc=f"Successfully parsed {total_chapters} chapters with {total_lines} lines. (temp: {chapters_dir.parent})")
-        return "=== Stage 1: EPUB Parsing Complete ===\n", total_chapters
+        return "=== Stage 1: EPUB Parsing Complete ===\n", PIPELINE_STATE_EPUB_PARSED
     except Exception as e:
         log_output = f"Error parsing EPUB: {str(e)}"
         log_output += f"\n{traceback.format_exc()}"
@@ -963,13 +963,13 @@ def create_interface(
             # EPUB upload
             epub_upload = gr.File(label="EPUB", file_types=[".epub"], value=epub_path_default)
 
-        # All 6 buttons in a single row
+        # All 6 buttons in a single row - only Parse is clickable initially
         with gr.Row():
-            parse_btn = gr.Button("1. Parse", variant="primary", scale=1)
-            label_btn = gr.Button("2. Label", variant="secondary", scale=1)
-            describe_btn = gr.Button("3. Describe", variant="secondary", scale=1)
-            voice_samples_btn = gr.Button("4. Voices", variant="secondary", scale=1)
-            tts_btn = gr.Button("Read Chapters", variant="primary", scale=1)
+            parse_btn = gr.Button("1. Parse", variant="primary", scale=1, interactive=True)
+            label_btn = gr.Button("2. Label", variant="secondary", scale=1, interactive=False)
+            describe_btn = gr.Button("3. Describe", variant="secondary", scale=1, interactive=False)
+            voice_samples_btn = gr.Button("4. Voices", variant="secondary", scale=1, interactive=False)
+            tts_btn = gr.Button("Read Chapters", variant="primary", scale=1, interactive=False)
         with gr.Row():
             # Log output with state on same element
             log_output = gr.Textbox(label="Log (State: Ready)", lines=3, max_lines=3, interactive=False)

@@ -170,7 +170,7 @@ class TestParseEpubToFile:
                 result = parse_epub_to_file(mock_file, max_chapters=None)
 
         assert "Stage 1" in result[0]
-        assert result[1] == 2
+        assert result[1] == "epub_parsed"
 
     def test_returns_error_for_no_chapters(self, temp_dir, reset_temp_globals):
         """Test error handling when no chapters are found."""

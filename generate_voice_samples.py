@@ -202,8 +202,8 @@ def generate_voice_samples(
             tts_model = Qwen3TTSModel.from_pretrained(
                 model_path,
                 device_map=device,
-                dtype="bfloat16",
-                attn_implementation=None,
+                dtype=torch.bfloat16,
+                attn_implementation="flash_attention_2"
             )
         except Exception as e:
             return f"Error loading model: {e}", {}

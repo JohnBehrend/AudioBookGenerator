@@ -58,6 +58,13 @@ def get_chapters_dir() -> Optional[Path]:
     return get_chapters_dir._chapters_dir
 
 
+def get_temp_dir() -> Optional[str]:
+    """Get the temporary directory path for display purposes."""
+    if hasattr(get_chapters_dir, "_temp_dir") and get_chapters_dir._temp_dir:
+        return get_chapters_dir._temp_dir
+    return None
+
+
 def get_characters_descriptions_file() -> Optional[Path]:
     """Get the path to characters_descriptions.json in the temp directory."""
     chapters_dir = get_chapters_dir()
@@ -207,7 +214,7 @@ def parse_epub_to_file(
         shutil.copy2(epub_file.name, str(epub_dest))
 
         # Parse the EPUB with progress tracking
-        progress(0, desc="Starting EPUB parsing...")
+        progress(0, desc=f"Starting EPUB parsing... (temp: {chapters_dir.parent})")
         chapters = parse_epub_to_chapters(
             epub_file.name,
             max_chapters=int(max_chapters) if max_chapters else None
@@ -219,7 +226,7 @@ def parse_epub_to_file(
         # Count total lines across all chapters for progress tracking
         total_lines = sum(len(chapter) for chapter in chapters)
         total_chapters = len(chapters)
-        progress(0, desc=f"Parsing {total_chapters} chapters with {total_lines} lines...")
+        progress(0, desc=f"Parsing {total_chapters} chapters with {total_lines} lines... (temp: {chapters_dir.parent})")
 
         # Save each chapter as a text file with progress updates
         lines_processed = 0
@@ -230,7 +237,7 @@ def parse_epub_to_file(
                 # Update progress for each line
                 progress(
                     lines_processed / total_lines,
-                    desc=f"Parsing chapter {i + 1}/{total_chapters}: line {lines_processed}/{total_lines}..."
+                    desc=f"Parsing chapter {i + 1}/{total_chapters}: line {lines_processed}/{total_lines}... (temp: {chapters_dir.parent})"
                 )
 
             output_file = chapters_dir / f"chapter_{i}.txt"
@@ -244,7 +251,7 @@ def parse_epub_to_file(
                         f.write('"')
                     f.write("\n")
 
-        progress(1.0, desc=f"Successfully parsed {total_chapters} chapters with {total_lines} lines.")
+        progress(1.0, desc=f"Successfully parsed {total_chapters} chapters with {total_lines} lines. (temp: {chapters_dir.parent})")
         return "=== Stage 1: EPUB Parsing Complete ===\n", total_chapters
     except Exception as e:
         log_output = f"Error parsing EPUB: {str(e)}"
@@ -268,7 +275,7 @@ def process_chapters_for_labels(
     """Stage 2: Run LLM to label speakers in all chapters."""
     chapters_dir = get_chapters_dir()
     if not chapters_dir:
-        progress(1.0, desc="Error: Chapters directory not initialized.")
+        progress(1.0, desc=f"Error: Chapters directory not initialized. (temp: {chapters_dir.parent})")
         return log_output + "\nError: Chapters directory not initialized.", pipeline_state, []
 
     chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
@@ -278,12 +285,12 @@ def process_chapters_for_labels(
         return log_output + "\nNo chapter files found. Please run Stage 1 (Parse EPUB) first.", pipeline_state, []
 
     num_chapters = len(chapter_files)
-    log_output += f"\nProcessing {num_chapters} chapters with LLM..."
+    log_output += f"\nProcessing {num_chapters} chapters with LLM... (temp: {chapters_dir.parent})"
 
     all_character_names = set()
 
     for i, chapter_file in enumerate(chapter_files):
-        progress(i / num_chapters, desc=f"Labeling speakers in chapter {i + 1}/{num_chapters}...")
+        progress(i / num_chapters, desc=f"Labeling speakers in chapter {i + 1}/{num_chapters}... (temp: {chapters_dir.parent})")
         log_output += f"\nProcessing: {chapter_file}"
 
         try:
@@ -317,7 +324,7 @@ def process_chapters_for_labels(
     character_list = sorted(list(all_character_names))
     log_output += f"\nFound {len(character_list)} characters: {', '.join(character_list)}"
 
-    progress(1.0, desc="LLM speaker labeling complete.")
+    progress(1.0, desc=f"LLM speaker labeling complete. (temp: {chapters_dir.parent})")
     return log_output, new_state, character_list
 
 
@@ -356,11 +363,11 @@ def describe_characters(
             log_output += "\nNo characters found in map files. Please run Stage 2 first."
             return log_output, pipeline_state, None
 
-        log_output += f"\nFound {num_characters} characters from map files."
+        log_output += f"\nFound {num_characters} characters from map files. (temp: {chapters_dir.parent})"
 
         # Call describe_characters_in_dir directly instead of subprocess
         from llm_describe_character import describe_characters_in_dir
-        progress(0.5, desc=f"Describing {num_characters} characters with LLM...")
+        progress(0.5, desc=f"Describing {num_characters} characters with LLM... (temp: {chapters_dir.parent})")
         result_msg, character_descriptions = describe_characters_in_dir(
             output_dir=str(chapters_dir),
             api_key=api_key,
@@ -369,7 +376,7 @@ def describe_characters(
         )
 
         log_output += f"\n{result_msg}"
-        progress(1.0, desc="Character description generation complete.")
+        progress(1.0, desc=f"Character description generation complete. (temp: {chapters_dir.parent})")
         # Load and return the character descriptions for state tracking
         descriptions_file = get_characters_descriptions_file()
         try:
@@ -418,11 +425,11 @@ def generate_voice_samples(
             descriptions = json.load(f)
 
         num_characters = len(descriptions)
-        log_output += f"\nFound {num_characters} characters to process."
+        log_output += f"\nFound {num_characters} characters to process. (temp: {chapters_dir.parent})"
 
         # Call generate_voice_samples directly instead of subprocess
         from generate_voice_samples import generate_voice_samples
-        progress(0.5, desc=f"Generating voice samples for {num_characters} characters with TTS engine...")
+        progress(0.5, desc=f"Generating voice samples for {num_characters} characters with TTS engine... (temp: {chapters_dir.parent})")
         result_msg, generated_voices = generate_voice_samples(
             descriptions=descriptions,
             output_dir=str(chapters_dir),
@@ -430,7 +437,7 @@ def generate_voice_samples(
         )
 
         log_output += f"\n{result_msg}"
-        progress(1.0, desc="Voice sample generation complete.")
+        progress(1.0, desc=f"Voice sample generation complete. (temp: {chapters_dir.parent})")
         new_state = PIPELINE_STATE_VOICE_SAMPLES_COMPLETE
         log_output += f" State: {new_state}"
         return log_output, new_state
@@ -473,7 +480,7 @@ def regenerate_voice_sample(
 
         # Call generate_voice_samples directly instead of subprocess
         from generate_voice_samples import generate_voice_samples as gen_voices
-        progress(0.5, desc=f"Regenerating voice sample for {character_name} with TTS engine...")
+        progress(0.5, desc=f"Regenerating voice sample for {character_name} with TTS engine... (temp: {chapters_dir.parent})")
         result_msg, generated_voices = gen_voices(
             descriptions={character_name: char_description},
             output_dir=str(chapters_dir),
@@ -485,7 +492,7 @@ def regenerate_voice_sample(
 
         # Return the path to the regenerated file
         wav_path = get_character_wav_file(character_name, chapters_dir)
-        log_output += f"\n\nVoice sample regenerated for: {character_name}"
+        log_output += f"\n\nVoice sample regenerated for: {character_name} (temp: {chapters_dir.parent})"
         return log_output, pipeline_state, wav_path
 
     except Exception as e:
@@ -549,7 +556,7 @@ def generate_tts_audio(
 ) -> Tuple[str, Optional[str]]:
     """Stage 5.1: Generate TTS audio for each line/voice."""
     log_output += "\n\n=== Stage 5.1: Generating TTS Audio ==="
-    progress(0, desc="Starting TTS audio generation...")
+    progress(0, desc=f"Starting TTS audio generation... (temp: {get_chapters_dir().parent})")
     try:
         chapters_dir = get_chapters_dir()
         if not chapters_dir:
@@ -574,7 +581,7 @@ def generate_tts_audio(
         # Create voices_map: character_name -> voice_path (wav file)
         voices_map = {}
         for char_name in descriptions.keys():
-            progress(0, desc=f"Finding voice sample for character: {char_name}...")
+            progress(0, desc=f"Finding voice sample for character: {char_name}... (temp: {chapters_dir.parent})")
             wav_path = get_character_wav_file(char_name, chapters_dir)
             if wav_path and os.path.exists(wav_path):
                 voices_map[char_name] = wav_path
@@ -583,7 +590,7 @@ def generate_tts_audio(
                 narrator_path = get_character_wav_file("narrator", chapters_dir)
                 if narrator_path and os.path.exists(narrator_path):
                     voices_map[char_name] = narrator_path
-        progress(0.5, desc=f"Prepared voices for {len(voices_map)} characters.")
+        progress(0.5, desc=f"Prepared voices for {len(voices_map)} characters. (temp: {chapters_dir.parent})")
         if not voices_map:
             log_output += "\nNo voice samples found. Please run Stage 4 (Generate Voices) first."
             return log_output, pipeline_state
@@ -596,7 +603,7 @@ def generate_tts_audio(
         num_chapters = len(chapter_files)
         if max_chapters:
             num_chapters = min(num_chapters, int(max_chapters))
-        log_output += f"\nGenerating TTS audio for {num_chapters} chapters..."
+        log_output += f"\nGenerating TTS audio for {num_chapters} chapters... (temp: {chapters_dir.parent})"
 
         # Parse the EPUB to get chapters (same as Stage 1)
         from parse_chapter import parse_epub_to_chapters
@@ -669,7 +676,7 @@ def assemble_chapter_audiobooks(
             return log_output, pipeline_state
 
         num_chapters = len(chapter_files)
-        log_output += f"\nFound {num_chapters} chapters to assemble."
+        log_output += f"\nFound {num_chapters} chapters to assemble. (temp: {chapters_dir.parent})"
 
         # Process each chapter
         for i in range(num_chapters):
@@ -689,9 +696,9 @@ def assemble_chapter_audiobooks(
             for wav in wav_files:
                 os.unlink(wav)
 
-            log_output += f"\nChapter {i}: Created {output_mp3.name} from {len(wav_files)} audio segments."
+            log_output += f"\nChapter {i}: Created {output_mp3.name} from {len(wav_files)} audio segments. (temp: {chapters_dir.parent})"
 
-        log_output += "\n\nStage 5.3 (Assembly) complete!"
+        log_output += "\n\nStage 5.3 (Assembly) complete! (temp: {chapters_dir.parent})"
         return log_output, pipeline_state
 
     except Exception as e:

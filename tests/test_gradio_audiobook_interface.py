@@ -135,7 +135,7 @@ class TestParseEpubToFile:
 
     def test_returns_error_for_no_file(self, reset_temp_globals):
         """Test error handling when no file is provided."""
-        result = parse_epub_to_file(None)
+        result = parse_epub_to_file(None, max_chapters=None)
 
         assert result[0].startswith("Error:")
         assert result[1] == 0
@@ -161,7 +161,7 @@ class TestParseEpubToFile:
         mock_file.name = str(epub_path)
 
         with patch.dict('sys.modules', {'parse_chapter': mock_parse_module}):
-            result = parse_epub_to_file(mock_file)
+            result = parse_epub_to_file(mock_file, max_chapters=None)
 
         assert "Successfully parsed" in result[0]
         assert result[1] == 2
@@ -182,7 +182,7 @@ class TestParseEpubToFile:
         mock_file.name = str(epub_path)
 
         with patch.dict('sys.modules', {'parse_chapter': mock_parse_module}):
-            result = parse_epub_to_file(mock_file)
+            result = parse_epub_to_file(mock_file, max_chapters=None)
 
         assert "Error: No chapters found" in result[0]
         assert result[1] == 0
@@ -204,7 +204,7 @@ class TestParseEpubToFile:
         mock_file.name = str(epub_path)
 
         with patch.dict('sys.modules', {'parse_chapter': mock_parse_module}):
-            parse_epub_to_file(mock_file)
+            parse_epub_to_file(mock_file, max_chapters=None)
 
         chapters_dir = get_chapters_dir()
         assert (chapters_dir / "uploaded.epub").exists()
@@ -221,7 +221,7 @@ class TestParseEpubToFile:
         mock_file.name = str(epub_path)
 
         with patch.dict('sys.modules', {'parse_chapter': mock_parse_module}):
-            result = parse_epub_to_file(mock_file)
+            result = parse_epub_to_file(mock_file, max_chapters=None)
 
         assert "Error parsing EPUB" in result[0]
         assert result[1] == 0
@@ -241,168 +241,110 @@ class TestProcessChaptersForLabels:
             api_key="test_key",
             port="1234",
             num_attempts=10,
-            use_all_chapters=True,
-            chapter_range=[0, 5],
+            pipeline_state=None,
             log_output=log_output
         )
 
-        assert "No chapter files found" in result
+        assert "No chapter files found" in result[0]
 
-    def test_processes_all_chapters_when_flag_set(self, temp_dir, reset_temp_globals):
-        """Test processing all chapters when use_all_chapters is True."""
+    def test_processes_all_chapters(self, temp_dir, reset_temp_globals):
+        """Test processing all chapters."""
         chapters_dir = temp_dir / "chapters"
         chapters_dir.mkdir(parents=True, exist_ok=True)
         for i in range(3):
             (chapters_dir / f"chapter_{i}.txt").write_text(f"Chapter {i} content")
+            (chapters_dir / f"chapter_{i}.map.json").write_text(json.dumps([{"1": "narrator"}, {"1": 1}]))
 
         log_output = ""
         with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(stdout="Processing complete", stderr="")
+            with patch("llm_label_speakers.label_speakers_in_file") as mock_label:
+                mock_label.return_value = ("Labels complete", {"1": "narrator"}, {"1": 1})
 
                 result = process_chapters_for_labels(
                     api_key="test_key",
                     port="1234",
                     num_attempts=10,
-                    use_all_chapters=True,
-                    chapter_range=[0, 5],
+                    pipeline_state=None,
                     log_output=log_output
                 )
 
-                assert mock_run.call_count == 3
+                assert "Stage 2 complete" in result[0]
+                assert result[1] == "labels_complete"
+                assert "narrator" in result[2]
 
-    def test_processes_selected_chapter_range(self, temp_dir, reset_temp_globals):
-        """Test processing only selected chapter range."""
+    def test_processes_multiple_chapters(self, temp_dir, reset_temp_globals):
+        """Test processing multiple chapters."""
         chapters_dir = temp_dir / "chapters"
         chapters_dir.mkdir(parents=True, exist_ok=True)
         for i in range(5):
             (chapters_dir / f"chapter_{i}.txt").write_text(f"Chapter {i} content")
+            (chapters_dir / f"chapter_{i}.map.json").write_text(json.dumps([{"1": "narrator", "2": "character"}, {"1": 1, "2": 2}]))
 
         log_output = ""
         with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(stdout="OK", stderr="")
+            with patch("llm_label_speakers.label_speakers_in_file") as mock_label:
+                mock_label.return_value = ("Labels complete", {"1": "narrator", "2": "character"}, {"1": 1, "2": 2})
 
                 result = process_chapters_for_labels(
                     api_key="test_key",
                     port="1234",
                     num_attempts=10,
-                    use_all_chapters=False,
-                    chapter_range=[1, 3],
+                    pipeline_state=None,
                     log_output=log_output
                 )
 
-                assert mock_run.call_count == 3
+                assert "Stage 2 complete" in result[0]
+                assert result[1] == "labels_complete"
+                assert "narrator" in result[2]
+                assert "character" in result[2]
 
-    def test_handles_single_chapter_int_value(self, temp_dir, reset_temp_globals):
-        """Test handling of single chapter integer value."""
+    def test_handles_label_error(self, temp_dir, reset_temp_globals):
+        """Test error handling when label fails."""
         chapters_dir = temp_dir / "chapters"
         chapters_dir.mkdir(parents=True, exist_ok=True)
         (chapters_dir / "chapter_0.txt").write_text("Chapter 0 content")
 
         log_output = ""
         with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(stdout="OK", stderr="")
+            with patch("llm_label_speakers.label_speakers_in_file") as mock_label:
+                mock_label.side_effect = Exception("Label failed")
 
                 result = process_chapters_for_labels(
                     api_key="test_key",
                     port="1234",
                     num_attempts=10,
-                    use_all_chapters=False,
-                    chapter_range=0,
+                    pipeline_state=None,
                     log_output=log_output
                 )
 
-                assert mock_run.call_count == 1
+                assert "Error processing" in result[0]
 
-    def test_handles_subprocess_timeout(self, temp_dir, reset_temp_globals):
-        """Test timeout handling in subprocess."""
+    def test_returns_character_list(self, temp_dir, reset_temp_globals):
+        """Test that character list is returned correctly."""
         chapters_dir = temp_dir / "chapters"
         chapters_dir.mkdir(parents=True, exist_ok=True)
         (chapters_dir / "chapter_0.txt").write_text("Chapter 0 content")
+        (chapters_dir / "chapter_0.map.json").write_text(json.dumps([
+            {"1": "narrator", "2": "john", "3": "mary"},
+            {"1": 1, "2": 2, "3": 3}
+        ]))
 
         log_output = ""
         with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.side_effect = subprocess.TimeoutExpired(cmd="test", timeout=300)
+            with patch("llm_label_speakers.label_speakers_in_file") as mock_label:
+                mock_label.return_value = ("Labels complete", {"1": "narrator", "2": "john", "3": "mary"}, {"1": 1, "2": 2, "3": 3})
 
                 result = process_chapters_for_labels(
                     api_key="test_key",
                     port="1234",
                     num_attempts=10,
-                    use_all_chapters=True,
-                    chapter_range=[0, 5],
+                    pipeline_state=None,
                     log_output=log_output
                 )
 
-                assert "Timeout" in result
-
-    def test_handles_subprocess_error(self, temp_dir, reset_temp_globals):
-        """Test error handling in subprocess."""
-        chapters_dir = temp_dir / "chapters"
-        chapters_dir.mkdir(parents=True, exist_ok=True)
-        (chapters_dir / "chapter_0.txt").write_text("Chapter 0 content")
-
-        log_output = ""
-        with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.side_effect = Exception("Subprocess error")
-
-                result = process_chapters_for_labels(
-                    api_key="test_key",
-                    port="1234",
-                    num_attempts=10,
-                    use_all_chapters=True,
-                    chapter_range=[0, 5],
-                    log_output=log_output
-                )
-
-                assert "Error processing" in result
-
-    def test_logs_stderr_output(self, temp_dir, reset_temp_globals):
-        """Test that stderr output is logged."""
-        chapters_dir = temp_dir / "chapters"
-        chapters_dir.mkdir(parents=True, exist_ok=True)
-        (chapters_dir / "chapter_0.txt").write_text("Chapter 0 content")
-
-        log_output = ""
-        with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(stdout="OK", stderr="Error occurred")
-
-                result = process_chapters_for_labels(
-                    api_key="test_key",
-                    port="1234",
-                    num_attempts=10,
-                    use_all_chapters=True,
-                    chapter_range=[0, 5],
-                    log_output=log_output
-                )
-
-                assert "Errors: Error occurred" in result
-
-    def test_handles_list_tuple_chapter_range(self, temp_dir, reset_temp_globals):
-        """Test handling of list/tuple chapter range."""
-        chapters_dir = temp_dir / "chapters"
-        chapters_dir.mkdir(parents=True, exist_ok=True)
-        (chapters_dir / "chapter_0.txt").write_text("Chapter 0 content")
-
-        log_output = ""
-        with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(stdout="OK", stderr="")
-
-                result = process_chapters_for_labels(
-                    api_key="test_key",
-                    port="1234",
-                    num_attempts=10,
-                    use_all_chapters=False,
-                    chapter_range=(0, 0),
-                    log_output=log_output
-                )
-
-                assert mock_run.call_count == 1
+                assert "narrator" in result[2]
+                assert "john" in result[2]
+                assert "mary" in result[2]
 
 
 # ============================================================================
@@ -416,10 +358,10 @@ class TestDescribeCharacters:
         """Test error handling when no map files exist."""
         log_output = ""
         result = describe_characters(
-            api_key="test_key", port="1234", log_output=log_output
+            api_key="test_key", port="1234", pipeline_state=None, log_output=log_output
         )
 
-        assert "No .map.json files found" in result
+        assert "No .map.json files found" in result[0]
 
     def test_successfully_describes_characters(self, temp_dir, reset_temp_globals):
         """Test successful character description generation."""
@@ -439,10 +381,10 @@ class TestDescribeCharacters:
                 mock_describe.return_value = ("Character descriptions generated", {"narrator": "Desc", "john": "Desc"})
 
                 result = describe_characters(
-                    api_key="test_key", port="1234", log_output=log_output
+                    api_key="test_key", port="1234", pipeline_state=None, log_output=log_output
                 )
 
-                assert "Stage 3 complete" in result or "Successfully described" in result
+                assert "Stage 3 complete" in result[0]
                 mock_describe.assert_called_once()
 
     def test_handles_describe_error(self, temp_dir, reset_temp_globals):
@@ -462,10 +404,10 @@ class TestDescribeCharacters:
                 mock_describe.side_effect = Exception("Describe failed")
 
                 result = describe_characters(
-                    api_key="test_key", port="1234", log_output=log_output
+                    api_key="test_key", port="1234", pipeline_state=None, log_output=log_output
                 )
 
-                assert "Error describing characters" in result
+                assert "Error describing characters" in result[0]
 
 
 # ============================================================================
@@ -478,10 +420,15 @@ class TestGenerateVoiceSamples:
     def test_returns_error_when_no_descriptions_file(self, temp_dir, reset_temp_globals):
         """Test error handling when characters_descriptions.json doesn't exist."""
         log_output = ""
-        with patch("gradio_audiobook_interface.SCRIPT_DIR", temp_dir):
-            result = generate_voice_samples(log_output)
+        with patch("gradio_audiobook_interface.get_chapters_dir") as mock_chapters_dir:
+            mock_chapters_dir.return_value = temp_dir / "chapters"
+            mock_chapters_dir.return_value.mkdir(parents=True, exist_ok=True)
+            result = generate_voice_samples(
+                pipeline_state=None,
+                log_output=log_output
+            )
 
-        assert "characters_descriptions.json not found" in result
+        assert "characters_descriptions.json not found" in result[0]
 
     def test_successfully_generates_voice_samples(self, temp_dir, reset_temp_globals):
         """Test successful voice sample generation."""
@@ -492,14 +439,19 @@ class TestGenerateVoiceSamples:
         }))
 
         log_output = ""
-        with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="Voice samples generated\n", stderr="")
+        with patch("gradio_audiobook_interface.get_chapters_dir") as mock_chapters_dir:
+            mock_chapters_dir.return_value = temp_dir / "chapters"
+            mock_chapters_dir.return_value.mkdir(parents=True, exist_ok=True)
+            with patch("generate_voice_samples.generate_voice_samples") as mock_gen:
+                mock_gen.return_value = ("Voice samples generated", ["narrator.wav", "john.wav"])
 
-            with patch("gradio_audiobook_interface.SCRIPT_DIR", temp_dir):
-                result = generate_voice_samples(log_output)
+                result = generate_voice_samples(
+                    pipeline_state=None,
+                    log_output=log_output
+                )
 
-                assert "Stage 5 complete" in result
-                mock_run.assert_called_once()
+                assert "Stage 4 complete" in result[0]
+                mock_gen.assert_called_once()
 
     def test_logs_stderr_from_voice_samples(self, temp_dir, reset_temp_globals):
         """Test that stderr from voice samples is logged."""
@@ -507,15 +459,18 @@ class TestGenerateVoiceSamples:
         descriptions_file.write_text(json.dumps({"narrator": "Description"}))
 
         log_output = ""
-        with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                stdout="OK\n", stderr="Warning: some voices failed"
-            )
+        with patch("gradio_audiobook_interface.get_chapters_dir") as mock_chapters_dir:
+            mock_chapters_dir.return_value = temp_dir / "chapters"
+            mock_chapters_dir.return_value.mkdir(parents=True, exist_ok=True)
+            with patch("generate_voice_samples.generate_voice_samples") as mock_gen:
+                mock_gen.return_value = ("Voice samples generated with warnings", ["narrator.wav"])
 
-            with patch("gradio_audiobook_interface.SCRIPT_DIR", temp_dir):
-                result = generate_voice_samples(log_output)
+                result = generate_voice_samples(
+                    pipeline_state=None,
+                    log_output=log_output
+                )
 
-                assert "Errors: Warning: some voices failed" in result
+                assert "Stage 4 complete" in result[0]
 
     def test_handles_voice_samples_error(self, temp_dir, reset_temp_globals):
         """Test error handling when voice sample generation fails."""
@@ -523,13 +478,18 @@ class TestGenerateVoiceSamples:
         descriptions_file.write_text(json.dumps({"narrator": "Description"}))
 
         log_output = ""
-        with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-            mock_run.side_effect = Exception("Voice sample generation failed")
+        with patch("gradio_audiobook_interface.get_chapters_dir") as mock_chapters_dir:
+            mock_chapters_dir.return_value = temp_dir / "chapters"
+            mock_chapters_dir.return_value.mkdir(parents=True, exist_ok=True)
+            with patch("generate_voice_samples.generate_voice_samples") as mock_gen:
+                mock_gen.side_effect = Exception("Voice sample generation failed")
 
-            with patch("gradio_audiobook_interface.SCRIPT_DIR", temp_dir):
-                result = generate_voice_samples(log_output)
+                result = generate_voice_samples(
+                    pipeline_state=None,
+                    log_output=log_output
+                )
 
-                assert "Error generating voice samples" in result
+                assert "Error generating voice samples" in result[0]
 
 
 # ============================================================================

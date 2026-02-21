@@ -10,7 +10,9 @@
       "Bash(uv run python:*)",
       "Bash(uv run pytest:*)",
       "Bash(git -C *)",
-      "Bash(sed -n *)"
+      "Bash(sed -n *)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

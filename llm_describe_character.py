@@ -15,6 +15,8 @@ from openai import OpenAI
 import requests
 from bs4 import BeautifulSoup
 
+from config import LLM_SETTINGS, OUTPUT_DIR
+
 
 # Default prompt for character description
 CHARACTER_DESCRIPTION_PROMPT = """
@@ -359,20 +361,20 @@ def main() -> None:
         "--api_key",
         "-k",
         metavar="API_KEY",
-        default="lm-studio",
+        default=LLM_SETTINGS["api_key"],
         help="Provide custom API key."
     )
     parser.add_argument(
         "--port",
         "-p",
         metavar="PORT",
-        default="1234",
+        default=LLM_SETTINGS["port"],
         help="Provide custom port for inference."
     )
     parser.add_argument(
         "--model",
         "-m",
-        default="local-model",
+        default=LLM_SETTINGS["default_model"],
         help="Model name to use for inference."
     )
     parser.add_argument(
@@ -390,7 +392,7 @@ def main() -> None:
         "--output-dir",
         metavar="DIR",
         dest="output_dir",
-        default=".",
+        default=str(OUTPUT_DIR),
         help="Directory to save output files (characters_descriptions.json and duplicate_replacement_map.json)."
     )
     args = parser.parse_args()

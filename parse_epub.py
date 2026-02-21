@@ -29,8 +29,11 @@ def _get_attn_implementation() -> Optional[str]:
     except ImportError:
         return None
 
+# Import config for default values
+from config import DEFAULTS, AUDIO_SETTINGS
+
 # Text to speech generation
-TTS_ENGINE = os.environ.get('TTS_ENGINE', 'kugelaudio')
+TTS_ENGINE = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
 
 if TTS_ENGINE == 'kugelaudio':
     # KugelAudio is installed as a Python package dependency
@@ -368,7 +371,7 @@ def generate_tts_for_line(
 
         outputs = tts_model.generate(
             **inputs,
-            max_new_tokens=512,
+            max_new_tokens=DEFAULTS["max_new_tokens"],
             cfg_scale=cfg_scale,
             tokenizer=processor.tokenizer,
             do_sample=False,
@@ -644,7 +647,7 @@ def parse_epub():
         target_device = "cuda:1"
         torch.cuda.set_device(1)
 
-    cfg_scale = 1.30
+    cfg_scale = DEFAULTS["cfg_scale"]
 
     voices_map = None
     if args.voices_map is not None:
@@ -692,9 +695,9 @@ def parse_epub():
                 else:
                     cobj.set_speaker(voices_map["narrator"])
 
-    short_text_postfix = "and also with you?".lower()
+    short_text_postfix = DEFAULTS["short_text_postfix"].lower()
     postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0])
-    validation_model = whisperx.load_model("distil-medium.en", "cuda", compute_type="float16")
+    validation_model = whisperx.load_model(DEFAULTS["validation_model_name"], "cuda", compute_type="float16")
 
     attn_impl = _get_attn_implementation()
     if TTS_ENGINE == 'kugelaudio':
@@ -800,7 +803,7 @@ def parse_epub():
 
                     outputs = tts_model.generate(
                         **inputs,
-                        max_new_tokens=512,
+                        max_new_tokens=DEFAULTS["max_new_tokens"],
                         cfg_scale=cfg_scale,
                         tokenizer=processor.tokenizer,
                         do_sample=False,
@@ -966,7 +969,7 @@ def generate_audiobook_from_chapters(
         validation_model = setup_validation_model(device)
         voice_mapper = VoiceMapper()
 
-        short_text_postfix = "and also with you?"
+        short_text_postfix = DEFAULTS["short_text_postfix"]
         postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0])
 
         processed = 0

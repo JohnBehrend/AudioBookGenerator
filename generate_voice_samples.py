@@ -16,6 +16,9 @@ import sys
 # Add parent directory to path to import qwen_tts
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+# Import config for default values
+from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
+
 try:
     from qwen_tts import Qwen3TTSModel
 except ImportError:
@@ -35,16 +38,18 @@ def create_sample_text_from_description(description):
     cleaned = description.replace('|', ', ')
     sentences = cleaned.split('.')
     if sentences:
-        return sentences[0][:150].strip()
-    return cleaned[:150].strip()
+        return sentences[0][:DEFAULTS["sample_text_length"]].strip()
+    return cleaned[:DEFAULTS["sample_text_length"]].strip()
 
 
-def generate_voice_sample(tts_model, character_name, description, output_dir, max_new_tokens=512):
+def generate_voice_sample(tts_model, character_name, description, output_dir, max_new_tokens=None):
     """
     Generate a short voice sample for a character using VoiceDesign model.
     """
+    if max_new_tokens is None:
+        max_new_tokens = DEFAULTS["max_new_tokens"]
     sample_text = create_sample_text_from_description(description)
-    instruct = f"Voice design for {character_name}: {description[:400]}"
+    instruct = f"Voice design for {character_name}: {description[:DEFAULTS['description_length']]}"
 
     try:
         wavs, sr = tts_model.generate_voice_design(
@@ -83,7 +88,7 @@ def main():
     )
     parser.add_argument(
         "--output-dir",
-        default="character_voice_samples",
+        default=VOICE_SAMPLES_DIR,
         help="Directory to save voice samples"
     )
     parser.add_argument(
@@ -93,13 +98,13 @@ def main():
     )
     parser.add_argument(
         "--device",
-        default="cuda:0",
+        default=AUDIO_SETTINGS["default_device"],
         help="CUDA device (e.g., cuda:0, cpu)"
     )
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=512,
+        default=DEFAULTS["max_new_tokens"],
         help="Max tokens for generation"
     )
     parser.add_argument(
@@ -151,7 +156,7 @@ def generate_voice_samples(
     output_dir: str,
     model_path: str = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
     device: str = "cuda:0",
-    max_tokens: int = 512,
+    max_tokens: int = DEFAULTS["max_new_tokens"],
     single_character: Optional[str] = None,
     verbose: bool = False
 ) -> Tuple[str, Dict[str, str]]:

@@ -21,8 +21,7 @@ from pathlib import Path
 LLM_SETTINGS = {
     "endpoint": "http://localhost:1234/v1",
     "api_key": "lm-studio",
-    "default_port": "1234",
-    "default_api_key": "lm-studio",
+    "port": "1234",
     "default_model": "local-model",
 }
 
@@ -41,8 +40,8 @@ AUDIO_SETTINGS = {
     "default_device": "cuda:0",
     "alt_device": "cuda:1",
     "default_tts_engine": "kugelaudio",
-    "voice_samples_dir": "character_voice_samples",
     "supported_audio_extensions": [".wav", ".mp3", ".flac"],
+    # Voice samples directory is now a separate path variable
 }
 
 # Environment variable overrides
@@ -57,11 +56,17 @@ if os.environ.get("AUDIO_DEVICE"):
 # ============================================================================
 
 DEFAULTS = {
-    "num_llm_attempts": 10,
+    "num_llm_attempts": 2,
     "max_chapters": 10,
     "max_new_tokens": 512,
     "sample_text_length": 150,
     "description_length": 400,
+    # Audio generation defaults
+    "cfg_scale": 1.30,
+    "short_text_postfix": "and also with you?",
+    "validation_model_name": "distil-medium.en",
+    "min_silence_len": 1250,
+    "silence_thresh": -60,
 }
 
 
@@ -71,7 +76,7 @@ DEFAULTS = {
 
 # Output directories
 OUTPUT_DIR = Path("chapters")
-VOICE_SAMPLES_DIR = Path("character_voice_samples")
+VOICE_SAMPLES_DIR = Path(AUDIO_SETTINGS.get("voice_samples_dir", "character_voice_samples"))
 
 # File patterns
 CHAPTER_PATTERN = "chapter_*.txt"

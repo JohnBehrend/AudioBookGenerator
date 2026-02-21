@@ -9,7 +9,7 @@ import json
 from collections import Counter
 from openai import OpenAI
 
-from config import LLM_SETTINGS
+from config import LLM_SETTINGS, DEFAULTS
 
 def add_quotes_around_keys(json_body):
     """For some json text, we don't have quotes around keys. Example:
@@ -329,10 +329,10 @@ if __name__ == "__main__":
     parser.add_argument("-txt_file", help="Path to the EPUB file")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose printing for debug.")
     parser.add_argument("--skip_llm", action="store_true", help="Skip call to LLM and just try to process files into character maps.")
-    parser.add_argument("-num_llm_attempts", type=int, default=10, help="Number of llm attempts submitted.")
+    parser.add_argument("-num_llm_attempts", type=int, default=DEFAULTS["num_llm_attempts"], help="Number of llm attempts submitted.")
     parser.add_argument("--old_format", action="store_true", help="Use older format for LLM query and parsing.")
-    parser.add_argument("-api_key", metavar="lm-studio", default="lm-studio", help="Provide custom api key.")
-    parser.add_argument("-port", metavar="1234", default="1234", help="Provide custom port for invference.")
+    parser.add_argument("-api_key", metavar="lm-studio", default=LLM_SETTINGS["api_key"], help="Provide custom api key.")
+    parser.add_argument("-port", metavar="1234", default=LLM_SETTINGS["port"], help="Provide custom port for invference.")
     args = parser.parse_args()
     client = OpenAI(base_url="http://localhost:"+args.port+"/v1", api_key=args.api_key) # api_key can be any string as it's not used by LM Studio
     

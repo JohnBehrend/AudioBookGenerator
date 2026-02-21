@@ -37,11 +37,12 @@ PIPELINE_STATE_AUDIOBOOK_COMPLETE = "audiobook_complete"
 
 # File paths - these are now managed dynamically per run
 
-# Default UI values
-DEFAULT_API_KEY = "lm-studio"
-DEFAULT_PORT = "1234"
-DEFAULT_NUM_ATTEMPTS = 10
-DEFAULT_MAX_CHAPTERS = 10
+# Default UI values (imported from config.py for single source of truth)
+from config import DEFAULTS, LLM_SETTINGS
+DEFAULT_API_KEY = LLM_SETTINGS["api_key"]
+DEFAULT_PORT = LLM_SETTINGS["port"]
+DEFAULT_NUM_ATTEMPTS = DEFAULTS["num_llm_attempts"]
+DEFAULT_MAX_CHAPTERS = DEFAULTS["max_chapters"]
 
 # ============================================================================
 # HELPER FUNCTIONS

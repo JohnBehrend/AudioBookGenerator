@@ -425,9 +425,6 @@ def main() -> None:
         if args.verbose:
             print(f"Loaded {len(chapter_texts)} chapter files for context")
 
-    # Build context
-    context = build_character_context(characters, chapter_texts, chapter_files, args.wiki_url_template)
-
     # Describe characters
     if args.single_character:
         if args.single_character not in characters:
@@ -435,55 +432,26 @@ def main() -> None:
             sys.exit(1)
         if args.verbose:
             print(f"Describing single character: {args.single_character}")
+        context = build_character_context(characters, chapter_texts, chapter_files, args.wiki_url_template)
         description = describe_character(client, args.model, args.single_character, context)
         print(f"\nDescription for '{args.single_character}':")
         print(description)
     else:
-        if args.verbose:
-            print(f"Describing {len(characters)} characters...")
-
-        # Find duplicate characters before describing
-        duplicates = find_duplicate_characters(characters)
-        if args.verbose and duplicates:
-            print(f"Found duplicate character names: {duplicates}")
-
-        # Create a map from duplicate names to canonical names
-        duplicate_replacement_map = create_duplicate_replacement_map(duplicates)
-        if args.verbose and duplicate_replacement_map:
-            print(f"Duplicate replacement map: {duplicate_replacement_map}")
-
-        # Get list of canonical characters (exclude duplicates)
-        canonical_characters = [
-            char for char in characters
-            if char not in duplicate_replacement_map
-        ]
-        if args.verbose:
-            print(f"Canonical characters to describe: {canonical_characters}")
-
-        # Describe only canonical characters
-        descriptions = describe_all_characters(client, args.model, canonical_characters, context)
-
-        deduped_descriptions = descriptions
-
-        # Save duplicate replacement map to file
-        replacement_map_file = os.path.join(args.output_dir, "duplicate_replacement_map.json")
-        with open(replacement_map_file, 'w', encoding='utf-8') as f:
-            json.dump(duplicate_replacement_map, f, indent=2, ensure_ascii=False)
-        if args.verbose:
-            print(f"Duplicate replacement map saved to: {replacement_map_file}")
-
-        # Save results (replacing em dashes with regular hyphens)
-        output_file = os.path.join(args.output_dir, "characters_descriptions.json")
-        with open(output_file, 'w', encoding='utf-8') as f:
-            # Convert descriptions to JSON string and replace em dash with hyphen
-            json_content = json.dumps(deduped_descriptions, indent=2, ensure_ascii=False)
-            json_content = json_content.replace('\u2014', '-')
-            f.write(json_content)
-        print(f"\nCharacter descriptions saved to: {output_file}")
+        # Use shared logic for batch description
+        descriptions = describe_characters_shared(
+            characters=characters,
+            chapter_texts=chapter_texts,
+            chapter_files=chapter_files,
+            output_dir=args.output_dir,
+            client=client,
+            model=args.model,
+            wiki_url_template=args.wiki_url_template,
+            verbose=args.verbose
+        )
 
         # Print summary
         print("\nCharacter descriptions generated:")
-        for char, desc in deduped_descriptions.items():
+        for char, desc in descriptions.items():
             # Show first line of description
             first_line = desc.split('\n')[0][:80]
             # Handle Windows console encoding issues
@@ -493,6 +461,93 @@ def main() -> None:
                 # Fallback for Windows console
                 safe_line = first_line.encode('utf-8', errors='replace').decode('utf-8')
                 print(f"  - {char}: {safe_line}...")
+
+
+# ============================================================================
+# SHARED CHARACTER DESCRIPTION LOGIC
+# ============================================================================
+
+def describe_characters_shared(
+    characters: list,
+    chapter_texts: list,
+    chapter_files: list,
+    output_dir: str,
+    client: OpenAI,
+    model: str,
+    wiki_url_template: str = "",
+    verbose: bool = False
+) -> dict:
+    """Shared logic for describing characters.
+
+    Args:
+        characters: List of character names
+        chapter_texts: List of chapter text content
+        chapter_files: List of chapter file paths
+        output_dir: Directory to save output files
+        client: OpenAI client instance
+        model: Model name to use for inference
+        wiki_url_template: Optional URL template for wiki lookup
+        verbose: Print verbose output
+
+    Returns:
+        Dict of character descriptions
+    """
+    # Build context
+    context = build_character_context(characters, chapter_texts, chapter_files, wiki_url_template)
+
+    # Find duplicate characters before describing
+    duplicates = find_duplicate_characters(characters)
+    if verbose and duplicates:
+        print(f"Found duplicate character names: {duplicates}")
+
+    # Create a map from duplicate names to canonical names
+    duplicate_replacement_map = create_duplicate_replacement_map(duplicates)
+    if verbose and duplicate_replacement_map:
+        print(f"Duplicate replacement map: {duplicate_replacement_map}")
+
+    # Get list of canonical characters (exclude duplicates)
+    canonical_characters = [
+        char for char in characters
+        if char not in duplicate_replacement_map
+    ]
+    if verbose:
+        print(f"Canonical characters to describe: {canonical_characters}")
+
+    # Describe only canonical characters
+    descriptions = describe_all_characters(client, model, canonical_characters, context)
+
+    deduped_descriptions = descriptions
+
+    # Save duplicate replacement map to file
+    replacement_map_file = os.path.join(output_dir, "duplicate_replacement_map.json")
+    with open(replacement_map_file, 'w', encoding='utf-8') as f:
+        json.dump(duplicate_replacement_map, f, indent=2, ensure_ascii=False)
+    if verbose:
+        print(f"Duplicate replacement map saved to: {replacement_map_file}")
+
+    # Update characters.json with deduplicated list (canonical characters only)
+    characters_file_path = os.path.join(output_dir, "characters.json")
+    if os.path.exists(characters_file_path):
+        with open(characters_file_path, 'r', encoding='utf-8') as f:
+            original_data = json.load(f)
+        # Update the characters list to only contain canonical names
+        original_data['characters'] = canonical_characters
+        with open(characters_file_path, 'w', encoding='utf-8') as f:
+            json.dump(original_data, f, indent=2, ensure_ascii=False)
+        if verbose:
+            print(f"Updated characters.json with {len(canonical_characters)} canonical characters")
+
+    # Save results (replacing em dashes with regular hyphens)
+    output_file = os.path.join(output_dir, "characters_descriptions.json")
+    with open(output_file, 'w', encoding='utf-8') as f:
+        # Convert descriptions to JSON string and replace em dash with hyphen
+        json_content = json.dumps(deduped_descriptions, indent=2, ensure_ascii=False)
+        json_content = json_content.replace('\u2014', '-')
+        f.write(json_content)
+    if verbose:
+        print(f"Character descriptions saved to: {output_file}")
+
+    return deduped_descriptions
 
 
 # ============================================================================
@@ -553,55 +608,25 @@ def describe_characters_in_dir(
             if verbose:
                 print(f"Loaded {len(chapter_texts)} chapter files for context")
 
-        # Build context
-        context = build_character_context(characters, chapter_texts, chapter_files, "")
-
         # Initialize client
         client = OpenAI(
             base_url=f"http://localhost:{port}/v1",
             api_key=api_key
         )
 
-        # Find duplicate characters before describing
-        duplicates = find_duplicate_characters(characters)
-        if verbose and duplicates:
-            print(f"Found duplicate character names: {duplicates}")
+        # Use shared logic
+        descriptions = describe_characters_shared(
+            characters=characters,
+            chapter_texts=chapter_texts,
+            chapter_files=chapter_files,
+            output_dir=output_dir,
+            client=client,
+            model=model,
+            wiki_url_template="",
+            verbose=verbose
+        )
 
-        # Create a map from duplicate names to canonical names
-        duplicate_replacement_map = create_duplicate_replacement_map(duplicates)
-        if verbose and duplicate_replacement_map:
-            print(f"Duplicate replacement map: {duplicate_replacement_map}")
-
-        # Get list of canonical characters (exclude duplicates)
-        canonical_characters = [
-            char for char in characters
-            if char not in duplicate_replacement_map
-        ]
-        if verbose:
-            print(f"Canonical characters to describe: {canonical_characters}")
-
-        # Describe only canonical characters
-        descriptions = describe_all_characters(client, model, canonical_characters, context)
-
-        deduped_descriptions = descriptions
-
-        # Save duplicate replacement map to file
-        replacement_map_file = os.path.join(output_dir, "duplicate_replacement_map.json")
-        with open(replacement_map_file, 'w', encoding='utf-8') as f:
-            json.dump(duplicate_replacement_map, f, indent=2, ensure_ascii=False)
-
-        # Save results (replacing em dashes with regular hyphens)
-        output_file = os.path.join(output_dir, "characters_descriptions.json")
-        with open(output_file, 'w', encoding='utf-8') as f:
-            # Convert descriptions to JSON string and replace em dash with hyphen
-            json_content = json.dumps(deduped_descriptions, indent=2, ensure_ascii=False)
-            json_content = json_content.replace('\u2014', '-')
-            f.write(json_content)
-
-        if verbose:
-            print(f"Character descriptions saved to: {output_file}")
-
-        return f"Successfully described {len(deduped_descriptions)} characters.", deduped_descriptions
+        return f"Successfully described {len(descriptions)} characters.", descriptions
 
     except Exception as e:
         import traceback

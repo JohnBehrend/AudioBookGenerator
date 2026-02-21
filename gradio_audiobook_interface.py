@@ -185,68 +185,73 @@ def parse_epub_to_file(
 ) -> Tuple[str, int, List[str]]:
     """Stage 1: Parse EPUB file into chapter text files."""
     if epub_file is None:
-        return "Error: No EPUB file uploaded.", None
+        return "Error: No EPUB file uploaded.", 0, []
 
     from parse_chapter import parse_epub_to_chapters
 
     chapters_dir = get_chapters_dir()
     if not chapters_dir:
-        return "Error: Failed to create temporary directory.", None
+        return "Error: Failed to create temporary directory.", 0, []
 
-    # Clean up existing files in the chapters directory before starting fresh
-    if chapters_dir.exists():
-        for item in chapters_dir.iterdir():
-            if item.is_file():
-                item.unlink()
-            elif item.is_dir():
-                shutil.rmtree(item)
+    try:
+        # Clean up existing files in the chapters directory before starting fresh
+        if chapters_dir.exists():
+            for item in chapters_dir.iterdir():
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item)
 
-    # Copy the EPUB file to temp directory for Stage 6
-    epub_dest = chapters_dir / "uploaded.epub"
-    shutil.copy2(epub_file.name, str(epub_dest))
+        # Copy the EPUB file to temp directory for Stage 6
+        epub_dest = chapters_dir / "uploaded.epub"
+        shutil.copy2(epub_file.name, str(epub_dest))
 
-    # Parse the EPUB with progress tracking
-    progress(0, desc="Starting EPUB parsing...")
-    chapters = parse_epub_to_chapters(
-        epub_file.name,
-        max_chapters=int(max_chapters) if max_chapters else None
-    )
+        # Parse the EPUB with progress tracking
+        progress(0, desc="Starting EPUB parsing...")
+        chapters = parse_epub_to_chapters(
+            epub_file.name,
+            max_chapters=int(max_chapters) if max_chapters else None
+        )
 
-    if not chapters:
-        return "Error: No chapters found in EPUB file.", None
+        if not chapters:
+            return "Error: No chapters found in EPUB file.", 0, []
 
-    # Count total lines across all chapters for progress tracking
-    total_lines = sum(len(chapter) for chapter in chapters)
-    total_chapters = len(chapters)
-    progress(0, desc=f"Parsing {total_chapters} chapters with {total_lines} lines...")
+        # Count total lines across all chapters for progress tracking
+        total_lines = sum(len(chapter) for chapter in chapters)
+        total_chapters = len(chapters)
+        progress(0, desc=f"Parsing {total_chapters} chapters with {total_lines} lines...")
 
-    # Save each chapter as a text file with progress updates
-    chapter_files = []
-    lines_processed = 0
-    for i, chapter in enumerate(chapters):
-        chapter_line_count = len(chapter)
-        for j, cobj in enumerate(chapter):
-            lines_processed += 1
-            # Update progress for each line
-            progress(
-                lines_processed / total_lines,
-                desc=f"Parsing chapter {i + 1}/{total_chapters}: line {lines_processed}/{total_lines}..."
-            )
+        # Save each chapter as a text file with progress updates
+        chapter_files = []
+        lines_processed = 0
+        for i, chapter in enumerate(chapters):
+            chapter_line_count = len(chapter)
+            for j, cobj in enumerate(chapter):
+                lines_processed += 1
+                # Update progress for each line
+                progress(
+                    lines_processed / total_lines,
+                    desc=f"Parsing chapter {i + 1}/{total_chapters}: line {lines_processed}/{total_lines}..."
+                )
 
-        output_file = chapters_dir / f"chapter_{i}.txt"
-        with open(output_file, "w", encoding="utf-8") as f:
-            for cobj in chapter:
-                f.write(f"Line {cobj.line_num}: ")
-                if cobj.has_quotes:
-                    f.write('"')
-                f.write(cobj.text)
-                if cobj.has_quotes:
-                    f.write('"')
-                f.write("\n")
-        chapter_files.append(str(output_file))
+            output_file = chapters_dir / f"chapter_{i}.txt"
+            with open(output_file, "w", encoding="utf-8") as f:
+                for cobj in chapter:
+                    f.write(f"Line {cobj.line_num}: ")
+                    if cobj.has_quotes:
+                        f.write('"')
+                    f.write(cobj.text)
+                    if cobj.has_quotes:
+                        f.write('"')
+                    f.write("\n")
+            chapter_files.append(str(output_file))
 
-    progress(1.0, desc=f"Successfully parsed {total_chapters} chapters with {total_lines} lines.")
-    return "=== Stage 1: EPUB Parsing Complete ===\n", PIPELINE_STATE_EPUB_PARSED
+        progress(1.0, desc=f"Successfully parsed {total_chapters} chapters with {total_lines} lines.")
+        return "=== Stage 1: EPUB Parsing Complete ===\n", total_chapters, chapter_files
+    except Exception as e:
+        log_output = f"Error parsing EPUB: {str(e)}"
+        log_output += f"\n{traceback.format_exc()}"
+        return log_output, 0, []
 
 
 # ============================================================================
@@ -704,16 +709,21 @@ def generate_full_audiobook(
     """Stage 5: Generate full audiobook - runs TTS generation and assembly."""
     log_output += "\n\n=== Stage 5: Full Audiobook Generation ==="
 
-    # Step 5.1: Generate TTS audio
-    log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters)
+    try:
+        # Step 5.1: Generate TTS audio
+        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters)
 
-    # Step 5.2: Assemble chapter MP3s
-    log_output, pipeline_state = assemble_chapter_audiobooks(pipeline_state, log_output)
+        # Step 5.2: Assemble chapter MP3s
+        log_output, pipeline_state = assemble_chapter_audiobooks(pipeline_state, log_output)
 
-    # Update state to audiobook complete
-    new_state = PIPELINE_STATE_AUDIOBOOK_COMPLETE
-    log_output += f"\n\n=== Stage 5 Complete: Full Audiobook Generation === State: {new_state}"
-    return log_output, new_state
+        # Update state to audiobook complete
+        new_state = PIPELINE_STATE_AUDIOBOOK_COMPLETE
+        log_output += f"\n\n=== Stage 5 Complete: Full Audiobook Generation === State: {new_state}"
+        return log_output, new_state
+    except Exception as e:
+        log_output += f"\nError generating audiobook: {str(e)}"
+        log_output += f"\n{traceback.format_exc()}"
+        return log_output, pipeline_state or "error"
 
 
 # ============================================================================

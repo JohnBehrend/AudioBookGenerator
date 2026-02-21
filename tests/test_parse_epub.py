@@ -2,9 +2,12 @@
 import pytest
 import json
 import tempfile
+import os
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
-import os
+
+# Test EPUB path
+TEST_EPUB_PATH = Path(__file__).parent.parent / "test_data" / "pride_and_prejudice.epub"
 
 
 class TestParseEpubIntegration:
@@ -64,6 +67,83 @@ class TestSpeakerAssignment:
 
         obj.set_speaker("mary")
         assert obj.get_speaker() == "mary"
+
+
+class TestFullPipelineIntegration:
+    """Integration test for full pipeline using test EPUB file."""
+
+    def test_full_pipeline_first_chapter(self, temp_dir):
+        """Test full pipeline on first chapter with mocked TTS/STT models."""
+        from parse_chapter import parse_epub_to_chapters
+        from parse_epub import generate_audiobook_from_chapters
+
+        # Parse just the first chapter for a quick test
+        chapters = parse_epub_to_chapters(str(TEST_EPUB_PATH), max_chapters=1)
+
+        assert len(chapters) >= 1, "Should have at least one chapter"
+        assert len(chapters[0]) > 0, "Chapter should have content"
+
+        # Create a simple map file for the first chapter
+        chapter = chapters[0]
+        character_map = {}
+        line_map = {}
+
+        # Assign first quoted line to "elizabeth", others to narrator
+        line_idx = 0
+        character_idx = 1
+        for cobj in chapter:
+            if cobj.has_quotes:
+                if line_idx not in line_map:
+                    line_map[str(line_idx)] = character_idx
+                    character_map[str(character_idx)] = "elizabeth"
+                    character_idx += 1
+            else:
+                if line_idx not in line_map:
+                    line_map[str(line_idx)] = 0
+                    character_map["0"] = "narrator"
+            line_idx += 1
+
+        # Ensure we have at least narrator
+        if "0" not in character_map:
+            character_map["0"] = "narrator"
+
+        # Convert to proper dict format with int keys
+        character_map_int = {int(k): v for k, v in character_map.items()}
+        line_map_int = {int(k): v for k, v in line_map.items()}
+
+        # Create voices_map with a fake voice file path (will be mocked)
+        voices_map = {"narrator": "narrator.wav", "elizabeth": "elizabeth.wav"}
+
+        # Mock generate_tts_for_line and validation model setup to return success without running actual TTS
+        with patch("parse_epub.generate_tts_for_line") as mock_generate_tts, \
+             patch("parse_epub.setup_validation_model") as mock_setup_val:
+
+            # Setup the TTS generation mock to return success
+            mock_generate_tts.return_value = (True, 0.95)
+
+            # Setup validation model mock
+            mock_val_model = Mock()
+            mock_setup_val.return_value = mock_val_model
+
+            # Run the pipeline - chapter_maps expects tuple of dicts with int keys
+            result_msg, chapters_processed = generate_audiobook_from_chapters(
+                chapters=chapters,
+                chapter_maps={0: (character_map_int, line_map_int)},
+                voices_map=voices_map,
+                output_dir=str(temp_dir),
+                device="cpu",  # Use CPU for test
+                tts_engine="kugelaudio",
+                cfg_scale=1.30,
+                max_chapters=1,
+                verbose=True
+            )
+
+            # Verify results
+            assert chapters_processed == 1, "Should process 1 chapter"
+            assert "successfully" in result_msg.lower(), "Should report success"
+
+            # Verify TTS was called for at least one line
+            assert mock_generate_tts.called, "TTS generation should have been called"
 
 
 @pytest.fixture

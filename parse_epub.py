@@ -1064,7 +1064,8 @@ def generate_audiobook_from_chapters(
                         print(f"[LINE_PROGRESS] Chapter {i}, Line {j+1}/{len(chapter)}, Voice: {voice}, Ratio: {int(ratio * 100)}")
 
             # Assemble chapter MP3 from WAV files
-            progress(1, desc=f"Assembling Chapters")
+            if progress is not None:
+                progress(1, desc=f"Assembling Chapters")
             wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")))
             if wav_files:
                 audio = get_non_silent_audio_from_wavs(wav_files)

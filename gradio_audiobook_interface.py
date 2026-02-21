@@ -247,11 +247,11 @@ def parse_epub_to_file(
             chapter_files.append(str(output_file))
 
         progress(1.0, desc=f"Successfully parsed {total_chapters} chapters with {total_lines} lines.")
-        return "=== Stage 1: EPUB Parsing Complete ===\n", total_chapters, chapter_files
+        return "=== Stage 1: EPUB Parsing Complete ===\n", total_chapters
     except Exception as e:
         log_output = f"Error parsing EPUB: {str(e)}"
         log_output += f"\n{traceback.format_exc()}"
-        return log_output, 0, []
+        return log_output, 0
 
 
 # ============================================================================

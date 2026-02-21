@@ -810,3 +810,92 @@ class TestPipelineIntegration:
                             max_chapters=None
                         )
                         assert "Stage 5 Complete" in log_output
+
+
+# ============================================================================
+# Tests for KugelAudio TTS with real WAV voice prompts
+# ============================================================================
+
+class TestKugelAudioWavInputs:
+    """Tests for KugelAudio TTS using real WAV files as voice prompts.
+
+    Uses the voice_test directory's WAV files (narrator.wav, hero.wav)
+    as input voice prompts for KugelAudio TTS generation.
+    """
+
+    def test_narrator_wav_file_exists(self):
+        """Test that narrator.wav exists in voice_test directory."""
+        voice_test_dir = Path(PROJECT_ROOT) / "voice_test"
+        narrator_wav = voice_test_dir / "narrator.wav"
+        assert narrator_wav.exists(), "narrator.wav not found in voice_test directory"
+
+    def test_hero_wav_file_exists(self):
+        """Test that hero.wav exists in voice_test directory."""
+        voice_test_dir = Path(PROJECT_ROOT) / "voice_test"
+        hero_wav = voice_test_dir / "hero.wav"
+        assert hero_wav.exists(), "hero.wav not found in voice_test directory"
+
+    def test_wav_files_are_valid_audio(self):
+        """Test that WAV files can be loaded as valid audio."""
+        import soundfile as sf
+
+        voice_test_dir = Path(PROJECT_ROOT) / "voice_test"
+
+        # Test narrator.wav
+        narrator_wav = voice_test_dir / "narrator.wav"
+        narrator_info = sf.info(narrator_wav)
+        assert narrator_info.frames > 0, "narrator.wav has no audio frames"
+        assert narrator_info.samplerate > 0, "narrator.wav has invalid samplerate"
+
+        # Test hero.wav
+        hero_wav = voice_test_dir / "hero.wav"
+        hero_info = sf.info(hero_wav)
+        assert hero_info.frames > 0, "hero.wav has no audio frames"
+        assert hero_info.samplerate > 0, "hero.wav has invalid samplerate"
+
+    def test_voice_mapper_can_find_wav_files(self):
+        """Test that VoiceMapper can find the WAV files from voice_test."""
+        from parse_epub import VoiceMapper
+
+        voice_test_dir = Path(PROJECT_ROOT) / "voice_test"
+        voice_mapper = VoiceMapper(str(voice_test_dir))
+
+        # Test narrator.wav lookup
+        narrator_path = voice_mapper.get_voice_path("narrator")
+        assert "narrator.wav" in narrator_path, "VoiceMapper could not find narrator.wav"
+
+        # Test hero.wav lookup
+        hero_path = voice_mapper.get_voice_path("hero")
+        assert "hero.wav" in hero_path, "VoiceMapper could not find hero.wav"
+
+    def test_kugel_audio_processor_accepts_wav_prompt(self):
+        """Test that KugelAudio processor can use WAV files as voice prompts."""
+        import torch
+
+        voice_test_dir = Path(PROJECT_ROOT) / "voice_test"
+        narrator_wav = voice_test_dir / "narrator.wav"
+
+        try:
+            from kugelaudio_open.processors.kugelaudio_processor import KugelAudioProcessor
+        except ImportError:
+            pytest.skip("KugelAudio not available")
+
+        # Load the processor
+        processor = KugelAudioProcessor.from_pretrained("kugelaudio/kugelaudio-0-open")
+
+        # Test creating inputs with the WAV file as voice_prompt
+        text = "Test line."
+        inputs = processor(
+            text=text,
+            voice_prompt=str(narrator_wav),
+            padding=True,
+            return_tensors="pt",
+        )
+
+        # Verify inputs were created successfully
+        # KugelAudio processor returns text_ids, speech_input_mask, speech_tensors, speech_masks
+        assert "text_ids" in inputs, "Processor did not return text_ids"
+        assert "speech_tensors" in inputs, "Processor did not return speech_tensors"
+        assert "speech_masks" in inputs, "Processor did not return speech_masks"
+        assert inputs.text_ids.shape[1] > 0, "text_ids is empty"
+        assert inputs.speech_tensors.shape[0] > 0, "speech_tensors is empty"

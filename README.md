@@ -55,6 +55,15 @@ pip install -r requirements.txt
 - **WhisperX** / **faster-whisper** for STT validation
 - **OpenAI API** client for LLM operations
 
+### TTS Engine: KugelAudio
+
+The default TTS engine is KugelAudio, installed as a Python package dependency from GitHub:
+
+- **Installation**: Automatically installed via `uv sync` (uses `pyproject.toml`)
+- **Version**: Pinned to commit `c2047edda01aa31e9472d29eac498881e907d628`
+
+The package is installed directly from the GitHub repository and requires no manual setup.
+
 ### Audio Processing
 
 - **pydub** for audio manipulation (requires system ffmpeg)

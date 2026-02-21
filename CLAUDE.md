@@ -48,8 +48,10 @@ The interface provides a 6-stage workflow:
 
 ## Key Dependencies
 
-- **TTS**: VibeVoice (HuggingFace Transformers, PyTorch)
-- **STT**: WhisperX for validation
+- **TTS Engines**:
+  - **KugelAudio** (default): Open-source TTS model, installed via Python package from GitHub
+  - **VibeVoice**: Alternative TTS option via `TTS_ENGINE=vibevoice`
+- **STT**: WhisperX for audio validation
 - **LLM**: OpenAI-compatible API (LM Studio) for speaker labeling
 - **Audio processing**: pydub, scipy
 - **Web UI**: Gradio
@@ -57,6 +59,9 @@ The interface provides a 6-stage workflow:
 ## Commands
 
 ```bash
+# Install dependencies (includes kugelaudio-open)
+uv sync
+
 # Start Gradio web interface
 python gradio_audiobook_interface.py
 
@@ -77,6 +82,10 @@ python generate_voice_samples.py [--descriptions] [--output-dir]
 - GPU selection: `--alt_gpu` uses cuda:1, default is cuda:0
 - Generated audio files are in `chapters/` (gitignored)
 - Linux line endings (LF) are used throughout the repository
+
+## KugelAudio Package
+
+The KugelAudio TTS engine is installed as a Python package from GitHub (commit `c2047edda01aa31e9472d29eac498881e907d628`). The package is automatically installed via `uv sync` and requires no manual setup.
 
 ## Before Making Changes
 **Use the python virtual environment**  Run .venv/Scripts/python instead of python

@@ -24,11 +24,7 @@ import numpy as np
 TTS_ENGINE = os.environ.get('TTS_ENGINE', 'kugelaudio')
 
 if TTS_ENGINE == 'kugelaudio':
-    # Add kugelaudio-open to path (located at ../kugelaudio-open/src)
-    kugelaudio_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'kugelaudio-open', 'src')
-    if kugelaudio_path not in sys.path:
-        sys.path.insert(0, kugelaudio_path)
-
+    # KugelAudio is installed as a Python package dependency
     from kugelaudio_open.processors.kugelaudio_processor import KugelAudioProcessor
     from kugelaudio_open.models.kugelaudio_inference import KugelAudioForConditionalGenerationInference
 else:

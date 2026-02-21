@@ -32,6 +32,7 @@ dependencies = [
     "huggingface-hub>=0.21.0",
     "diffusers>=0.25.0",
     "qwen-tts",
+    "kugelaudio-open @ git+https://github.com/Kugelaudio/kugelaudio-open.git@c2047edda01aa31e9472d29eac498881e907d628",
     # flash-attn removed - requires complex CUDA setup, not essential
     # "flash-attn",
     # librosa constraint needed to avoid newer versions that require incompatible numba

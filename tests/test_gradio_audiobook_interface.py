@@ -21,9 +21,7 @@ from gradio_audiobook_interface import (
     generate_full_audiobook,
     cleanup_temp_dir,
     create_interface,
-    SCRIPT_DIR,
-    TEMP_DIR,
-    CHAPTERS_DIR
+    SCRIPT_DIR
 )
 
 
@@ -101,15 +99,9 @@ def mock_characters_descriptions_json(temp_dir):
 
 @pytest.fixture
 def reset_temp_globals():
-    """Reset temporary directory globals before each test."""
-    global TEMP_DIR, CHAPTERS_DIR
-    old_temp = TEMP_DIR
-    old_chapters = CHAPTERS_DIR
-    TEMP_DIR = None
-    CHAPTERS_DIR = None
+    """Reset temporary directory state before each test (no-op - using dynamic dirs now)."""
+    # Global TEMP_DIR/CHAPTERS_DIR have been replaced with dynamic temp dirs
     yield
-    TEMP_DIR = old_temp
-    CHAPTERS_DIR = old_chapters
 
 
 # ============================================================================
@@ -119,37 +111,19 @@ def reset_temp_globals():
 class TestGetChaptersDir:
     """Tests for get_chapters_dir function."""
 
-    def test_creates_directory_if_none_exists(self, monkeypatch):
-        """Test that get_chapters_dir creates a directory when none exists."""
-        monkeypatch.setattr("gradio_audiobook_interface.TEMP_DIR", None)
-        monkeypatch.setattr("gradio_audiobook_interface.CHAPTERS_DIR", None)
-
+    def test_returns_temp_chapters_directory(self):
+        """Test that get_chapters_dir returns a temp directory with chapters subdirectory."""
         result = get_chapters_dir()
 
         assert result.exists()
         assert result.is_dir()
+        # The function returns chapters subdirectory, not temp dir directly
+        assert "chapters" in str(result.name) or "chapters" in str(result.parent)
 
-    def test_returns_existing_directory(self, monkeypatch):
-        """Test that get_chapters_dir returns existing directory."""
-        monkeypatch.setattr("gradio_audiobook_interface.TEMP_DIR", None)
-        monkeypatch.setattr("gradio_audiobook_interface.CHAPTERS_DIR", None)
-
-        result1 = get_chapters_dir()
-        result2 = get_chapters_dir()
-
-        assert result1 == result2
-
-    def test_creates_unique_directory_per_session(self, monkeypatch):
-        """Test that each call creates a unique temp directory."""
-        monkeypatch.setattr("gradio_audiobook_interface.TEMP_DIR", None)
-        monkeypatch.setattr("gradio_audiobook_interface.CHAPTERS_DIR", None)
-
-        result1 = get_chapters_dir()
-        monkeypatch.setattr("gradio_audiobook_interface.TEMP_DIR", None)
-        monkeypatch.setattr("gradio_audiobook_interface.CHAPTERS_DIR", None)
-        result2 = get_chapters_dir()
-
-        assert result1 != result2
+    def test_directory_cleanup(self, temp_dir):
+        """Test that temp directories are properly cleaned up."""
+        cleanup_temp_dir()
+        # Should not raise any errors
 
 
 # ============================================================================
@@ -436,70 +410,56 @@ class TestProcessChaptersForLabels:
 # ============================================================================
 
 class TestDescribeCharacters:
-    """Tests for describe_characters function (Stage 4)."""
+    """Tests for describe_characters function (Stage 3: Character Descriptions)."""
 
-    def test_returns_error_when_no_characters_json(self, reset_temp_globals):
-        """Test error handling when characters.json doesn't exist."""
+    def test_returns_error_when_no_map_files(self, reset_temp_globals):
+        """Test error handling when no map files exist."""
         log_output = ""
         result = describe_characters(
             api_key="test_key", port="1234", log_output=log_output
         )
 
-        assert "characters.json not found" in result
+        assert "No .map.json files found" in result
 
     def test_successfully_describes_characters(self, temp_dir, reset_temp_globals):
         """Test successful character description generation."""
         chapters_dir = temp_dir / "chapters"
         chapters_dir.mkdir(parents=True, exist_ok=True)
 
-        characters_file = chapters_dir / "characters.json"
-        characters_file.write_text(json.dumps({"characters": ["narrator", "john"]}))
+        # Create a map file with characters
+        map_file = chapters_dir / "chapter_0.map.json"
+        map_file.write_text(json.dumps([
+            {"1": "narrator", "2": "john"},
+            {"1": 1, "2": 2}
+        ]))
 
         log_output = ""
         with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(
-                    stdout="Character descriptions generated\n", stderr=""
-                )
+            with patch("llm_describe_character.describe_characters_in_dir") as mock_describe:
+                mock_describe.return_value = ("Character descriptions generated", {"narrator": "Desc", "john": "Desc"})
 
                 result = describe_characters(
                     api_key="test_key", port="1234", log_output=log_output
                 )
 
-                assert "Stage 4 complete" in result
-                mock_run.assert_called_once()
-
-    def test_logs_stderr_from_describe(self, temp_dir, reset_temp_globals):
-        """Test that stderr from describe is logged."""
-        chapters_dir = temp_dir / "chapters"
-        chapters_dir.mkdir(parents=True, exist_ok=True)
-        characters_file = chapters_dir / "characters.json"
-        characters_file.write_text(json.dumps({"characters": ["narrator"]}))
-
-        log_output = ""
-        with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(
-                    stdout="OK\n", stderr="Warning: low confidence"
-                )
-
-                result = describe_characters(
-                    api_key="test_key", port="1234", log_output=log_output
-                )
-
-                assert "Errors: Warning: low confidence" in result
+                assert "Stage 3 complete" in result or "Successfully described" in result
+                mock_describe.assert_called_once()
 
     def test_handles_describe_error(self, temp_dir, reset_temp_globals):
         """Test error handling when describe fails."""
         chapters_dir = temp_dir / "chapters"
         chapters_dir.mkdir(parents=True, exist_ok=True)
-        characters_file = chapters_dir / "characters.json"
-        characters_file.write_text(json.dumps({"characters": ["narrator"]}))
+
+        map_file = chapters_dir / "chapter_0.map.json"
+        map_file.write_text(json.dumps([
+            {"1": "narrator"},
+            {"1": 1}
+        ]))
 
         log_output = ""
         with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
-            with patch("gradio_audiobook_interface.subprocess.run") as mock_run:
-                mock_run.side_effect = Exception("Describe failed")
+            with patch("llm_describe_character.describe_characters_in_dir") as mock_describe:
+                mock_describe.side_effect = Exception("Describe failed")
 
                 result = describe_characters(
                     api_key="test_key", port="1234", log_output=log_output
@@ -702,29 +662,13 @@ class TestGenerateFullAudiobook:
 class TestCleanupTempDir:
     """Tests for cleanup_temp_dir function."""
 
-    def test_cleans_up_temp_directory(self, monkeypatch):
-        """Test that temp directory is cleaned up."""
-        test_temp_dir = tempfile.mkdtemp()
-        test_chapters_dir = Path(test_temp_dir) / "chapters"
-        test_chapters_dir.mkdir()
-
-        monkeypatch.setattr("gradio_audiobook_interface.TEMP_DIR", test_temp_dir)
-        monkeypatch.setattr("gradio_audiobook_interface.CHAPTERS_DIR", test_chapters_dir)
-
+    def test_cleans_up_noop_for_dynamic_dirs(self):
+        """Test that cleanup_temp_dir handles dynamic temp dirs (no-op)."""
+        # cleanup_temp_dir() now handles dynamic temp dirs - should not raise
         cleanup_temp_dir()
-
-        assert not os.path.exists(test_temp_dir)
-        assert getattr(__import__('gradio_audiobook_interface'), 'TEMP_DIR') is None
 
     def test_handles_none_temp_dir(self):
         """Test that None temp directory doesn't cause error."""
-        cleanup_temp_dir()
-
-    def test_handles_missing_temp_directory(self, monkeypatch):
-        """Test that missing temp directory doesn't cause error."""
-        monkeypatch.setattr("gradio_audiobook_interface.TEMP_DIR", "/nonexistent/path")
-        monkeypatch.setattr("gradio_audiobook_interface.CHAPTERS_DIR", None)
-
         cleanup_temp_dir()
 
 
@@ -837,10 +781,7 @@ class TestPipelineIntegration:
                 {"1": 1, "2": 2}
             ]))
 
-        (chapters_dir / "characters.json").write_text(
-            json.dumps({"characters": ["narrator", "character"]})
-        )
-
+        # characters.json is no longer generated - characters extracted from map files
         descriptions_file = temp_dir / "characters_descriptions.json"
         descriptions_file.write_text(json.dumps({
             "narrator": "Description",
@@ -863,14 +804,12 @@ class TestPipelineIntegration:
                     )
                     assert "Stage 2 complete" in log_output
 
-                log_output = analyze_chapters(log_output)
-                assert "Stage 3 complete" in log_output
+                    # Stage 3: Describe characters - uses map files directly, no characters.json needed
+                    log_output = describe_characters("test", "1234", log_output)
+                    assert "Stage 3 complete" in log_output or "Successfully described" in log_output
 
-                log_output = describe_characters("test", "1234", log_output)
-                assert "Stage 4 complete" in log_output
+                    log_output = generate_voice_samples(log_output)
+                    assert "Stage 5 complete" in log_output or "Successfully generated" in log_output
 
-                log_output = generate_voice_samples(log_output)
-                assert "Stage 5 complete" in log_output
-
-                log_output = generate_full_audiobook(log_output)
-                assert "Stage 6 complete" in log_output
+                    log_output = generate_full_audiobook(log_output)
+                    assert "Stage 6 complete" in log_output

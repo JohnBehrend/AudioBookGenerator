@@ -80,7 +80,6 @@ WAV_PATTERN = "*.wav"
 MP3_PATTERN = "*.mp3"
 
 # JSON files
-CHAPTER_ANALYSIS_FILE = "chapter_analysis.json"
 CHARACTERS_FILE = "characters.json"
 CHARACTER_DESCRIPTIONS_FILE = "characters_descriptions.json"
 

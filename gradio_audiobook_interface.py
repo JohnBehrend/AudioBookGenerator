@@ -182,16 +182,16 @@ def progress_iterator(items, progress=None, desc="Processing"):
 
 def parse_epub_to_file(
     epub_file, max_chapters: Optional[int], progress=gr.Progress()
-) -> Tuple[str, int, List[str]]:
+) -> Tuple[str, int]:
     """Stage 1: Parse EPUB file into chapter text files."""
     if epub_file is None:
-        return "Error: No EPUB file uploaded.", 0, []
+        return "Error: No EPUB file uploaded.", 0
 
     from parse_chapter import parse_epub_to_chapters
 
     chapters_dir = get_chapters_dir()
     if not chapters_dir:
-        return "Error: Failed to create temporary directory.", 0, []
+        return "Error: Failed to create temporary directory.", 0
 
     try:
         # Clean up existing files in the chapters directory before starting fresh
@@ -214,7 +214,7 @@ def parse_epub_to_file(
         )
 
         if not chapters:
-            return "Error: No chapters found in EPUB file.", 0, []
+            return "Error: No chapters found in EPUB file.", 0
 
         # Count total lines across all chapters for progress tracking
         total_lines = sum(len(chapter) for chapter in chapters)
@@ -222,7 +222,6 @@ def parse_epub_to_file(
         progress(0, desc=f"Parsing {total_chapters} chapters with {total_lines} lines...")
 
         # Save each chapter as a text file with progress updates
-        chapter_files = []
         lines_processed = 0
         for i, chapter in enumerate(chapters):
             chapter_line_count = len(chapter)
@@ -244,7 +243,6 @@ def parse_epub_to_file(
                     if cobj.has_quotes:
                         f.write('"')
                     f.write("\n")
-            chapter_files.append(str(output_file))
 
         progress(1.0, desc=f"Successfully parsed {total_chapters} chapters with {total_lines} lines.")
         return "=== Stage 1: EPUB Parsing Complete ===\n", total_chapters

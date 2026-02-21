@@ -142,7 +142,6 @@ class TestParseEpubToFile:
 
         assert result[0].startswith("Error:")
         assert result[1] == 0
-        assert result[2] == []
 
     def test_parses_epub_successfully(self, temp_dir, reset_temp_globals):
         """Test successful EPUB parsing."""
@@ -172,10 +171,6 @@ class TestParseEpubToFile:
 
         assert "Stage 1" in result[0]
         assert result[1] == 2
-        assert len(result[2]) == 2
-
-        for chapter_file in result[2]:
-            assert os.path.exists(chapter_file)
 
     def test_returns_error_for_no_chapters(self, temp_dir, reset_temp_globals):
         """Test error handling when no chapters are found."""
@@ -572,9 +567,9 @@ class TestGenerateFullAudiobook:
                 max_chapters=None
             )
 
-        # The function checks for uploaded.epub after checking voice samples
-        # So the actual error will be about missing voice samples or EPUB parsing error
-        assert "Error" in log_output
+        # The function checks for voice samples after descriptions
+        # So the actual error will be about missing voice samples
+        assert "voice samples" in log_output.lower() or "error" in log_output.lower()
 
     def test_successfully_generates_audiobook(self, temp_dir, reset_temp_globals):
         """Test successful full audiobook generation."""

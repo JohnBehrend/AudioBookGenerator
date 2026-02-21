@@ -32,12 +32,13 @@ dependencies = [
     "huggingface-hub>=0.21.0",
     "diffusers>=0.25.0",
     "qwen-tts",
+    # flash-attn removed - requires complex CUDA setup, not essential
+    # "flash-attn",
     # librosa constraint needed to avoid newer versions that require incompatible numba
     "librosa>=0.10.0,<0.11.0",
     # numba>=0.57.0 needed to get llvmlite>=0.40 which supports Python 3.10
     "numba>=0.57.0",
     "ffmpeg-python==0.2.0",
-    "flash-attn",
     "torchcodec==0.9.1"
 ]
 
@@ -76,8 +77,6 @@ torchvision = [
 torchaudio = [
   { index = "pytorch-cu128" },
 ]
-flash-attn = { path = "flash_attn-2.7.4-cp311-cp311-win_amd64.whl" }
-
 [[tool.uv.index]]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"

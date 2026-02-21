@@ -464,7 +464,7 @@ class TestGenerateVoiceSamples:
         log_output = ""
         with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
             with patch("generate_voice_samples.generate_voice_samples") as mock_gen:
-                mock_gen.return_value = ("Stage 4 complete", ["narrator.wav", "john.wav"])
+                mock_gen.return_value = ("Stage 4 complete", {"narrator": "narrator.wav", "john": "john.wav"})
 
                 result = generate_voice_samples(
                     pipeline_state=None,
@@ -484,7 +484,7 @@ class TestGenerateVoiceSamples:
         log_output = ""
         with patch("gradio_audiobook_interface.get_chapters_dir", return_value=chapters_dir):
             with patch("generate_voice_samples.generate_voice_samples") as mock_gen:
-                mock_gen.return_value = ("Stage 4 complete", ["narrator.wav"])
+                mock_gen.return_value = ("Stage 4 complete", {"narrator": "narrator.wav"})
 
                 result = generate_voice_samples(
                     pipeline_state=None,
@@ -792,7 +792,7 @@ class TestPipelineIntegration:
 
                 # Stage 4: Generate voice samples
                 with patch("generate_voice_samples.generate_voice_samples") as mock_gen:
-                    mock_gen.return_value = ("Stage 4 complete", ["narrator.wav"])
+                    mock_gen.return_value = ("Stage 4 complete", {"narrator": "narrator.wav"})
                     log_output, new_state = generate_voice_samples(
                         pipeline_state=new_state,
                         log_output=log_output

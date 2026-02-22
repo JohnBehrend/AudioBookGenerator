@@ -1075,6 +1075,31 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
 # ============================================================================
 
 
+def copy_mp3_files_to_chapters(source_dir: str) -> None:
+    """Copy MP3 files from source_dir to ./chapters/ directory.
+
+    Args:
+        source_dir: Source directory containing chapter MP3 files
+    """
+    import shutil
+
+    # Find all MP3 files in source directory
+    mp3_files = sorted(glob.glob(os.path.join(source_dir, "chapter_*.mp3")))
+
+    if not mp3_files:
+        return
+
+    # Create ./chapters/ directory if it doesn't exist
+    os.makedirs("chapters", exist_ok=True)
+
+    # Copy each MP3 file
+    for mp3_path in mp3_files:
+        filename = os.path.basename(mp3_path)
+        dest_path = os.path.join("chapters", filename)
+        shutil.copy2(mp3_path, dest_path)
+        print(f"Copied {filename} to chapters/")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Audiobook Generator - Parse EPUB and generate audiobook audio"
@@ -1117,8 +1142,10 @@ def main():
             sys.exit(1)
 
         # Use temp directory by default, or user-specified output_dir if provided
+        used_temp_dir = False
         if args.output_dir is None:
             output_dir = str(get_chapters_dir())
+            used_temp_dir = True
             print(f"Using temporary directory: {get_temp_dir()}")
         else:
             output_dir = args.output_dir
@@ -1136,6 +1163,12 @@ def main():
         )
 
         print(status)
+
+        # Copy MP3 files to ./chapters/ if we used a temporary directory
+        if used_temp_dir:
+            copy_mp3_files_to_chapters(output_dir)
+            print(f"\nMP3 files have been copied to ./chapters/ directory.")
+            print(f"Temporary directory will be cleaned up on exit.")
 
 
 if __name__ == "__main__":

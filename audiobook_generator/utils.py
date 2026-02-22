@@ -8,6 +8,8 @@ import os
 import re
 import tempfile
 import atexit
+import glob
+import shutil
 from pathlib import Path
 from collections import Counter
 from openai import OpenAI
@@ -121,7 +123,22 @@ def get_temp_dir() -> str:
 
 
 def cleanup_temp_dir() -> None:
-    """Clean up the temporary directory created by get_chapters_dir."""
+    """Clean up the temporary directory created by get_chapters_dir.
+
+    First copies any MP3 files to ./chapters/ directory to preserve them.
+    """
+    if hasattr(get_chapters_dir, "_temp_dir") and get_chapters_dir._temp_dir:
+        temp_chapters_dir = get_chapters_dir._temp_dir
+        # Find and copy any MP3 files from temp directory to ./chapters/
+        mp3_files = sorted(glob.glob(os.path.join(temp_chapters_dir, "chapter_*.mp3")))
+        if mp3_files:
+            os.makedirs("chapters", exist_ok=True)
+            for mp3_path in mp3_files:
+                filename = os.path.basename(mp3_path)
+                dest_path = os.path.join("chapters", filename)
+                shutil.copy2(mp3_path, dest_path)
+                print(f"Copied {filename} to chapters/")
+
     if hasattr(get_chapters_dir, "_temp_context") and get_chapters_dir._temp_context:
         try:
             get_chapters_dir._temp_context.cleanup()

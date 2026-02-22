@@ -74,6 +74,29 @@ DEFAULT_MAX_CHAPTERS = DEFAULTS["max_chapters"]
 
 # ============================================================================
 # HELPER FUNCTIONS
+def copy_mp3_files_to_chapters(source_dir: str) -> None:
+    """Copy MP3 files from source_dir to ./chapters/ directory.
+
+    Args:
+        source_dir: Source directory containing chapter MP3 files
+    """
+    # Find all MP3 files in source directory
+    mp3_files = sorted(glob.glob(os.path.join(source_dir, "chapter_*.mp3")))
+
+    if not mp3_files:
+        return
+
+    # Create ./chapters/ directory if it doesn't exist
+    os.makedirs("chapters", exist_ok=True)
+
+    # Copy each MP3 file
+    for mp3_path in mp3_files:
+        filename = os.path.basename(mp3_path)
+        dest_path = os.path.join("chapters", filename)
+        shutil.copy2(mp3_path, dest_path)
+        print(f"Copied {filename} to chapters/")
+
+
 def get_characters_descriptions_file() -> Optional[Path]:
     """Get the path to characters_descriptions.json in the temp directory."""
     chapters_dir = get_chapters_dir()

@@ -221,8 +221,7 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio", turbo: bool = 
     Returns:
         For kugelaudio/vibevoice: Tuple of (model, processor, model_path)
         For qwen3: Tuple of (voice_design_model, None, model_path, base_model)
-            where voice_design_model is used to create voice_clone_prompt,
-            and base_model is used for actual audio generation.
+            where base_model is used to create voice_clone_prompt and for audio generation.
     """
     # Lazy imports to avoid requiring both TTS engines to be installed
     if tts_engine == 'kugelaudio':
@@ -304,18 +303,17 @@ def setup_validation_model(device: str = "cuda"):
     return WhisperModel(validation_model_name, device=device, compute_type="float16")
 
 
-def build_qwen3_voice_clone_prompt(voice_design_model, voice_path: str, ref_text: str, device: str):
-    """Build a voice_clone_prompt for Qwen3 using the VoiceDesign model.
+def build_qwen3_voice_clone_prompt(base_model, voice_path: str, ref_text: str, device: str):
+    """Build a voice_clone_prompt for Qwen3 using the Base model.
 
     This follows the recommended workflow from the Qwen3 documentation:
-    1. Use VoiceDesign model to generate a reference clip in the target style
-    2. Feed that clip into create_voice_clone_prompt to build a reusable prompt
-    3. Use the prompt with generate_voice_clone for all lines
+    1. Use Base model's create_voice_clone_prompt to build a reusable prompt from reference audio
+    2. Use the prompt with generate_voice_clone for all lines
 
     Args:
-        voice_design_model: The Qwen3TTSModel loaded with VoiceDesign weights
+        base_model: The Qwen3TTSModel loaded with Base weights
         voice_path: Path to the voice sample file to use as reference
-        ref_text: The reference text to use for voice design
+        ref_text: The reference text to use for voice cloning
         device: Device to run on
 
     Returns:
@@ -327,8 +325,8 @@ def build_qwen3_voice_clone_prompt(voice_design_model, voice_path: str, ref_text
     voice_audio, sr = sf.read(voice_path)
 
     # Use the voice sample directly as reference audio for create_voice_clone_prompt
-    # The VoiceDesign model is used to ensure the voice quality matches
-    voice_clone_prompt = voice_design_model.create_voice_clone_prompt(
+    # The Base model is used to build the prompt (as per Qwen3 documentation)
+    voice_clone_prompt = base_model.create_voice_clone_prompt(
         ref_audio=(voice_audio, sr),
         ref_text=ref_text,
     )
@@ -730,7 +728,7 @@ def generate_audiobook_from_chapters(
                         if tts_engine == 'qwen3' and voice not in voice_clone_prompts:
                             if os.path.exists(voice_path):
                                 voice_clone_prompts[voice] = build_qwen3_voice_clone_prompt(
-                                    voice_design_model,
+                                    base_model,
                                     voice_path,
                                     DEFAULTS["qwen3_ref_text"],
                                     device

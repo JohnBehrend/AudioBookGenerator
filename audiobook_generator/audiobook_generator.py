@@ -501,7 +501,7 @@ def generate_tts_for_line(
             end_times = []
             for segment in segments_list:
                 for word in segment.words:
-                    segments.append(distill_string(word))
+                    segments.append(distill_string(word.word))
                     start_times.append(segment.start)
                     end_times.append(segment.end)
 

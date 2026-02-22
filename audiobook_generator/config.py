@@ -69,7 +69,7 @@ DEFAULTS = {
     "description_length": 400,
     # Audio generation defaults
     "cfg_scale": 1.30,
-    "short_text_postfix": "and also with you?",
+    "short_text_postfix": "",#"and also with you?",
     "validation_model_name": None,#"distil-medium.en",
     "min_silence_len": 1250,
     "silence_thresh": -60,

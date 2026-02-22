@@ -46,7 +46,10 @@ def get_temp_dir() -> str:
 def cleanup_temp_dir() -> None:
     """Clean up the temporary directory created by get_chapters_dir."""
     if hasattr(get_chapters_dir, "_temp_context") and get_chapters_dir._temp_context:
-        get_chapters_dir._temp_context.cleanup()
+        try:
+            get_chapters_dir._temp_context.cleanup()
+        except Exception:
+            pass
         get_chapters_dir._temp_dir = None
         get_chapters_dir._chapters_dir = None
         get_chapters_dir._temp_context = None

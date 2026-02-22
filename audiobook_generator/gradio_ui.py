@@ -93,16 +93,16 @@ def get_duplicate_replacement_map_file() -> Optional[Path]:
 
 def cleanup_temp_dir() -> None:
     """Clean up the temporary directory when done."""
-    if hasattr(cleanup_temp_dir, "_temp_dir") and cleanup_temp_dir._temp_dir:
-        temp_dir = Path(cleanup_temp_dir._temp_dir)
-        if temp_dir.exists():
-            shutil.rmtree(temp_dir)
-        cleanup_temp_dir._temp_dir = None
-        cleanup_temp_dir._chapters_dir = None
-    # Clean up the TemporaryDirectory context if it exists
-    if hasattr(cleanup_temp_dir, "_temp_context") and cleanup_temp_dir._temp_context:
-        cleanup_temp_dir._temp_context.cleanup()
-        cleanup_temp_dir._temp_context = None
+    # Use get_chapters_dir from utils to get and cleanup the temp directory
+    # This handles both CLI (which uses get_chapters_dir's _temp_context) and Gradio
+    if hasattr(get_chapters_dir, "_temp_context") and get_chapters_dir._temp_context:
+        try:
+            get_chapters_dir._temp_context.cleanup()
+        except Exception:
+            pass
+        get_chapters_dir._temp_dir = None
+        get_chapters_dir._chapters_dir = None
+        get_chapters_dir._temp_context = None
 
 
 def get_pipeline_state() -> Optional[str]:

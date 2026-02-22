@@ -156,7 +156,7 @@ The pipeline uses an OpenAI-compatible API (LM Studio by default):
 | File | Purpose |
 |------|---------|
 | `audiobook_generator.py` | Main entry point - CLI pipeline + TTS generation + Gradio launcher |
-| `audiobook_gradio_ui.py` | Gradio UI components and event handlers |
+| `audiobook_generator/gradio_ui.py` | Gradio UI components and event handlers |
 | `parse_chapter.py` | EPUB parsing + `write_chapters_to_txt()` helper |
 | `llm_label_speakers.py` | Stage 2 - LLM speaker labeling |
 | `llm_describe_character.py` | Stage 3 - Character descriptions |

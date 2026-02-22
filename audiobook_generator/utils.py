@@ -15,6 +15,83 @@ from openai import OpenAI
 from config import LLM_SETTINGS
 
 
+class ProgressHandler:
+    """Unified progress handler for both Gradio and CLI.
+
+    This class provides a single interface for progress tracking that works
+    with both Gradio's gr.Progress() and CLI's tqdm/verbose output.
+
+    Args:
+        progress: Gradio progress callback or None for CLI mode
+        use_tqdm: If True, use tqdm for CLI progress (default: True)
+        total: Total iterations for progress calculation
+        desc: Default description for progress updates
+    """
+
+    def __init__(self, progress=None, use_tqdm: bool = True, total: int = None, desc: str = ""):
+        self.progress = progress
+        self.use_tqdm = use_tqdm
+        self.total = total
+        self.desc = desc
+        self.last_ratio = 0
+
+        # CLI progress with tqdm
+        self._tqdm = None
+        if use_tqdm and progress is None:
+            try:
+                from tqdm import tqdm
+                if total:
+                    self._tqdm = tqdm(total=total, desc=desc)
+                else:
+                    self._tqdm = tqdm(desc=desc)
+            except ImportError:
+                self.use_tqdm = False
+
+    def update(self, ratio: float = None, desc: str = None) -> None:
+        """Update progress bar.
+
+        Args:
+            ratio: Progress ratio (0.0 to 1.0) or None if not applicable
+            desc: Description for this progress update
+        """
+        # Gradio progress
+        if self.progress is not None:
+            self.progress(ratio, desc=desc or self.desc)
+            return
+
+        # CLI progress
+        desc = desc or self.desc
+
+        if self._tqdm is not None:
+            # tqdm progress
+            if ratio is not None and self.total:
+                self._tqdm.n = int(ratio * self.total)
+                self._tqdm.refresh()
+        elif ratio is not None:
+            # Verbose mode fallback - print percentage
+            current_pct = int(ratio * 100)
+            if current_pct >= self.last_ratio + 10 or ratio == 1.0:
+                self.last_ratio = current_pct
+                print(f"{desc}: {current_pct}%")
+
+    def set_total(self, total: int) -> None:
+        """Update total for tqdm progress bar."""
+        if self._tqdm is not None:
+            self._tqdm.total = total
+            self._tqdm.refresh()
+
+    def close(self) -> None:
+        """Close the progress bar."""
+        if self._tqdm is not None:
+            self._tqdm.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+
 def get_chapters_dir() -> Path:
     """Get or create a temporary chapters directory for this session.
 

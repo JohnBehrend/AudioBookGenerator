@@ -41,14 +41,13 @@ import shutil
 import traceback
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
-from time import sleep
 
 # Import from package modules - using clean public interfaces
 import parse_chapter
 from llm_label_speakers import label_speakers  # Clean public function
 from llm_describe_character import describe_characters as describe_chars  # Clean public function
 from generate_voice_samples import generate_voice_samples as gen_voice_samples
-from utils import get_characters_from_map_files, get_chapters_dir, get_temp_dir, cleanup_temp_dir
+from utils import get_chapters_dir, get_temp_dir, cleanup_temp_dir
 from audiobook_generator import (
     PipelineState,
     generate_audiobook_from_chapters,
@@ -105,16 +104,6 @@ def cleanup_temp_dir() -> None:
         get_chapters_dir._temp_context = None
 
 
-def get_pipeline_state() -> Optional[str]:
-    """Get the current pipeline state based on existing files."""
-    chapters_dir = get_chapters_dir()
-    if not chapters_dir:
-        return None
-
-    # Use PipelineState class for state determination
-    # chapters_dir is already the correct directory (not nested)
-    state_manager = PipelineState(str(chapters_dir))
-    return state_manager.get_pipeline_state()
 
 
 def get_character_wav_file(character_name: str, chapters_dir: Path) -> Optional[str]:

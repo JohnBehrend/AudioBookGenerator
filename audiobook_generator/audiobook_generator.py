@@ -66,7 +66,7 @@ from llm_describe_character import describe_characters  # Clean public function
 from generate_voice_samples import generate_voice_samples as gen_voice_samples
 
 # Import shared utilities for consistent temp directory handling
-from utils import get_chapters_dir, get_temp_dir, cleanup_temp_dir
+from utils import get_chapters_dir, get_temp_dir, cleanup_temp_dir, ProgressHandler
 
 
 # ============================================================================
@@ -505,6 +505,7 @@ def generate_audiobook_from_chapters(
         cfg_scale: CFG scale value
         max_chapters: Maximum number of chapters to process
         verbose: Print verbose output
+        progress: Optional progress callback (gr.Progress() for Gradio, None for CLI)
         validation_model: Optional WhisperX validation model. If not provided, validation is skipped.
 
     Returns:
@@ -516,138 +517,137 @@ def generate_audiobook_from_chapters(
         # Limit chapters if specified
         chapters_to_process = chapters[:max_chapters] if max_chapters else chapters
 
-        # Setup models
-        tts_model, processor, _ = setup_tts_engine(device, tts_engine)
-        # Only setup validation model if explicitly provided (not None)
-        # This avoids crashes from whisperx/pyannote dependencies
-        voice_mapper = VoiceMapper()
+        # Create unified progress handler for both Gradio and CLI
+        # Using context manager for proper cleanup
+        with ProgressHandler(progress=progress, total=len(chapters_to_process), desc="Audiobook Generation") as progress_handler:
 
-        short_text_postfix = DEFAULTS["short_text_postfix"]
-        postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0])
+            # Setup models
+            tts_model, processor, _ = setup_tts_engine(device, tts_engine)
+            # Only setup validation model if explicitly provided (not None)
+            # This avoids crashes from whisperx/pyannote dependencies
+            voice_mapper = VoiceMapper()
 
-        processed = 0
-        for i, chapter in enumerate(chapters_to_process):
-            # Check if already generated (resume mode)
-            mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
-            if os.path.exists(mp3_path):
+            short_text_postfix = DEFAULTS["short_text_postfix"]
+            postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0])
+
+            processed = 0
+            for i, chapter in enumerate(chapters_to_process):
+                # Check if already generated (resume mode)
+                mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
+                if os.path.exists(mp3_path):
+                    if verbose:
+                        print(f"Skipping chapter {i} (already exists)")
+                    processed += 1
+                    continue
+
+                progress_handler.update((i + 1)/len(chapters_to_process), desc=f"Processing Chapter {i}")
                 if verbose:
-                    print(f"Skipping chapter {i} (already exists)")
-                processed += 1
-                continue
+                    print(f"[CHAPTER_START] Chapter {i}/{len(chapters_to_process)}")
 
-            if progress is not None:
-                progress((i + 1)/len(chapters_to_process), desc=f"Processing Chapter {i}")
-            if verbose:
-                print(f"[CHAPTER_START] Chapter {i}/{len(chapters_to_process)}")
+                # Get chapter map if available
+                chapter_map = chapter_maps.get(i)
+                if chapter_map:
+                    character_map, line_map = chapter_map
+                    character_map = {int(k): v for k, v in character_map.items()}
+                    line_map = {int(k): v for k, v in line_map.items()}
+                    line_to_character_map = {k: character_map[v] for k, v in line_map.items()}
+                else:
+                    # Fallback: assume narrator for all lines
+                    line_to_character_map = {}
 
-            # Get chapter map if available
-            chapter_map = chapter_maps.get(i)
-            if chapter_map:
-                character_map, line_map = chapter_map
-                character_map = {int(k): v for k, v in character_map.items()}
-                line_map = {int(k): v for k, v in line_map.items()}
-                line_to_character_map = {k: character_map[v] for k, v in line_map.items()}
-            else:
-                # Fallback: assume narrator for all lines
-                line_to_character_map = {}
-
-            # Assign speakers based on line map
-            for cobj in chapter:
-                if cobj.has_quotes:
-                    if cobj.line_num in line_map:
-                        char_name = line_to_character_map.get(cobj.line_num, "narrator")
-                        cobj.set_speaker(char_name)
+                # Assign speakers based on line map
+                for cobj in chapter:
+                    if cobj.has_quotes:
+                        if cobj.line_num in line_map:
+                            char_name = line_to_character_map.get(cobj.line_num, "narrator")
+                            cobj.set_speaker(char_name)
+                        else:
+                            cobj.set_speaker("narrator")
                     else:
                         cobj.set_speaker("narrator")
-                else:
-                    cobj.set_speaker("narrator")
 
-            # Get unique voices used in this chapter
-            voices_used = []
-            for chapter_obj in chapter:
-                speaker = chapter_obj.get_speaker()
-                if speaker not in voices_used:
-                    voices_used.append(speaker)
+                # Get unique voices used in this chapter
+                voices_used = []
+                for chapter_obj in chapter:
+                    speaker = chapter_obj.get_speaker()
+                    if speaker not in voices_used:
+                        voices_used.append(speaker)
 
-            # Generate TTS for each voice in this chapter
-            for voice in voices_used:
-                if progress is not None:
-                    progress(0, desc=f"Processing Chapter {i} Voice {voice}")
+                # Generate TTS for each voice in this chapter
+                for voice in voices_used:
+                    progress_handler.update(0, desc=f"Processing Chapter {i} Voice {voice}")
 
-                # Check what's already generated
-                already_generated = [
-                    int(x.split(".")[-2])
-                    for x in glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav"))
-                    if not x.endswith(".tmp.wav")
-                ]
+                    # Check what's already generated
+                    already_generated = [
+                        int(x.split(".")[-2])
+                        for x in glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav"))
+                        if not x.endswith(".tmp.wav")
+                    ]
 
-                for j, chapter_obj in enumerate(chapter):
-                    if progress is not None:
-                        progress((j + 1)/ len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j}")
-                    if voice != chapter_obj.get_speaker():
-                        continue
-                    if j in already_generated:
+                    for j, chapter_obj in enumerate(chapter):
+                        progress_handler.update((j + 1)/ len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j}")
+                        if voice != chapter_obj.get_speaker():
+                            continue
+                        if j in already_generated:
+                            if verbose:
+                                print(f"Skipping chapter {i}.{j} (already generated)")
+                            continue
+
+                        # Get the voice path for this character
+                        if voice in voices_map:
+                            voice_path = voices_map[voice]
+                        else:
+                            voice_path = voice_mapper.get_voice_path(voice)
+
+                        # Generate TTS for this line
+                        success, ratio = generate_tts_for_line(
+                            chapter_idx=i,
+                            line_idx=j,
+                            text=chapter_obj.text,
+                            voice_name=voice,
+                            tts_model=tts_model,
+                            processor=processor,
+                            voice_mapper=voice_mapper,
+                            device=device,
+                            tts_engine=tts_engine,
+                            cfg_scale=cfg_scale,
+                            output_dir=output_dir,
+                            short_text_postfix=short_text_postfix,
+                            validation_model=validation_model,
+                            verbose=verbose,
+                            voice_path=voice_path
+                        )
+                        progress_handler.update((j + 1)/len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j} Ratio {int(ratio * 100)}")
                         if verbose:
-                            print(f"Skipping chapter {i}.{j} (already generated)")
-                        continue
+                            print(f"[LINE_PROGRESS] Chapter {i}, Line {j+1}/{len(chapter)}, Voice: {voice}, Ratio: {int(ratio * 100)}")
 
-                    # Get the voice path for this character
-                    if voice in voices_map:
-                        voice_path = voices_map[voice]
-                    else:
-                        voice_path = voice_mapper.get_voice_path(voice)
+                # Assemble chapter MP3 from WAV files
+                progress_handler.update(1, desc=f"Assembling Chapters")
+                wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")))
+                if wav_files:
+                    audio = get_non_silent_audio_from_wavs(wav_files)
+                    mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
+                    audio.export(str(mp3_path), format="mp3")
 
-                    # Generate TTS for this line
-                    success, ratio = generate_tts_for_line(
-                        chapter_idx=i,
-                        line_idx=j,
-                        text=chapter_obj.text,
-                        voice_name=voice,
-                        tts_model=tts_model,
-                        processor=processor,
-                        voice_mapper=voice_mapper,
-                        device=device,
-                        tts_engine=tts_engine,
-                        cfg_scale=cfg_scale,
-                        output_dir=output_dir,
-                        short_text_postfix=short_text_postfix,
-                        validation_model=validation_model,
-                        verbose=verbose,
-                        voice_path=voice_path
-                    )
-                    if progress is not None:
-                        progress((j + 1)/len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j} Ratio {int(ratio * 100)}")
+                    # Clean up individual WAV files
+                    for wav in wav_files:
+                        os.unlink(wav)
+
                     if verbose:
-                        print(f"[LINE_PROGRESS] Chapter {i}, Line {j+1}/{len(chapter)}, Voice: {voice}, Ratio: {int(ratio * 100)}")
-
-            # Assemble chapter MP3 from WAV files
-            if progress is not None:
-                progress(1, desc=f"Assembling Chapters")
-            wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")))
-            if wav_files:
-                audio = get_non_silent_audio_from_wavs(wav_files)
-                mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
-                audio.export(str(mp3_path), format="mp3")
-
-                # Clean up individual WAV files
-                for wav in wav_files:
-                    os.unlink(wav)
+                        print(f"Chapter {i}: Created {os.path.basename(mp3_path)} from {len(wav_files)} audio segments.")
+                else:
+                    if verbose:
+                        print(f"Chapter {i}: No WAV files generated.")
 
                 if verbose:
-                    print(f"Chapter {i}: Created {os.path.basename(mp3_path)} from {len(wav_files)} audio segments.")
-            else:
-                if verbose:
-                    print(f"Chapter {i}: No WAV files generated.")
+                    print(f"[CHAPTER_COMPLETE] Chapter {i}/{len(chapters_to_process)}")
 
-            if verbose:
-                print(f"[CHAPTER_COMPLETE] Chapter {i}/{len(chapters_to_process)}")
+                # Clear cache periodically
+                torch.cuda.empty_cache()
 
-            # Clear cache periodically
-            torch.cuda.empty_cache()
+                processed += 1
 
-            processed += 1
-
-        return f"Generated {processed} chapters successfully.", processed
+            return f"Generated {processed} chapters successfully.", processed
 
     except Exception as e:
         import traceback

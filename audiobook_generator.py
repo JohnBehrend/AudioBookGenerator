@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 """
-Module to parse EPUB files and generate audiobook audio.
+Audiobook Generator - Module to generate audiobook audio from chapters.
 
-This module provides both command-line functionality and importable functions
-for the audiobook pipeline.
+This module provides:
+- CLI entry point for sequential pipeline execution
+- Gradio interface via --gradio flag
+- Stage 5: TTS audio generation from chapter maps and voice samples
+
+Usage:
+    # Run full pipeline via CLI
+    python audiobook_generator.py <epub_file> [--output-dir] [--verbose]
+
+    # Launch Gradio interface
+    python audiobook_generator.py --gradio [--api-key KEY] [--port PORT]
 """
 
 import argparse
@@ -15,6 +24,7 @@ import re
 import glob
 import gc
 from typing import Dict, List, Tuple, Optional, Any
+from pathlib import Path
 
 import torch
 from scipy.io import wavfile
@@ -30,7 +40,7 @@ def _get_attn_implementation() -> Optional[str]:
         return None
 
 # Import config for default values
-from config import DEFAULTS, AUDIO_SETTINGS
+from config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
 
 # Text to speech generation
 TTS_ENGINE = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
@@ -58,42 +68,11 @@ import pandas as pd
 # consistent seeding
 from transformers import set_seed
 
-# Import parse_chapter at module level for use in CLI
+# Import modular stage functions
 import parse_chapter
-
-
-# ============================================================================
-# STAGE 0: INITIALIZATION FUNCTIONS
-# ============================================================================
-
-
-def initialize_tts_engine(device: str = "cuda", tts_engine: str = "kugelaudio"):
-    """Initialize and return the TTS model and processor.
-
-    This is an alias for setup_tts_engine for consistency.
-
-    Args:
-        device: Device to run on ('cuda:0' or 'cuda:1')
-        tts_engine: Either 'kugelaudio' or 'vibevoice'
-
-    Returns:
-        Tuple of (model, processor, model_path)
-    """
-    return setup_tts_engine(device, tts_engine)
-
-
-def initialize_validation_model(device: str = "cuda"):
-    """Initialize the WhisperX validation model.
-
-    This is an alias for setup_validation_model for consistency.
-
-    Args:
-        device: Device to run on
-
-    Returns:
-        WhisperX model
-    """
-    return setup_validation_model(device)
+from llm_label_speakers import label_speakers_in_file
+from llm_describe_character import describe_characters_in_dir
+from generate_voice_samples import generate_voice_samples as gen_voice_samples
 
 
 # ============================================================================
@@ -234,7 +213,7 @@ class VoiceMapper:
 
 
 # ============================================================================
-# STAGE 1: TTS AUDIO GENERATION
+# STAGE 5: TTS AUDIO GENERATION
 # ============================================================================
 
 
@@ -493,450 +472,6 @@ def generate_tts_for_line(
 # ============================================================================
 
 
-def generate_tts_audio(
-    chapters,
-    chapter_maps: dict,
-    voices_map: dict,
-    output_dir: str,
-    device: str = "cuda",
-    tts_engine: str = "kugelaudio",
-    cfg_scale: float = 1.30,
-    resume: bool = False,
-    max_chapters: int = None,
-    verbose: bool = False
-):
-    """Generate TTS audio for all chapters.
-
-    Args:
-        chapters: List of chapter objects from parse_epub_to_chapters
-        chapter_maps: Dict mapping chapter_idx -> (character_map, line_map)
-        voices_map: Dict mapping character names to voice file paths
-        output_dir: Output directory for audio files
-        device: Device to run on
-        tts_engine: 'kugelaudio' or 'vibevoice'
-        cfg_scale: CFG scale value
-        resume: Skip already generated chapters
-        max_chapters: Maximum number of chapters to process
-        verbose: Print verbose output
-
-    Returns:
-        Number of chapters processed
-    """
-    """Generate TTS audio for all chapters.
-
-    Args:
-        chapters: List of chapter objects from parse_chapter.parse_epub_to_chapters
-        chapter_maps: Dict mapping chapter_idx -> (character_map, line_map)
-        voices_map: Dict mapping character names to voice file paths
-        output_dir: Output directory for audio files
-        device: Device to run on
-        tts_engine: 'kugelaudio' or 'vibevoice'
-        cfg_scale: CFG scale value
-        resume: Skip already generated chapters
-        max_chapters: Maximum number of chapters to process
-        verbose: Print verbose output
-
-    Returns:
-        Number of chapters processed
-    """
-    # Assign speakers based on chapter maps (backward compatibility)
-    for i, chapter in enumerate(chapters):
-        chapter_map = chapter_maps.get(i)
-        if chapter_map:
-            character_map, line_map = chapter_map
-            character_map = {int(k): v for k, v in character_map.items()}
-            line_map = {int(k): v for k, v in line_map.items()}
-            line_to_character_map = {k: character_map[v] for k, v in line_map.items()}
-        else:
-            # Fallback: assume narrator for all lines
-            line_to_character_map = {}
-
-        # Assign speakers based on line map
-        for cobj in chapter:
-            if cobj.has_quotes:
-                if cobj.line_num in line_map:
-                    char_name = line_to_character_map.get(cobj.line_num, "narrator")
-                    cobj.set_speaker(char_name)
-                else:
-                    cobj.set_speaker("narrator")
-            else:
-                cobj.set_speaker("narrator")
-
-    # Limit chapters if specified
-    if max_chapters:
-        chapters = chapters[:max_chapters]
-
-    # Call the unified generate_audiobook_from_chapters function
-    status, processed = generate_audiobook_from_chapters(
-        chapters=chapters,
-        chapter_maps=chapter_maps,
-        voices_map=voices_map,
-        output_dir=output_dir,
-        device=device,
-        tts_engine=tts_engine,
-        cfg_scale=cfg_scale,
-        max_chapters=max_chapters,
-        verbose=verbose
-    )
-
-    return processed
-
-
-def assemble_audiobook(output_dir: str, num_chapters: int):
-    """Assemble final audiobook from individual chapter audio files.
-
-    Args:
-        output_dir: Directory containing chapter WAV and MP3 files
-        num_chapters: Number of chapters to assemble
-
-    Returns:
-        List of paths to generated MP3 files
-    """
-    mp3_files = []
-
-    for i in range(num_chapters):
-        wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")))
-
-        if not wav_files:
-            continue
-
-        audio = get_non_silent_audio_from_wavs(wav_files)
-        mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
-        audio.export(mp3_path, format="mp3")
-
-        # Clean up individual WAV files
-        for wav in wav_files:
-            os.unlink(wav)
-
-        mp3_files.append(mp3_path)
-
-    return mp3_files
-
-
-# ============================================================================
-# COMMAND-LINE INTERFACE
-# ============================================================================
-
-
-def parse_epub():
-    """Command-line entry point for EPUB parsing and audiobook generation."""
-    parser = argparse.ArgumentParser(description="Parse an EPUB file into an array of chapters")
-    parser.add_argument("epub_file", help="Path to the EPUB file")
-    parser.add_argument("-voices_map", metavar="voices_map.json", help="Map voice numbers to corresponding wav audio files")
-    parser.add_argument("--speaker_histogram", action="store_true", help="Print out a histogram of speakers.")
-    parser.add_argument("--by_chapter", action="store_true", help="Save a file per chapter in a new folder labeled chapters")
-    parser.add_argument("--resume", action="store_true", help="Try to resume crunching in the directory based on files present.")
-    parser.add_argument("--alt_gpu", action="store_true", help="Use other gpu for processing.")
-    parser.add_argument("--alt_order", action="store_true", help="Use same gpu but high chapters to low chapters for processing.")
-    parser.add_argument("--verbose", action="store_true", help="Print verbose logging information")
-    parser.add_argument("--tts-engine", default="kugelaudio", choices=["kugelaudio", "vibevoice"], help="TTS engine to use")
-    parser.add_argument("--output-dir", metavar="DIR", help="Output directory for chapter files (default: script_dir/chapters)")
-    parser.add_argument("--max-chapters", type=int, metavar="N", help="Maximum number of chapters to parse (default: all)")
-    args = parser.parse_args()
-
-    # Override TTS_ENGINE with command line argument
-    global TTS_ENGINE
-    TTS_ENGINE = args.tts_engine
-
-    end_characters = ["?", ".", "-", ";", ",", "!"]
-    # Parse the EPUB file
-    chapters = parse_chapter.parse_epub_to_chapters(args.epub_file, max_chapters=args.max_chapters)
-
-    if not chapters:
-        print("No chapters found or error occurred")
-        sys.exit(1)
-
-    # Determine output directory
-    if args.output_dir:
-        output_dir = args.output_dir
-    else:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        output_dir = os.path.join(script_dir, "chapters")
-
-    os.makedirs(output_dir, exist_ok=True)
-    print(f"[OUTPUT_DIR] Using output directory: {output_dir}", flush=True)
-    target_device = "cuda"
-    if args.alt_gpu:
-        target_device = "cuda:1"
-        torch.cuda.set_device(1)
-
-    cfg_scale = DEFAULTS["cfg_scale"]
-
-    voices_map = None
-    if args.voices_map is not None:
-        voices_map = load_json(args.voices_map)
-    else:
-        # Try to load voices_map.json from output directory (auto-generated from voice samples)
-        voices_map_path = os.path.join(output_dir, "voices_map.json")
-        voices_map = load_json(voices_map_path)
-
-    if args.verbose:
-        print("chapter_voice_map:", voices_map)
-
-    if args.alt_gpu or args.alt_order:
-        chapter_iterator = reversed(list(enumerate(chapters)))
-    else:
-        chapter_iterator = enumerate(chapters)
-
-    for i, chapter in chapter_iterator:
-        chapter_map = load_json(os.path.join(output_dir, f"chapter_{i}.map.json"))
-        if args.verbose:
-            print(f"Chapter {i}")
-        if chapter_map:
-            character_map, line_map = chapter_map
-            character_map = {int(k): v for k, v in character_map.items()}
-            line_map = {int(k): v for k, v in line_map.items()}
-            line_to_character_map = {k: character_map[v] for k, v in line_map.items()}
-            if voices_map is None:
-                print(f"Error: voices_map is None. Please provide a voices map file using --voices_map.")
-                exit()
-            if all(x in voices_map.keys() for x in line_to_character_map.values()):
-                line_to_voice_map = {k: voices_map[v] for k, v in line_to_character_map.items()}
-            else:
-                print(f"Please fill in the following characters in the voices map from chapter {i}:")
-                print(json.dumps({v: "" for k, v in line_to_character_map.items() if v not in voices_map.keys()}, indent=4))
-                exit()
-            for cobj in chapter:
-                if cobj.has_quotes:
-                    if cobj.line_num in line_map.keys():
-                        if args.verbose:
-                            print(f"Line {cobj.line_num} -> {line_to_character_map[cobj.line_num]} -> {line_to_voice_map[cobj.line_num]}")
-                        cobj.set_speaker(line_to_voice_map[cobj.line_num])
-                    else:
-                        print(f"Chapter {i} line {cobj.line_num} -> narrator even though this is a quote.", file=sys.stderr)
-                        cobj.set_speaker(voices_map["narrator"])
-                else:
-                    cobj.set_speaker(voices_map["narrator"])
-
-    short_text_postfix = DEFAULTS["short_text_postfix"].lower()
-    postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0])
-    validation_model = whisperx.load_model(DEFAULTS["validation_model_name"], "cuda", compute_type="float16")
-
-    attn_impl = _get_attn_implementation()
-    if TTS_ENGINE == 'kugelaudio':
-        # Initialize KugelAudio model and processor
-        attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
-        tts_model = KugelAudioForConditionalGenerationInference.from_pretrained(
-            "kugelaudio/kugelaudio-0-open",
-            torch_dtype=torch.bfloat16,
-            device_map=target_device,
-            **attn_kwargs,
-        ).to(target_device)
-        tts_model.set_ddpm_inference_steps(num_steps=13)
-        tts_model.eval()
-
-        processor = KugelAudioProcessor.from_pretrained("kugelaudio/kugelaudio-0-open")
-    else:
-        # Initialize VibeVoice model and processor
-        attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
-        tts_model = VibeVoiceForConditionalGenerationInference.from_pretrained(
-            "Jmica/VibeVoice7B",
-            torch_dtype=torch.bfloat16,
-            device_map=target_device,
-            **attn_kwargs,
-        )
-        tts_model.set_ddpm_inference_steps(num_steps=13)
-        tts_model.eval()
-
-        processor = VibeVoiceProcessor.from_pretrained("Jmica/VibeVoice7B")
-
-    still_skip = True
-    if args.alt_gpu or args.alt_order:
-        chapter_iterator = reversed(list(enumerate(chapters)))
-    else:
-        chapter_iterator = enumerate(chapters)
-
-    for i, chapter in chapter_iterator:
-        if args.resume:
-            if os.path.exists(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")):
-                print(f"Skipping chapter {str(i).zfill(2)}.", end="\r")
-                continue
-
-        print(f"[CHAPTER_START] Chapter {i}/{len(chapters)}", flush=True)
-
-        voices_used = list(dict.fromkeys([chapter_obj.get_speaker() for chapter_obj in chapter]).keys())
-
-        for voice in voices_used:
-            if args.resume:
-                already_generated = [int(x.split(".")[-2]) for x in glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")) if not x.endswith(".tmp.wav")]
-            else:
-                already_generated = []
-
-            for j, chapter_obj in enumerate(chapter):
-                if voice != chapter_obj.get_speaker():
-                    continue
-
-                if still_skip:
-                    if j not in already_generated:
-                        still_skip = False
-                        print(f"\nResuming with chapter {i}.{j}.")
-                    else:
-                        print(f"Skipping chapter {str(i).zfill(2)}.{str(j).zfill(4)}", end="\r")
-                        continue
-
-                full_script = str(chapter_obj.text[0].upper() + chapter_obj.text[1:])
-                full_script = re.sub(r"(\s\.)+", r".", full_script)
-
-                short_text_flag = True
-                if short_text_flag:
-                    full_script = full_script + (" " if full_script[0] in end_characters else ". ") + short_text_postfix
-
-                ratio = 0.0
-                max_ratio = 0.0
-                retries = 0
-                input_string = distill_string(full_script)
-                print("INPUT:", input_string)
-                set_seed(42)
-
-                while ratio < 0.85 and retries < 5:
-                    set_seed(42 + retries)
-
-                    if TTS_ENGINE == 'kugelaudio':
-                        voice_mapper = VoiceMapper()
-                        voice_path = voice_mapper.get_voice_path(voice)
-                        inputs = processor(
-                            text=full_script,
-                            voice_prompt=voice_path,
-                            padding=True,
-                            return_tensors="pt",
-                        )
-                    else:
-                        voice_mapper = VoiceMapper()
-                        inputs = processor(
-                            text=["Speaker 1: ? " + full_script],
-                            voice_samples=[voice_mapper.get_voice_path(voice)],
-                            padding=True,
-                            return_tensors="pt",
-                            return_attention_mask=True,
-                        )
-
-                    for k, v in inputs.items():
-                        if torch.is_tensor(v):
-                            inputs[k] = v.to(target_device)
-
-                    outputs = tts_model.generate(
-                        **inputs,
-                        max_new_tokens=DEFAULTS["max_new_tokens"],
-                        cfg_scale=cfg_scale,
-                        tokenizer=processor.tokenizer,
-                        do_sample=False,
-                        verbose=False
-                    )
-
-                    output_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav")
-
-                    if TTS_ENGINE == 'kugelaudio':
-                        processor.save_audio(
-                            outputs.speech_outputs[0],
-                            output_path=output_path,
-                        )
-                    else:
-                        processor.save_audio(
-                            outputs.speech_outputs[0],
-                            output_path=output_path,
-                        )
-
-                    del inputs
-                    del outputs
-
-                    if args.alt_gpu:
-                        gc.collect()
-                        torch.cuda.empty_cache()
-
-                    sample_rate, waveform = wavfile.read(output_path)
-                    wavfile.write(output_path, sample_rate, waveform)
-
-                    audio = whisperx.load_audio(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"))
-                    result = validation_model.transcribe(audio, batch_size=1)
-                    model_a, metadata = whisperx.load_align_model(language_code=result["language"], device="cuda")
-                    result = whisperx.align(result["segments"], model_a, metadata, audio, "cuda", return_char_alignments=False)
-
-                    prev_end = None
-                    pauses = []
-                    for segment in result["word_segments"]:
-                        if prev_end is not None:
-                            pauses.append(segment["start"] - prev_end)
-                        prev_end = segment["end"]
-                    pauses.append(0)
-
-                    segments = [distill_string(s["word"]) for s in result["word_segments"]]
-                    scores = [s["score"] for s in result["word_segments"]]
-                    start_times = [s["start"] for s in result["word_segments"]]
-                    end_times = [s["end"] for s in result["word_segments"]]
-                    print(" ".join([color_word(word, score) + "#" * int(pause) for word, score, pause in zip(segments, scores, pauses)]))
-
-                    detected_string = " ".join(segments)
-
-                    ratio, last_valid_token = score_strings_pop(input_string, detected_string, lookahead=5, postfix=distill_string(short_text_postfix))
-
-                    print(f"[LINE_PROGRESS] Chapter {i}, Line {j+1}/{len(chapter)}, Attempt {retries + 1}, Ratio: {int(ratio * 100)}, Voice: {voice}", flush=True)
-
-                    if short_text_flag:
-                        if (distill_string(short_text_postfix) in detected_string) and (postfix_detect_token in segments):
-                            if detected_string.startswith(distill_string(short_text_postfix)):
-                                print("POSTFIX DETECTED BUT ONLY POSTFIX! -> Ratio 0")
-                                ratio = 0
-                            else:
-                                postfix_start_index = segments[::-1].index(postfix_detect_token)
-                                if len(end_times) > postfix_start_index + 1:
-                                    clip_end2 = end_times[::-1][postfix_start_index + 1]
-                                else:
-                                    clip_end2 = end_times[-1]
-                                print(f"POSTFIX DETECTED CLIPPING to {clip_end1} - {clip_end2}")
-                                audio = pydub.AudioSegment.from_wav(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"))
-                                trimmed_audio = audio[0:((clip_end1 + clip_end2) * 500)]
-                                trimmed_audio.export(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"), format="wav")
-                        else:
-                            if ((last_valid_token is None) or (last_valid_token == "")):
-                                print("POSTFIX UN-DETECTED and INVALID VALUES. SKIP.")
-                            else:
-                                lastvalid_index = segments[::-1].index(last_valid_token)
-                                clip_end1 = end_times[::-1][lastvalid_index]
-                                print(f"POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1} ")
-                                audio = pydub.AudioSegment.from_wav(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"))
-                                trimmed_audio = audio[0:(clip_end1 * 1000)]
-                                trimmed_audio.export(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"), format="wav")
-
-                    if ratio > max_ratio:
-                        max_ratio = ratio
-                        if os.path.exists(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.wav")):
-                            os.unlink(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.wav"))
-                        time.sleep(2)
-                        os.rename(
-                            os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"),
-                            os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.wav")
-                        )
-
-                    retries += 1
-
-                if os.path.exists(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav")):
-                    os.unlink(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.{str(j).zfill(4)}.tmp.wav"))
-
-        wavs = glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav"))
-        audio = get_non_silent_audio_from_wavs(wavs)
-        audio.export(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3"), format="mp3")
-        [os.unlink(x) for x in wavs]
-
-        print(f"[CHAPTER_COMPLETE] Chapter {i}/{len(chapters)}", flush=True)
-
-    speaker_counts = {}
-    for i, chapter in enumerate(chapters):
-        for chapter_obj in chapter:
-            this_speaker = str(chapter_obj.get_speaker())
-            if this_speaker in speaker_counts.keys():
-                speaker_counts[this_speaker] += 1
-            else:
-                speaker_counts[this_speaker] = 1
-
-    if args.speaker_histogram:
-        print("\n".join([str(x) for x in sorted(speaker_counts.items(), key=lambda x: x[1], reverse=True)]))
-
-
-# ============================================================================
-# MODULE FUNCTIONS FOR GRADIO INTERFACE
-# ============================================================================
-
-
 def generate_audiobook_from_chapters(
     chapters: list,
     chapter_maps: Dict[int, Tuple[Dict, Dict]],
@@ -970,9 +505,6 @@ def generate_audiobook_from_chapters(
     Returns:
         Tuple of (status_message, chapters_processed)
     """
-    import torch
-    from parse_chapter import ChapterObj
-
     try:
         os.makedirs(output_dir, exist_ok=True)
 
@@ -1120,14 +652,43 @@ def generate_audiobook_from_chapters(
         return error_msg, 0
 
 
+def assemble_audiobook(output_dir: str, num_chapters: int):
+    """Assemble final audiobook from individual chapter audio files.
+
+    Args:
+        output_dir: Directory containing chapter WAV and MP3 files
+        num_chapters: Number of chapters to assemble
+
+    Returns:
+        List of paths to generated MP3 files
+    """
+    mp3_files = []
+
+    for i in range(num_chapters):
+        wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")))
+
+        if not wav_files:
+            continue
+
+        audio = get_non_silent_audio_from_wavs(wav_files)
+        mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
+        audio.export(mp3_path, format="mp3")
+
+        # Clean up individual WAV files
+        for wav in wav_files:
+            os.unlink(wav)
+
+        mp3_files.append(mp3_path)
+
+    return mp3_files
+
+
 def assemble_audiobook_from_wavs(
     output_dir: str,
     num_chapters: int,
     verbose: bool = False
 ) -> Tuple[str, int]:
     """Assemble final audiobook from individual chapter WAV files to MP3.
-
-    This is a simplified interface for calling assembly directly from the Gradio UI.
 
     Args:
         output_dir: Directory containing chapter WAV files
@@ -1172,5 +733,365 @@ def assemble_audiobook_from_wavs(
         return error_msg, 0
 
 
+# ============================================================================
+# STATE MANAGEMENT (Internal to this module)
+# ============================================================================
+
+
+class PipelineState:
+    """Manages state for the audiobook pipeline."""
+
+    def __init__(self, output_dir: str):
+        self.output_dir = Path(output_dir)
+        self.chapters_dir = self.output_dir / "chapters"
+        self.chapters_dir.mkdir(parents=True, exist_ok=True)
+        self.pipeline_state = None
+        self.chapters = None
+        self.chapter_maps = {}
+        self.characters = []
+        self.character_descriptions = {}
+        self.voice_map = {}
+
+    def load_chapter_maps(self):
+        """Load all chapter map files from the chapters directory."""
+        self.chapter_maps = {}
+        map_files = sorted(self.chapters_dir.glob("*.map.json"))
+
+        for map_file in map_files:
+            try:
+                with open(map_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list) and len(data) >= 2:
+                    character_map = data[0]
+                    line_map = data[1]
+                elif isinstance(data, dict):
+                    character_map = data.get("character_map", {})
+                    line_map = data.get("line_map", {})
+                else:
+                    continue
+
+                character_map = {int(k): v for k, v in character_map.items()}
+                line_map = {int(k): v for k, v in line_map.items()}
+
+                map_filename = map_file.name.replace(".map.json", "")
+                chapter_idx = int(map_filename.replace("chapter_", ""))
+                self.chapter_maps[chapter_idx] = (character_map, line_map)
+            except Exception as e:
+                print(f"Error loading map file {map_file}: {e}")
+
+        return self.chapter_maps
+
+    def get_characters(self) -> List[str]:
+        """Extract unique character names from map files."""
+        characters = set()
+        map_files = self.chapters_dir.glob("*.map.json")
+
+        for map_file in map_files:
+            try:
+                with open(map_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                character_map = data[0] if isinstance(data, list) and len(data) > 0 else {}
+                if isinstance(character_map, dict):
+                    for char_name in character_map.values():
+                        if isinstance(char_name, str):
+                            characters.add(char_name)
+            except Exception:
+                pass
+
+        self.characters = sorted(list(characters))
+        return self.characters
+
+    def load_character_descriptions(self):
+        """Load character descriptions from JSON file."""
+        descriptions_file = self.output_dir / "characters_descriptions.json"
+        if descriptions_file.exists():
+            self.character_descriptions = load_json(str(descriptions_file))
+        return self.character_descriptions
+
+    def load_voice_map(self):
+        """Load voice map from JSON file."""
+        voices_map_file = self.chapters_dir / "voices_map.json"
+        if voices_map_file.exists():
+            self.voice_map = load_json(str(voices_map_file))
+        else:
+            # Create voice map from character descriptions
+            self.voice_map = {"narrator": "narrator.wav"}
+            for char_name in self.character_descriptions.keys():
+                voice_file = f"{char_name}.wav"
+                self.voice_map[char_name] = voice_file
+        return self.voice_map
+
+    def get_pipeline_state(self) -> str:
+        """Determine current pipeline state based on existing files."""
+        # Check for Stage 1 completion (chapter text files)
+        chapter_files = sorted(self.chapters_dir.glob("chapter_*.txt"))
+        if not chapter_files:
+            return "initial"
+
+        # Check for Stage 2 completion (map files)
+        map_files = sorted(self.chapters_dir.glob("*.map.json"))
+        if not map_files:
+            return "epub_parsed"
+
+        # Check for Stage 3 completion (characters descriptions)
+        descriptions_file = self.output_dir / "characters_descriptions.json"
+        if not descriptions_file.exists():
+            return "labels_complete"
+
+        # Check for Stage 4 completion (voice samples)
+        wav_files = list(self.chapters_dir.glob("*.wav"))
+        if not wav_files:
+            return "characters_described"
+
+        # Check for Stage 5 completion (final audiobook)
+        mp3_files = sorted(self.chapters_dir.glob("chapter_*.mp3"))
+        if not mp3_files:
+            return "voice_samples_complete"
+
+        return "audiobook_complete"
+
+    def write_chapter_text_files(self, chapters):
+        """Write chapter objects to text files."""
+        from parse_chapter import write_chapters_to_txt
+        return write_chapters_to_txt(chapters, str(self.chapters_dir))
+
+
+# ============================================================================
+# CLI ORCHESTRATION
+# ============================================================================
+
+
+def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
+                      verbose: bool = False, api_key: str = None, port: str = None,
+                      tts_engine: str = "kugelaudio", device: str = "cuda") -> str:
+    """Run the full audiobook pipeline from EPUB to MP3.
+
+    Args:
+        epub_path: Path to the EPUB file
+        output_dir: Output directory for all generated files
+        max_chapters: Maximum number of chapters to process
+        verbose: Print verbose output
+        api_key: LLM API key for speaker labeling and character descriptions
+        port: LLM port for inference
+        tts_engine: 'kugelaudio' or 'vibevoice'
+        device: CUDA device (e.g., 'cuda', 'cuda:1')
+
+    Returns:
+        Status message
+    """
+    # Initialize state
+    state = PipelineState(output_dir)
+
+    # Stage 1: Parse EPUB
+    if verbose:
+        print(f"[STAGE 1] Parsing EPUB: {epub_path}")
+    chapters = parse_chapter.parse_epub_to_chapters(epub_path, max_chapters=max_chapters)
+
+    if not chapters:
+        return "Error: No chapters found in EPUB file."
+
+    state.write_chapter_text_files(chapters)
+    if verbose:
+        print(f"[STAGE 1] Parsed {len(chapters)} chapters")
+
+    # Stage 2: Label Speakers
+    if verbose:
+        print(f"[STAGE 2] Labeling speakers...")
+    chapter_files = sorted(state.chapters_dir.glob("chapter_*.txt"))
+    num_chapters = len(chapter_files)
+
+    for i, chapter_file in enumerate(chapter_files):
+        if verbose:
+            print(f"  Processing {chapter_file.name} ({i+1}/{num_chapters})")
+
+        result_msg, char_map, line_map = label_speakers_in_file(
+            txt_file=str(chapter_file),
+            api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
+            port=port or LLM_SETTINGS.get("port", "1234"),
+            num_attempts=DEFAULTS.get("num_llm_attempts", 2),
+            verbose=verbose
+        )
+
+        if verbose:
+            print(f"  {result_msg}")
+
+    state.load_chapter_maps()
+    state.get_characters()
+
+    # Stage 3: Describe Characters
+    if verbose:
+        print(f"[STAGE 3] Describing {len(state.characters)} characters...")
+
+    result_msg, character_descriptions = describe_characters_in_dir(
+        output_dir=str(state.output_dir),
+        api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
+        port=port or LLM_SETTINGS.get("port", "1234"),
+        verbose=verbose
+    )
+
+    if verbose:
+        print(f"  {result_msg}")
+
+    state.load_character_descriptions()
+
+    # Stage 4: Generate Voice Samples
+    if verbose:
+        print(f"[STAGE 4] Generating voice samples...")
+
+    result_msg, generated_voices = gen_voice_samples(
+        descriptions=state.character_descriptions,
+        output_dir=str(state.output_dir),
+        verbose=verbose
+    )
+
+    if verbose:
+        print(f"  {result_msg}")
+
+    state.load_voice_map()
+
+    # Stage 5: Generate Audiobook
+    if verbose:
+        print(f"[STAGE 5] Generating audiobook...")
+
+    # Setup models for TTS generation
+    tts_model, processor, _ = setup_tts_engine(device, tts_engine)
+    validation_model = setup_validation_model(device)
+    voice_mapper = VoiceMapper()
+
+    if verbose:
+        print(f"  TTS engine: {tts_engine}")
+        print(f"  Device: {device}")
+
+    # Generate TTS for all chapters
+    try:
+        status, processed = generate_audiobook_from_chapters(
+            chapters=chapters,
+            chapter_maps=state.chapter_maps,
+            voices_map=state.voice_map,
+            output_dir=str(state.chapters_dir),
+            device=device,
+            tts_engine=tts_engine,
+            verbose=verbose,
+            progress=None,
+            validation_model=validation_model
+        )
+
+        if verbose:
+            print(f"  {status}")
+
+        # Assemble MP3 files
+        mp3_files = assemble_audiobook(str(state.chapters_dir), len(chapters))
+
+        if verbose:
+            print(f"[STAGE 5] Generated {len(mp3_files)} MP3 files")
+
+        return f"Audiobook generation complete! Generated {len(mp3_files)} chapter MP3 files."
+
+    except Exception as e:
+        import traceback
+        error_msg = f"Error in Stage 5: {str(e)}\n{traceback.format_exc()}"
+        if verbose:
+            print(error_msg)
+        return error_msg
+
+
+# ============================================================================
+# GRADIO INTERFACE
+# ============================================================================
+
+
+def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
+                            port: str = None, num_attempts: int = 2,
+                            max_chapters: int = 10) -> None:
+    """Create and launch the Gradio interface for the audiobook pipeline.
+
+    This function contains the UI element definitions and event handlers.
+    It uses the PipelineState class for managing pipeline state.
+
+    Args:
+        output_dir: Output directory for generated files
+        api_key: LLM API key
+        port: LLM port
+        num_attempts: Number of LLM attempts
+        max_chapters: Max chapters to process
+    """
+    try:
+        import audiobook_gradio_ui as ui
+        demo = ui.create_interface(
+            api_key_default=api_key or DEFAULTS.get("api_key", "lm-studio"),
+            port_default=port or LLM_SETTINGS.get("port", "1234"),
+            num_attempts_default=num_attempts,
+            max_chapters_default=max_chapters
+        )
+
+        demo.launch(share=False, theme=gr.themes.Soft())
+
+    except ImportError as e:
+        print(f"Error: Could not import audiobook_gradio_ui module")
+        print(f"Make sure the module is in place: {e}")
+
+
+def cleanup_gradio_state():
+    """Clean up temporary directory used by Gradio interface."""
+    pass  # State is managed by the UI module
+
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Audiobook Generator - Parse EPUB and generate audiobook audio"
+    )
+    parser.add_argument("epub_file", nargs="?", help="Path to the EPUB file")
+    parser.add_argument("--output-dir", default="chapters", help="Output directory for generated files")
+    parser.add_argument("--max-chapters", type=int, help="Maximum number of chapters to process")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Print verbose output")
+    parser.add_argument("--api-key", help="LLM API key for speaker labeling")
+    parser.add_argument("--port", help="LLM port for inference")
+    parser.add_argument("--tts-engine", default="kugelaudio", choices=["kugelaudio", "vibevoice"],
+                        help="TTS engine to use")
+    parser.add_argument("--device", default="cuda", help="CUDA device to use")
+    parser.add_argument("--gradio", action="store_true", help="Launch Gradio interface instead of CLI")
+    parser.add_argument("--num-llm-attempts", type=int, default=2, help="Number of LLM attempts for speaker labeling")
+
+    args = parser.parse_args()
+
+    if args.gradio:
+        # Launch Gradio interface
+        create_gradio_interface(
+            output_dir=args.output_dir,
+            api_key=args.api_key,
+            port=args.port,
+            num_attempts=args.num_llm_attempts,
+            max_chapters=args.max_chapters or DEFAULTS.get("max_chapters", 10)
+        )
+    else:
+        # Run CLI pipeline
+        if not args.epub_file:
+            parser.print_help()
+            print("\nError: EPUB file is required for CLI mode.")
+            sys.exit(1)
+
+        if not os.path.exists(args.epub_file):
+            print(f"Error: EPUB file not found: {args.epub_file}")
+            sys.exit(1)
+
+        status = run_full_pipeline(
+            epub_path=args.epub_file,
+            output_dir=args.output_dir,
+            max_chapters=args.max_chapters,
+            verbose=args.verbose,
+            api_key=args.api_key,
+            port=args.port,
+            tts_engine=args.tts_engine,
+            device=args.device
+        )
+
+        print(status)
+
+
 if __name__ == "__main__":
-    parse_epub()
+    main()

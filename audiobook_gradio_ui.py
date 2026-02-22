@@ -622,7 +622,7 @@ def generate_tts_audio(
             return log_output, pipeline_state
 
         # Import parse_epub to use generate_audiobook_from_chapters
-        import parse_epub
+        import audiobook_generator
         import torch
 
         # Determine device (use CUDA if available, default to cuda:0)
@@ -671,7 +671,7 @@ def assemble_chapter_audiobooks(
             return log_output + "\nError: Chapters directory not initialized.", pipeline_state
 
         import torch
-        import parse_epub
+        import audiobook_generator
 
         chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
         if not chapter_files:

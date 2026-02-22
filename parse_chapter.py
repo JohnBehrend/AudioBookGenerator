@@ -133,6 +133,38 @@ def cleanup_text(txt):
     txt = txt.replace("  ", " ")
     return txt
 
+def write_chapters_to_txt(chapters, output_dir, prefix="chapter_"):
+    """Write chapter objects to text files.
+
+    Args:
+        chapters: List of chapter objects from parse_epub_to_chapters
+        output_dir: Directory to write chapter files to
+        prefix: Filename prefix for chapter files (default: "chapter_")
+
+    Returns:
+        List of paths to written chapter files
+    """
+    import os
+
+    output_path = os.path.join(output_dir, prefix)
+    written_files = []
+
+    for i, chapter in enumerate(chapters):
+        output_file = f"{output_path}{i}.txt"
+        with open(output_file, "w", encoding="utf-8") as f:
+            for cobj in chapter:
+                f.write(f"Line {cobj.line_num}: ")
+                if cobj.has_quotes:
+                    f.write('"')
+                f.write(cobj.text)
+                if cobj.has_quotes:
+                    f.write('"')
+                f.write("\n")
+        written_files.append(output_file)
+
+    return written_files
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert an epub file into text files for each character. Quotes will always be split into unique lines.")
     parser.add_argument("-epub_file", help="Path to the EPUB file")

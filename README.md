@@ -1,40 +1,75 @@
 # Audiobook Pipeline
 
-A tool for creating synthesized audiobooks with distinct voices for different characters. Processes EPUB files through a 6-stage pipeline.
+A tool for creating synthesized audiobooks with distinct voices for different characters. Processes EPUB files through a 5-stage pipeline with both CLI and Gradio interfaces.
 
 ## Quick Start
 
+### CLI Mode (Default)
+
+Run the full pipeline from EPUB to audiobook in one command:
+
 ```bash
-# Start the Gradio web interface
-python gradio_audiobook_interface.py
+uv run python audiobook_generator.py <epub_file> [--verbose]
+```
+
+### Gradio Web Interface
+
+Launch the interactive web interface:
+
+```bash
+uv run python audiobook_generator.py --gradio
 ```
 
 Then open the provided URL (typically http://127.0.0.1:7860) in your browser.
 
 ## Pipeline Stages
 
-1. **EPUB Parsing** - Upload an EPUB file and parse it into chapter text files
+1. **EPUB Parsing** - Parse an EPUB file into chapter text files
 2. **LLM Speaker Labeling** - Use an LLM to identify speakers and attribute dialogue lines
 3. **Character Descriptions** - Generate voice profiles for each character
 4. **Voice Sample Generation** - Generate TTS voice samples for each character
 5. **Full Audiobook Generation** - Generate complete audiobook MP3 files
 
-## Individual Commands
+## Usage
 
-The Gradio interface wraps these individual commands:
+### CLI
 
 ```bash
-# Parse EPUB and generate chapter text files
-python parse_epub.py <epub_file> [-voices_map voices_map.json] [--resume] [--alt_gpu]
+uv run python audiobook_generator.py <epub_file> [OPTIONS]
 
-# Label speakers in a chapter using LLM
-python llm_label_speakers.py -txt_file chapters/chapter_0.txt [--skip_llm] [--old_format]
+# Options:
+# --output-dir DIR     Output directory (default: chapters)
+# --max-chapters N     Maximum number of chapters to process
+# --verbose, -v        Print verbose output
+# --api-key KEY        LLM API key
+# --port PORT          LLM port
+# --tts-engine ENGINE  TTS engine: kugelaudio (default) or vibevoice
+# --device DEVICE      CUDA device (default: cuda)
+# --num-llm-attempts N Number of LLM attempts (default: 2)
 
-# Describe characters using LLM
-python llm_describe_character.py chapters [--api_key] [--port]
+# Launch Gradio interface
+uv run python audiobook_generator.py --gradio
+```
 
-# Generate voice samples
-python generate_voice_samples.py [--descriptions] [--output-dir]
+### Individual Stages (Advanced)
+
+Each pipeline stage can also be run independently:
+
+```bash
+# Stage 1: Parse EPUB (handled automatically by CLI)
+# Uses: parse_chapter.parse_epub_to_chapters()
+
+# Stage 2: Label Speakers
+uv run python llm_label_speakers.py -txt_file chapters/chapter_0.txt
+
+# Stage 3: Describe Characters
+uv run python llm_describe_character.py chapters
+
+# Stage 4: Generate Voice Samples
+uv run python generate_voice_samples.py
+
+# Stage 5: Generate Audiobook (handled automatically by CLI)
+# Uses: audiobook_generator.generate_audiobook_from_chapters()
 ```
 
 ## Requirements
@@ -42,7 +77,7 @@ python generate_voice_samples.py [--descriptions] [--output-dir]
 Install all dependencies:
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 ### Core Dependencies
@@ -106,7 +141,7 @@ The pipeline uses an OpenAI-compatible API (LM Studio by default):
 ### GPU Settings
 
 - Default: `cuda:0`
-- Alternate GPU: Use `--alt_gpu` flag in `parse_epub.py`
+- Alternate GPU: Use `--device cuda:1` flag
 
 ## Output Files
 
@@ -115,6 +150,18 @@ The pipeline uses an OpenAI-compatible API (LM Studio by default):
 - `chapters/chapter_*.wav` - Individual voice samples
 - `chapters/chapter_*.mp3` - Final audiobook chapters
 - `characters_descriptions.json` - Character voice descriptions
+
+## File Structure
+
+| File | Purpose |
+|------|---------|
+| `audiobook_generator.py` | Main entry point - CLI pipeline + TTS generation + Gradio launcher |
+| `audiobook_gradio_ui.py` | Gradio UI components and event handlers |
+| `parse_chapter.py` | EPUB parsing + `write_chapters_to_txt()` helper |
+| `llm_label_speakers.py` | Stage 2 - LLM speaker labeling |
+| `llm_describe_character.py` | Stage 3 - Character descriptions |
+| `generate_voice_samples.py` | Stage 4 - Voice sample generation |
+| `config.py` | Shared configuration |
 
 ## Notes
 

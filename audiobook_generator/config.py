@@ -41,6 +41,7 @@ AUDIO_SETTINGS = {
     "alt_device": "cuda:1",
     "default_tts_engine": "kugelaudio",
     "supported_audio_extensions": [".wav", ".mp3", ".flac"],
+    "gradio_port": 7860,
     # Voice samples directory is now a separate path variable
 }
 
@@ -49,6 +50,8 @@ if os.environ.get("TTS_ENGINE"):
     AUDIO_SETTINGS["default_tts_engine"] = os.environ["TTS_ENGINE"]
 if os.environ.get("AUDIO_DEVICE"):
     AUDIO_SETTINGS["default_device"] = os.environ["AUDIO_DEVICE"]
+if os.environ.get("GRADIO_PORT"):
+    AUDIO_SETTINGS["gradio_port"] = int(os.environ["GRADIO_PORT"])
 
 
 # ============================================================================

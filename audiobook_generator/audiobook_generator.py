@@ -12,7 +12,7 @@ Usage:
     python audiobook_generator.py <epub_file> [--output-dir] [--verbose]
 
     # Launch Gradio interface
-    python audiobook_generator.py --gradio [--api-key KEY] [--port PORT]
+    python audiobook_generator.py --gradio [--api-key KEY] [--llm-port PORT] [--gradio-port PORT]
 """
 
 import argparse
@@ -780,7 +780,7 @@ class PipelineState:
 
 
 def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
-                      verbose: bool = False, api_key: str = None, port: str = None,
+                      verbose: bool = False, api_key: str = None, llm_port: str = None,
                       tts_engine: str = "kugelaudio", device: str = "cuda") -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
@@ -790,7 +790,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         max_chapters: Maximum number of chapters to process
         verbose: Print verbose output
         api_key: LLM API key for speaker labeling and character descriptions
-        port: LLM port for inference
+        llm_port: LLM endpoint port (e.g., LM Studio)
         tts_engine: 'kugelaudio' or 'vibevoice'
         device: CUDA device (e.g., 'cuda', 'cuda:1')
 
@@ -825,7 +825,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         result_msg, char_map, line_map = label_speakers(
             txt_file=str(chapter_file),
             api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
-            port=port or LLM_SETTINGS.get("port", "1234"),
+            port=llm_port or LLM_SETTINGS.get("port", "1234"),
             num_attempts=DEFAULTS.get("num_llm_attempts", 2),
             verbose=verbose
         )
@@ -843,7 +843,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     result_msg, character_descriptions = describe_characters(
         output_dir=str(state.output_dir),
         api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
-        port=port or LLM_SETTINGS.get("port", "1234"),
+        port=llm_port or LLM_SETTINGS.get("port", "1234"),
         verbose=verbose
     )
 
@@ -919,7 +919,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
 
 def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
-                            port: str = None, num_attempts: int = 2,
+                            llm_port: str = None, gradio_port: int = None,
+                            num_attempts: int = 2,
                             max_chapters: int = 10) -> None:
     """Create and launch the Gradio interface for the audiobook pipeline.
 
@@ -929,7 +930,8 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
     Args:
         output_dir: Output directory for generated files
         api_key: LLM API key
-        port: LLM port
+        llm_port: Port for LLM endpoint (e.g., LM Studio)
+        gradio_port: Port for Gradio web interface
         num_attempts: Number of LLM attempts
         max_chapters: Max chapters to process
     """
@@ -937,14 +939,20 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         from gradio_ui import create_interface, cleanup_temp_dir
         import gradio as gr
 
+        # Use provided LLM port or default
+        effective_llm_port = llm_port or LLM_SETTINGS.get("port", "1234")
+
+        # Use provided gradio port or default from config
+        effective_gradio_port = gradio_port if gradio_port is not None else AUDIO_SETTINGS.get("gradio_port", 7860)
+
         demo = create_interface(
             api_key_default=api_key or DEFAULTS.get("api_key", "lm-studio"),
-            port_default=port or LLM_SETTINGS.get("port", "1234"),
+            port_default=effective_llm_port,
             num_attempts_default=num_attempts,
             max_chapters_default=max_chapters
         )
 
-        demo.launch(share=False, theme=gr.themes.Soft())
+        demo.launch(share=False, theme=gr.themes.Soft(), server_port=effective_gradio_port, server_name="0.0.0.0")
 
     except ImportError as e:
         print(f"Error: Could not import gradio_ui module")
@@ -965,12 +973,13 @@ def main():
     parser.add_argument("--max-chapters", type=int, help="Maximum number of chapters to process")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print verbose output")
     parser.add_argument("--api-key", help="LLM API key for speaker labeling")
-    parser.add_argument("--port", help="LLM port for inference")
+    parser.add_argument("--llm-port", default="1234", help="LLM endpoint port (for LM Studio)")
     parser.add_argument("--tts-engine", default="kugelaudio", choices=["kugelaudio", "vibevoice"],
                         help="TTS engine to use")
     parser.add_argument("--device", default="cuda", help="CUDA device to use")
     parser.add_argument("--gradio", action="store_true", help="Launch Gradio interface instead of CLI")
     parser.add_argument("--num-llm-attempts", type=int, default=2, help="Number of LLM attempts for speaker labeling")
+    parser.add_argument("--gradio-port", type=int, default=None, help="Port for Gradio web interface")
 
     args = parser.parse_args()
 
@@ -979,7 +988,8 @@ def main():
         create_gradio_interface(
             output_dir=args.output_dir,
             api_key=args.api_key,
-            port=args.port,
+            llm_port=args.llm_port,
+            gradio_port=args.gradio_port,
             num_attempts=args.num_llm_attempts,
             max_chapters=args.max_chapters or DEFAULTS.get("max_chapters", 10)
         )
@@ -1000,7 +1010,7 @@ def main():
             max_chapters=args.max_chapters,
             verbose=args.verbose,
             api_key=args.api_key,
-            port=args.port,
+            llm_port=args.llm_port,
             tts_engine=args.tts_engine,
             device=args.device
         )

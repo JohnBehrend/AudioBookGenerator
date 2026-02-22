@@ -42,15 +42,6 @@ def load_character_descriptions(descriptions_file):
         return json.load(f)
 
 
-def create_sample_text_from_description(description):
-    """Create a short sample text from the character description."""
-    cleaned = description.replace('|', ', ')
-    sentences = cleaned.split('.')
-    if sentences:
-        return sentences[0][:DEFAULTS["sample_text_length"]].strip()
-    return cleaned[:DEFAULTS["sample_text_length"]].strip()
-
-
 def generate_voice_sample(tts_model, character_name, description, output_dir, max_new_tokens=None):
     """
     Generate a short voice sample for a character using VoiceDesign model.
@@ -60,7 +51,7 @@ def generate_voice_sample(tts_model, character_name, description, output_dir, ma
     """
     if max_new_tokens is None:
         max_new_tokens = DEFAULTS["max_new_tokens"]
-    sample_text = create_sample_text_from_description(description)
+    sample_text = DEFAULTS["qwen3_ref_text"]
     instruct = f"Voice design for {character_name}: {description[:DEFAULTS['description_length']]}"
 
     try:

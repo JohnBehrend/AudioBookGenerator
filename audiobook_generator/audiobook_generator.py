@@ -219,7 +219,10 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio", turbo: bool = 
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
 
     Returns:
-        Tuple of (model, processor, model_path)
+        For kugelaudio/vibevoice: Tuple of (model, processor, model_path)
+        For qwen3: Tuple of (voice_design_model, None, model_path, base_model)
+            where voice_design_model is used to create voice_clone_prompt,
+            and base_model is used for actual audio generation.
     """
     # Lazy imports to avoid requiring both TTS engines to be installed
     if tts_engine == 'kugelaudio':
@@ -244,6 +247,7 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio", turbo: bool = 
         # tts_model_read_chapters.set_ddpm_inference_steps(num_steps=13)
         tts_model_read_chapters.eval()
         processor = KugelAudioProcessor.from_pretrained(model_path)
+        return tts_model_read_chapters, processor, model_path
     elif tts_engine == 'vibevoice':
         model_path = "Jmica/VibeVoice7B"
         attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
@@ -256,19 +260,31 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio", turbo: bool = 
         # tts_model_read_chapters.set_ddpm_inference_steps(num_steps=13)
         tts_model_read_chapters.eval()
         processor = VibeVoiceProcessor.from_pretrained(model_path)
+        return tts_model_read_chapters, processor, model_path
     elif tts_engine == 'qwen3':
-        model_path = "Qwen/Qwen3-TTS-12Hz-1.7B"
+        # For Qwen3, we need TWO models:
+        # 1. VoiceDesign model: to generate reference clip and create voice_clone_prompt
+        # 2. Base model: to generate actual audio using the voice_clone_prompt
+        voice_design_model_path = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+        base_model_path = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
         attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
-        tts_model_read_chapters = Qwen3TTSModel.from_pretrained(
-            model_path,
+        voice_design_model = Qwen3TTSModel.from_pretrained(
+            voice_design_model_path,
             device_map=device,
             dtype=torch.bfloat16,
             **attn_kwargs
         )
-        tts_model_read_chapters.eval()
+        base_model = Qwen3TTSModel.from_pretrained(
+            base_model_path,
+            device_map=device,
+            dtype=torch.bfloat16,
+            **attn_kwargs
+        )
+        # Qwen3TTSModel doesn't have .eval(), skip it
         processor = None  # Qwen3 doesn't use a processor like kugelaudio/vibevoice
-
-    return tts_model_read_chapters, processor, model_path
+        # Return voice_design_model and base_model as a tuple
+        # Note: the return format is different for qwen3
+        return voice_design_model, None, voice_design_model_path, base_model
 
 
 def setup_validation_model(device: str = "cuda"):
@@ -288,6 +304,38 @@ def setup_validation_model(device: str = "cuda"):
     return WhisperModel(validation_model_name, device=device, compute_type="float16")
 
 
+def build_qwen3_voice_clone_prompt(voice_design_model, voice_path: str, ref_text: str, device: str):
+    """Build a voice_clone_prompt for Qwen3 using the VoiceDesign model.
+
+    This follows the recommended workflow from the Qwen3 documentation:
+    1. Use VoiceDesign model to generate a reference clip in the target style
+    2. Feed that clip into create_voice_clone_prompt to build a reusable prompt
+    3. Use the prompt with generate_voice_clone for all lines
+
+    Args:
+        voice_design_model: The Qwen3TTSModel loaded with VoiceDesign weights
+        voice_path: Path to the voice sample file to use as reference
+        ref_text: The reference text to use for voice design
+        device: Device to run on
+
+    Returns:
+        A voice_clone_prompt that can be reused for multiple generate_voice_clone calls
+    """
+    import soundfile as sf
+
+    # Load the voice sample
+    voice_audio, sr = sf.read(voice_path)
+
+    # Use the voice sample directly as reference audio for create_voice_clone_prompt
+    # The VoiceDesign model is used to ensure the voice quality matches
+    voice_clone_prompt = voice_design_model.create_voice_clone_prompt(
+        ref_audio=(voice_audio, sr),
+        ref_text=ref_text,
+    )
+
+    return voice_clone_prompt
+
+
 def generate_tts_for_line(
     chapter_idx: int,
     line_idx: int,
@@ -304,6 +352,7 @@ def generate_tts_for_line(
     validation_model = None,
     verbose: bool = False,
     voice_path: str = None,
+    voice_clone_prompts: dict = None,
 ):
     """Generate TTS audio for a single line.
 
@@ -316,13 +365,14 @@ def generate_tts_for_line(
         processor: TTS processor
         voice_mapper: VoiceMapper instance
         device: Device to run on
-        tts_engine: 'kugelaudio' or 'vibevoice'
+        tts_engine: 'kugelaudio', 'vibevoice', or 'qwen3'
         voice_path: Optional path to voice sample file. If not provided, uses voice_mapper.
         cfg_scale: CFG scale value
         output_dir: Output directory for audio files
         short_text_postfix: Postfix for validation
         validation_model: Faster-whisper model for validation
         verbose: Print verbose output
+        voice_clone_prompts: For Qwen3, dict mapping voice_name to voice_clone_prompt
 
     Returns:
         Tuple of (success: bool, ratio: float)
@@ -384,25 +434,32 @@ def generate_tts_for_line(
 
         if tts_engine == 'qwen3':
             # Qwen3 uses direct generation methods with voice cloning
-            # Use the voice sample as reference for voice cloning
             if voice_path is None:
                 voice_path = voice_mapper.get_voice_path(voice_name)
 
-            # Load the voice sample to use as reference for cloning
+            # Use voice_clone_prompt if available (preferred workflow)
+            # Otherwise, fall back to direct clone with ref_audio
             import soundfile as sf
-            voice_audio, sr = sf.read(voice_path)
 
-            # Use generate_voice_clone to clone from the voice sample
-            # The voice sample (voice_path) serves as the ref_audio
-            ref_text = DEFAULTS["qwen3_ref_text"]
+            if voice_clone_prompts and voice_name in voice_clone_prompts:
+                # Use the pre-built voice_clone_prompt (more efficient, consistent voice)
+                voice_clone_prompt = voice_clone_prompts[voice_name]
+                wavs, out_sr = tts_model.generate_voice_clone(
+                    text=full_script,
+                    language="English",
+                    voice_clone_prompt=voice_clone_prompt,
+                )
+            else:
+                # Fallback: direct clone using ref_audio (original approach)
+                voice_audio, sr = sf.read(voice_path)
+                ref_text = DEFAULTS["qwen3_ref_text"]
 
-            # Generate using VoiceClone model's generate_voice_clone method
-            wavs, out_sr = tts_model.generate_voice_clone(
-                text=full_script,
-                language="English",
-                ref_audio=voice_path,
-                ref_text=ref_text,
-            )
+                wavs, out_sr = tts_model.generate_voice_clone(
+                    text=full_script,
+                    language="English",
+                    ref_audio=voice_path,
+                    ref_text=ref_text,
+                )
 
             # Save audio using soundfile
             if wavs and len(wavs) > 0:
@@ -545,7 +602,8 @@ def generate_audiobook_from_chapters(
     verbose: bool = False,
     turbo: bool = False,
     progress: Optional[callable] = None,
-    validation_model = None
+    validation_model = None,
+    voice_clone_prompts: dict = None
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -558,13 +616,14 @@ def generate_audiobook_from_chapters(
         voices_map: Dict mapping character names to voice file paths (wav)
         output_dir: Output directory for audio files
         device: Device to run on
-        tts_engine: 'kugelaudio' or 'vibevoice'
+        tts_engine: 'kugelaudio', 'vibevoice', or 'qwen3'
         cfg_scale: CFG scale value
         max_chapters: Maximum number of chapters to process
         verbose: Print verbose output
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         progress: Optional progress callback (gr.Progress() for Gradio, None for CLI)
         validation_model: Optional faster-whisper validation model. If not provided, validation is skipped.
+        voice_clone_prompts: For Qwen3, dict mapping voice_name to pre-built voice_clone_prompt
 
     Returns:
         Tuple of (status_message, chapters_processed)
@@ -580,7 +639,16 @@ def generate_audiobook_from_chapters(
         with ProgressHandler(progress=progress, total=len(chapters_to_process), desc="Audiobook Generation") as progress_handler:
 
             # Setup models
-            tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)
+            voice_clone_prompts = {}
+            if tts_engine == 'qwen3':
+                # Qwen3 uses two models: VoiceDesign for building prompts, Base for generation
+                voice_design_model, _, _, base_model = setup_tts_engine(device, tts_engine, turbo)
+                tts_model_read_chapters = base_model  # Use base_model for generation
+                processor = None
+            else:
+                voice_design_model = None
+                base_model = None
+                tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)
             # Only setup validation model if explicitly provided (not None)
             # This avoids crashes from faster-whisper dependencies
             voice_mapper = VoiceMapper()
@@ -658,6 +726,16 @@ def generate_audiobook_from_chapters(
                         else:
                             voice_path = voice_mapper.get_voice_path(voice)
 
+                        # For Qwen3: Build voice_clone_prompt on-demand if not already built
+                        if tts_engine == 'qwen3' and voice not in voice_clone_prompts:
+                            if os.path.exists(voice_path):
+                                voice_clone_prompts[voice] = build_qwen3_voice_clone_prompt(
+                                    voice_design_model,
+                                    voice_path,
+                                    DEFAULTS["qwen3_ref_text"],
+                                    device
+                                )
+
                         # Generate TTS for this line
                         success, ratio = generate_tts_for_line(
                             chapter_idx=i,
@@ -674,7 +752,8 @@ def generate_audiobook_from_chapters(
                             short_text_postfix=short_text_postfix,
                             validation_model=validation_model,
                             verbose=verbose,
-                            voice_path=voice_path
+                            voice_path=voice_path,
+                            voice_clone_prompts=voice_clone_prompts
                         )
                         progress_handler.update((j + 1)/len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j} Ratio {int(ratio * 100)}")
                         if verbose:
@@ -956,7 +1035,16 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         print(f"[STAGE 5] Generating audiobook...")
 
     # Setup models for TTS generation
-    tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)
+    voice_clone_prompts = {}
+    if tts_engine == 'qwen3':
+        # Qwen3 uses two models: VoiceDesign for building prompts, Base for generation
+        voice_design_model, _, _, base_model = setup_tts_engine(device, tts_engine, turbo)
+        tts_model_read_chapters = base_model
+        processor = None
+    else:
+        voice_design_model = None
+        base_model = None
+        tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)
     validation_model = setup_validation_model(device)
     voice_mapper = VoiceMapper()
 
@@ -984,7 +1072,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 turbo=turbo,
                 verbose=verbose,
                 progress=None,
-                validation_model=validation_model
+                validation_model=validation_model,
+                voice_clone_prompts=voice_clone_prompts
             )
 
             if verbose:
@@ -1173,3 +1262,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    input("Press any key to cleanup directory and close.")

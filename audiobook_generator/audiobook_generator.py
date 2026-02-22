@@ -448,7 +448,10 @@ def generate_tts_for_line(
                     trimmed_audio = audio[0:(clip_end1 * 1000)]
                     trimmed_audio.export(output_path, format="wav")
 
-        if ratio > max_ratio:
+        # Save the generated audio as .wav file
+        # When validation is enabled: only save if ratio improved
+        # When validation is disabled: save after first attempt (ratio stays 0.0)
+        if validation_model is None or ratio > max_ratio:
             max_ratio = ratio
             final_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.wav")
             if os.path.exists(final_path):

@@ -47,7 +47,7 @@ from time import sleep
 # Import from package modules - using clean public interfaces
 import parse_chapter
 from llm_label_speakers import label_speakers  # Clean public function
-from llm_describe_character import describe_characters  # Clean public function
+from llm_describe_character import describe_characters as describe_chars  # Clean public function
 from generate_voice_samples import generate_voice_samples as gen_voice_samples
 from utils import get_characters_from_map_files  # Use shared version
 from audiobook_generator import (
@@ -325,7 +325,7 @@ def process_chapters_for_labels(
 # ============================================================================
 
 
-def describe_characters(
+def describe_characters_ui(
     api_key: str,
     port: str,
     pipeline_state: Optional[str],
@@ -359,9 +359,9 @@ def describe_characters(
 
         log_output += f"\nFound {num_characters} characters from map files. (temp: {chapters_dir.parent})"
 
-        # Call describe_characters directly instead of subprocess
+        # Call describe_chars from llm_describe_character module
         progress(0.5, desc=f"Describing {num_characters} characters with LLM... (temp: {chapters_dir.parent})")
-        result_msg, character_descriptions = describe_characters(
+        result_msg, character_descriptions = describe_chars(
             output_dir=str(chapters_dir),
             api_key=api_key,
             port=port,
@@ -958,7 +958,7 @@ def create_interface(
 
         # Describe Characters - Stage 3
         describe_btn.click(
-            fn=describe_characters,
+            fn=describe_characters_ui,
             inputs=[api_key_input, port_input, pipeline_state, log_output],
             outputs=[log_output, pipeline_state, characters_state],
         ).then(

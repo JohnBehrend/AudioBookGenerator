@@ -617,7 +617,8 @@ def describe_characters(
         verbose=verbose
     )
 
-    return descriptions
+    result_msg = f"Successfully described {len(descriptions)} characters."
+    return result_msg, descriptions
 
 
 # Backward compatibility alias

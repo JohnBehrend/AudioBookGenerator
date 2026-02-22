@@ -17,6 +17,16 @@ import torch
 # Import config for default values
 from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
 
+# Helper to check if flash-attn is available
+def _get_attn_implementation() -> Optional[str]:
+    """Return flash_attention_2 if available, otherwise None."""
+    try:
+        import flash_attn
+        return "flash_attention_2"
+    except ImportError:
+        return None
+
+
 try:
     from qwen_tts import Qwen3TTSModel
 except ImportError:
@@ -200,11 +210,13 @@ def generate_voice_samples(
         start_load = time.time()
 
         try:
+            attn_impl = _get_attn_implementation()
+            attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
             tts_model = Qwen3TTSModel.from_pretrained(
                 model_path,
                 device_map=device,
                 dtype=torch.bfloat16,
-                attn_implementation="flash_attention_2"
+                **attn_kwargs
             )
         except Exception as e:
             return f"Error loading model: {e}", {}

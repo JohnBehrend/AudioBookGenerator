@@ -823,7 +823,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         if verbose:
             print(f"  Processing {chapter_file.name} ({i+1}/{num_chapters})")
 
-        result_msg, char_map, line_map = label_speakers_in_file(
+        result_msg, char_map, line_map = label_speakers(
             txt_file=str(chapter_file),
             api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
             port=port or LLM_SETTINGS.get("port", "1234"),
@@ -841,7 +841,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     if verbose:
         print(f"[STAGE 3] Describing {len(state.characters)} characters...")
 
-    result_msg, character_descriptions = describe_characters_in_dir(
+    result_msg, character_descriptions = describe_characters(
         output_dir=str(state.output_dir),
         api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
         port=port or LLM_SETTINGS.get("port", "1234"),

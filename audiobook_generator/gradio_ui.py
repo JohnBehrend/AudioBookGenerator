@@ -28,6 +28,7 @@ from . import parse_chapter
 from .llm_label_speakers import label_speakers  # Clean public function
 from .llm_describe_character import describe_characters  # Clean public function
 from .generate_voice_samples import generate_voice_samples as gen_voice_samples
+from .utils import get_characters_from_map_files  # Use shared version
 from .audiobook_generator import (
     PipelineState,
     generate_audiobook_from_chapters,
@@ -110,26 +111,6 @@ def get_pipeline_state() -> Optional[str]:
     state_manager = PipelineState(str(chapters_dir.parent))
     state_manager.chapters_dir = chapters_dir
     return state_manager.get_pipeline_state()
-
-
-def get_characters_from_map_files(chapters_dir: Path) -> List[str]:
-    """Extract unique character names from map.json files."""
-    characters = set()
-
-    map_files = glob.glob(str(chapters_dir / "*.map.json"))
-    for map_file in map_files:
-        try:
-            with open(map_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            character_map = data[0] if isinstance(data, list) and len(data) > 0 else data.get("character_map", {})
-            if isinstance(character_map, dict):
-                for char_name in character_map.values():
-                    if isinstance(char_name, str):
-                        characters.add(char_name)
-        except Exception:
-            pass
-
-    return sorted(list(characters))
 
 
 def get_character_wav_file(character_name: str, chapters_dir: Path) -> Optional[str]:
@@ -373,7 +354,6 @@ def describe_characters(
         return log_output, new_state, characters_state
 
     except Exception as e:
-        import traceback
         log_output += f"\nError describing characters: {str(e)}"
         log_output += f"\n{traceback.format_exc()}"
         return log_output, pipeline_state, None

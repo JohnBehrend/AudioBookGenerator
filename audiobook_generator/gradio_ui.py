@@ -19,6 +19,7 @@ import glob
 import tempfile
 import shutil
 import traceback
+import atexit
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
 from time import sleep
@@ -61,7 +62,11 @@ DEFAULT_MAX_CHAPTERS = DEFAULTS["max_chapters"]
 def get_chapters_dir() -> Optional[Path]:
     """Get or create a temporary chapters directory for this session."""
     if not hasattr(get_chapters_dir, "_temp_dir"):
-        get_chapters_dir._temp_dir = tempfile.mkdtemp(prefix="jbab_chapters_")
+        # Use TemporaryDirectory which auto-cleans on program exit
+        get_chapters_dir._temp_context = tempfile.TemporaryDirectory(prefix="jbab_chapters_")
+        get_chapters_dir._temp_dir = get_chapters_dir._temp_context.name
+        # Register cleanup on normal exit
+        atexit.register(cleanup_temp_dir)
     if not hasattr(get_chapters_dir, "_chapters_dir"):
         get_chapters_dir._chapters_dir = Path(get_chapters_dir._temp_dir) / "chapters"
         get_chapters_dir._chapters_dir.mkdir(parents=True, exist_ok=True)
@@ -99,6 +104,10 @@ def cleanup_temp_dir() -> None:
             shutil.rmtree(temp_dir)
         get_chapters_dir._temp_dir = None
         get_chapters_dir._chapters_dir = None
+    # Clean up the TemporaryDirectory context if it exists
+    if hasattr(get_chapters_dir, "_temp_context") and get_chapters_dir._temp_context:
+        get_chapters_dir._temp_context.cleanup()
+        get_chapters_dir._temp_context = None
 
 
 def get_pipeline_state() -> Optional[str]:

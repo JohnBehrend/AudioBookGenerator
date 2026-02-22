@@ -383,25 +383,25 @@ def generate_tts_for_line(
         output_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.tmp.wav")
 
         if tts_engine == 'qwen3':
-            # Qwen3 uses direct generation methods, not processor inputs
+            # Qwen3 uses direct generation methods with voice cloning
             # Use the voice sample as reference for voice cloning
             if voice_path is None:
                 voice_path = voice_mapper.get_voice_path(voice_name)
 
-            # Load the voice sample to use as reference
+            # Load the voice sample to use as reference for cloning
             import soundfile as sf
             voice_audio, sr = sf.read(voice_path)
 
-            # Create instruct text that describes the voice style
-            # Using the character name as the primary indicator
-            instruct = f"Voice design for {voice_name}: Read this text using this voice style."
+            # Use generate_voice_clone to clone from the voice sample
+            # The voice sample (voice_path) serves as the ref_audio
+            ref_text = DEFAULTS["qwen3_ref_text"]
 
-            # Generate using VoiceDesign model's generate_voice_design method
-            wavs, out_sr = tts_model.generate_voice_design(
+            # Generate using VoiceClone model's generate_voice_clone method
+            wavs, out_sr = tts_model.generate_voice_clone(
                 text=full_script,
-                language="Auto",
-                instruct=instruct,
-                max_new_tokens=DEFAULTS["max_new_tokens"],
+                language="English",
+                ref_audio=voice_path,
+                ref_text=ref_text,
             )
 
             # Save audio using soundfile

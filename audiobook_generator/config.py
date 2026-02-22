@@ -73,6 +73,8 @@ DEFAULTS = {
     "validation_model_name": "large-v2",
     "min_silence_len": 1250,
     "silence_thresh": -60,
+    # Qwen3 voice cloning reference text
+    "qwen3_ref_text": "Okay. Yeah. I resent you. I love you. I respect you. But you know what? You blew it! And thanks to you.",
 }
 
 

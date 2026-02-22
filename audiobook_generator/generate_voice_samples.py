@@ -54,6 +54,9 @@ def create_sample_text_from_description(description):
 def generate_voice_sample(tts_model, character_name, description, output_dir, max_new_tokens=None):
     """
     Generate a short voice sample for a character using VoiceDesign model.
+
+    Uses voice design with an instruct prompt to generate speech
+    in the designed voice style.
     """
     if max_new_tokens is None:
         max_new_tokens = DEFAULTS["max_new_tokens"]

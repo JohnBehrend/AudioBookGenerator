@@ -68,10 +68,10 @@ import pandas as pd
 # consistent seeding
 from transformers import set_seed
 
-# Import modular stage functions
+# Import modular stage functions - using clean public interfaces
 from . import parse_chapter
-from .llm_label_speakers import label_speakers_in_file
-from .llm_describe_character import describe_characters_in_dir
+from .llm_label_speakers import label_speakers  # Clean public function
+from .llm_describe_character import describe_characters  # Clean public function
 from .generate_voice_samples import generate_voice_samples as gen_voice_samples
 
 

@@ -143,8 +143,11 @@ def main():
 
 
 # ============================================================================
-# MODULE FUNCTIONS FOR GRADIO INTERFACE
+# PUBLIC FUNCTIONS
 # ============================================================================
+# generate_voice_samples is the public function used by both CLI and Gradio UI.
+# The CLI main() function above calls this function to do the actual work.
+# This provides a single, consistent interface for all callers.
 
 from typing import Dict, Optional, Tuple
 

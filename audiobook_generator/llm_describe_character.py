@@ -16,6 +16,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from .config import LLM_SETTINGS, OUTPUT_DIR
+from .utils import get_llm_client, compare_characters, get_characters_from_map_files
 
 
 # Default prompt for character description
@@ -59,31 +60,7 @@ For multiple characters, return a JSON object where keys are character names and
 """
 
 
-def get_characters_from_map_files(chapters_dir: Path) -> list:
-    """Extract unique character names from map.json files.
-
-    Args:
-        chapters_dir: Path to the directory containing chapter map files
-
-    Returns:
-        Sorted list of unique character names
-    """
-    characters = set()
-
-    map_files = glob.glob(str(chapters_dir / "*.map.json"))
-    for map_file in map_files:
-        try:
-            with open(map_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            character_map = data[0] if isinstance(data, list) and len(data) > 0 else data.get("character_map", {})
-            if isinstance(character_map, dict):
-                for char_name in character_map.values():
-                    if isinstance(char_name, str):
-                        characters.add(char_name)
-        except Exception:
-            pass
-
-    return sorted(list(characters))
+# get_characters_from_map_files is now imported from utils (uses glob with sorted output)
 
 
 def load_characters(characters_file: str) -> list:
@@ -93,30 +70,7 @@ def load_characters(characters_file: str) -> list:
     return data.get('characters', [])
 
 
-def compare_characters(character_name: str, other_character: str) -> bool:
-    """Check if two characters are likely the same based on name similarity.
-
-    Only matches when one name contains the other as a complete word/token
-    (separated by spaces on both sides), or exact match.
-    """
-    if character_name == other_character:
-        return True
-
-    lower1, lower2 = character_name.lower(), other_character.lower()
-
-    # Check if one contains the other as a complete word (space-separated)
-    # This catches "John Smith" containing "John" but not "Ara" containing "A"
-    if f" {lower1} " in f" {lower2} " or f" {lower2} " in f" {lower1} ":
-        return True
-
-    # Also check prefix/suffix with space boundaries
-    # e.g., "John" matches "John Smith" but not "Johnson"
-    # Use shorter/longer to handle both directions properly
-    shorter, longer = (lower1, lower2) if len(lower1) < len(lower2) else (lower2, lower1)
-    if longer.startswith(shorter + " ") or longer.endswith(" " + shorter):
-        return True
-
-    return False
+# compare_characters is now imported from utils (uses simple substring matching)
 
 
 def find_duplicate_characters(characters: list) -> dict:
@@ -414,10 +368,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    client = OpenAI(
-        base_url=f"http://localhost:{args.port}/v1",
-        api_key=args.api_key
-    )
+    client = get_llm_client(args.api_key, args.port)
 
     # Load characters from characters.json or extract from map files
     if os.path.exists(args.characters_file):
@@ -456,14 +407,15 @@ def main() -> None:
         print(f"\nDescription for '{args.single_character}':")
         print(description)
     else:
-        # Use shared logic for batch description
-        descriptions = describe_characters_shared(
-            characters=characters,
-            chapter_texts=chapter_texts,
-            chapter_files=chapter_files,
+        # Use the public function for batch description
+        descriptions = describe_characters(
             output_dir=args.output_dir,
-            client=client,
+            characters_file=args.characters_file,
+            chapters_dir=args.chapters_dir,
+            api_key=args.api_key,
+            port=args.port,
             model=args.model,
+            single_character=None,
             wiki_url_template=args.wiki_url_template,
             verbose=args.verbose
         )
@@ -568,86 +520,105 @@ def describe_characters_shared(
 
 
 # ============================================================================
-# MODULE FUNCTIONS FOR GRADIO INTERFACE
+# PUBLIC FUNCTIONS - Module function for Gradio interface
 # ============================================================================
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 
 
-def describe_characters_in_dir(
+def describe_characters(
     output_dir: str,
-    api_key: str,
-    port: str,
+    characters_file: str = "characters.json",
+    chapters_dir: str = "chapters",
+    api_key: str = None,
+    port: str = None,
     model: str = "local-model",
     single_character: Optional[str] = None,
+    wiki_url_template: str = "",
     verbose: bool = False
-) -> Tuple[str, Dict[str, str]]:
-    """Describe characters in a directory using LLM.
+) -> Dict[str, str]:
+    """Describe characters from an audiobook using an LLM.
 
-    This is a simplified interface for calling character description directly
-    from the Gradio UI without subprocess.
+    This is the main public function for character description. It can be called
+    directly or used by the CLI. For backward compatibility with Gradio UI,
+    this function handles all the orchestration.
 
     Args:
-        output_dir: Directory containing chapter map files and chapter text files
-        api_key: API key for the LLM (can be any string for LM Studio)
+        output_dir: Directory to save output files
+        characters_file: Path to characters.json file
+        chapters_dir: Directory containing chapter text files
+        api_key: API key for the LLM
         port: Port for the LLM inference
         model: Model name to use for inference
         single_character: Describe only one specific character
+        wiki_url_template: Optional URL template for wiki lookup
         verbose: Print verbose output
 
     Returns:
-        Tuple of (status_message, character_descriptions)
+        Dict of character descriptions
     """
-    try:
-        from pathlib import Path
-        from openai import OpenAI
+    import json
+    from pathlib import Path
+    from openai import OpenAI
 
-        chapters_path = Path(output_dir)
+    chapters_path = Path(output_dir)
 
-        # Load characters from map files
-        characters = get_characters_from_map_files(chapters_path)
-
-        if not characters:
-            return "No characters found in map files.", {}
-
-        if single_character:
-            if single_character not in characters:
-                return f"Character '{single_character}' not found.", {}
-            characters = [single_character]
-
-        # Load chapter texts for context
-        chapter_texts = []
-        chapter_files = []
-        if chapters_path.is_dir():
-            chapter_files = sorted(chapters_path.glob("chapter_*.txt"))
-            for chapter_file in chapter_files:
-                chapter_texts.append(load_chapter_text(str(chapter_file)))
-            if verbose:
-                print(f"Loaded {len(chapter_texts)} chapter files for context")
-
-        # Initialize client
-        client = OpenAI(
-            base_url=f"http://localhost:{port}/v1",
-            api_key=api_key
-        )
-
-        # Use shared logic
-        descriptions = describe_characters_shared(
-            characters=characters,
-            chapter_texts=chapter_texts,
-            chapter_files=chapter_files,
-            output_dir=output_dir,
-            client=client,
-            model=model,
-            wiki_url_template="",
-            verbose=verbose
-        )
-
-        return f"Successfully described {len(descriptions)} characters.", descriptions
-
-    except Exception as e:
-        import traceback
-        error_msg = f"Error describing characters: {str(e)}\n{traceback.format_exc()}"
+    # Load characters from characters.json or extract from map files
+    if os.path.exists(characters_file):
+        characters = load_characters(characters_file)
         if verbose:
-            print(error_msg)
-        return error_msg, {}
+            print(f"Loaded {len(characters)} characters from {characters_file}")
+    else:
+        # Try to extract characters from map files in the output_dir
+        if chapters_path.is_dir():
+            characters = get_characters_from_map_files(chapters_path)
+            if verbose:
+                print(f"Extracted {len(characters)} characters from map files in {output_dir}")
+        else:
+            if verbose:
+                print(f"Characters file not found: {characters_file}", file=sys.stderr)
+            return {}
+
+    if not characters:
+        if verbose:
+            print("No characters found.", file=sys.stderr)
+        return {}
+
+    if single_character:
+        if single_character not in characters:
+            if verbose:
+                print(f"Character '{single_character}' not found.", file=sys.stderr)
+            return {}
+        characters = [single_character]
+
+    # Load chapter texts for context
+    chapter_texts = []
+    chapter_files = []
+    chapters_dir_path = Path(chapters_dir)
+    if chapters_dir_path.is_dir():
+        chapter_files = sorted(chapters_dir_path.glob("chapter_*.txt"))
+        for chapter_file in chapter_files:
+            chapter_texts.append(load_chapter_text(str(chapter_file)))
+        if verbose:
+            print(f"Loaded {len(chapter_texts)} chapter files for context")
+
+    # Initialize client
+    client = get_llm_client(api_key or LLM_SETTINGS["api_key"], port or LLM_SETTINGS["port"])
+
+    # Use shared logic
+    descriptions = describe_characters_shared(
+        characters=characters,
+        chapter_texts=chapter_texts,
+        chapter_files=chapter_files,
+        output_dir=output_dir,
+        client=client,
+        model=model,
+        wiki_url_template=wiki_url_template,
+        verbose=verbose
+    )
+
+    return descriptions
+
+
+# Backward compatibility alias
+describe_characters_in_dir = describe_characters

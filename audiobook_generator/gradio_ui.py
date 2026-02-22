@@ -23,10 +23,10 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
 from time import sleep
 
-# Import from package modules
+# Import from package modules - using clean public interfaces
 from . import parse_chapter
-from .llm_label_speakers import label_speakers_in_file
-from .llm_describe_character import describe_characters_in_dir
+from .llm_label_speakers import label_speakers  # Clean public function
+from .llm_describe_character import describe_characters  # Clean public function
 from .generate_voice_samples import generate_voice_samples as gen_voice_samples
 from .audiobook_generator import (
     PipelineState,

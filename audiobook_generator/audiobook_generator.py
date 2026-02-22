@@ -396,7 +396,8 @@ def generate_tts_for_line(
 
     while ratio < 0.85 and retries < 5:
         set_seed(42 + retries)
-
+        inputs = None
+        outputs = None
         if tts_engine == 'kugelaudio':
             # Use KugelAudio processor with voice prompt
             # Use provided voice_path if available, otherwise look up via voice_mapper
@@ -419,22 +420,10 @@ def generate_tts_for_line(
                 return_tensors="pt",
                 return_attention_mask=True,
             )
-        elif tts_engine == 'qwen3':
-            # Use Qwen3 TTS model with voice clone
-            # Use provided voice_path if available, otherwise look up via voice_mapper
-            if voice_path is None:
-                voice_path = voice_mapper.get_voice_path(voice_name)
-            # For VoiceDesign model, use generate_voice_design with instruct
-            # Note: qwen3 doesn't use processor like kugelaudio/vibevoice
-            inputs = None  # Qwen3 uses direct generation methods, not processor inputs
 
         output_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.tmp.wav")
 
         if tts_engine == 'qwen3':
-            # Qwen3 uses direct generation methods with voice cloning
-            if voice_path is None:
-                voice_path = voice_mapper.get_voice_path(voice_name)
-
             # Use voice_clone_prompt if available (preferred workflow)
             # Otherwise, fall back to direct clone with ref_audio
             import soundfile as sf
@@ -448,22 +437,13 @@ def generate_tts_for_line(
                     voice_clone_prompt=voice_clone_prompt,
                 )
             else:
-                # Fallback: direct clone using ref_audio (original approach)
-                voice_audio, sr = sf.read(voice_path)
-                ref_text = DEFAULTS["qwen3_ref_text"]
-
-                wavs, out_sr = tts_model.generate_voice_clone(
-                    text=full_script,
-                    language="English",
-                    ref_audio=voice_path,
-                    ref_text=ref_text,
-                )
+                raise Exception("Invalid voice_clone_prompt.")
 
             # Save audio using soundfile
             if wavs and len(wavs) > 0:
                 sf.write(output_path, wavs[0], out_sr)
             else:
-                return False, 0.0
+                raise Exception("Empty Qwen3 tts speak for chapter text")
         else:
             # KugelAudio and VibeVoice use processor inputs
             for k, v in inputs.items():
@@ -492,9 +472,8 @@ def generate_tts_for_line(
                     output_path=output_path,
                 )
 
-        if tts_engine != 'qwen3':
-            del inputs
-            del outputs
+        del inputs
+        del outputs
 
         gc.collect()
         torch.cuda.empty_cache()
@@ -570,7 +549,12 @@ def generate_tts_for_line(
             final_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.wav")
             if os.path.exists(final_path):
                 os.unlink(final_path)
-            time.sleep(2)
+            timeout = 60  # 1 minute
+            start_time = time.time()
+            while os.path.exists(final_path):
+                if time.time() - start_time >= timeout:
+                    break
+                time.sleep(1)
             os.rename(output_path, final_path)
 
         retries += 1
@@ -1039,22 +1023,19 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         # Count chapters for progress
         num_chapters_to_process = len(chapters) if chapters else 0
 
-        with ProgressHandler(progress=None, use_tqdm=True, total=num_chapters_to_process, desc="Generating audiobook") as handler:
-            status, processed = generate_audiobook_from_chapters(
-                chapters=chapters,
-                chapter_maps=state.chapter_maps,
-                voices_map=state.voice_map,
-                output_dir=str(state.chapters_dir),
-                device=device,
-                tts_engine=tts_engine,
-                turbo=turbo,
-                verbose=verbose,
-                progress=None)
+        status, processed = generate_audiobook_from_chapters(
+            chapters=chapters,
+            chapter_maps=state.chapter_maps,
+            voices_map=state.voice_map,
+            output_dir=str(state.chapters_dir),
+            device=device,
+            tts_engine=tts_engine,
+            turbo=turbo,
+            verbose=verbose,
+            progress=None)
 
-            if verbose:
-                print(f"  {status}")
-
-            handler.update(processed, desc=f"Generated {processed} chapters")
+        if verbose:
+            print(f"  {status}")
 
         # MP3 files are created during generate_audiobook_from_chapters
         mp3_files = sorted(glob.glob(str(state.chapters_dir / "chapter_*.mp3")))

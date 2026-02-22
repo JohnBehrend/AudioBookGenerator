@@ -965,7 +965,7 @@ def create_interface(
             turbo_checkbox = gr.Checkbox(
                 label="Use KugelAudio Turbo Model (kugel-1-turbo)",
                 value=False,
-                info="Enable the faster kugel-1-turbo TTS model"
+                info="Enable the faster kugel-1-turbo TTS model. Only applicable for kugelaudio engine."
             )
 
             # EPUB upload

@@ -215,7 +215,7 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio", turbo: bool = 
 
     Args:
         device: Device to run on ('cuda:0' or 'cuda:1')
-        tts_engine: Either 'kugelaudio' or 'vibevoice'
+        tts_engine: Either 'kugelaudio', 'vibevoice', or 'qwen3'
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
 
     Returns:
@@ -225,9 +225,11 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio", turbo: bool = 
     if tts_engine == 'kugelaudio':
         from kugelaudio_open.processors.kugelaudio_processor import KugelAudioProcessor
         from kugelaudio_open.models.kugelaudio_inference import KugelAudioForConditionalGenerationInference
-    else:
+    elif tts_engine == 'vibevoice':
         from vibevoice.processor.vibevoice_processor import VibeVoiceProcessor
         from vibevoice.modular.modeling_vibevoice_inference import VibeVoiceForConditionalGenerationInference
+    elif tts_engine == 'qwen3':
+        from qwen_tts import Qwen3TTSModel
 
     attn_impl = _get_attn_implementation()
     if tts_engine == 'kugelaudio':
@@ -242,7 +244,7 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio", turbo: bool = 
         # tts_model_read_chapters.set_ddpm_inference_steps(num_steps=13)
         tts_model_read_chapters.eval()
         processor = KugelAudioProcessor.from_pretrained(model_path)
-    else:
+    elif tts_engine == 'vibevoice':
         model_path = "Jmica/VibeVoice7B"
         attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
         tts_model_read_chapters = VibeVoiceForConditionalGenerationInference.from_pretrained(
@@ -254,6 +256,17 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio", turbo: bool = 
         # tts_model_read_chapters.set_ddpm_inference_steps(num_steps=13)
         tts_model_read_chapters.eval()
         processor = VibeVoiceProcessor.from_pretrained(model_path)
+    elif tts_engine == 'qwen3':
+        model_path = "Qwen/Qwen3-TTS-12Hz-1.7B"
+        attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
+        tts_model_read_chapters = Qwen3TTSModel.from_pretrained(
+            model_path,
+            device_map=device,
+            dtype=torch.bfloat16,
+            **attn_kwargs
+        )
+        tts_model_read_chapters.eval()
+        processor = None  # Qwen3 doesn't use a processor like kugelaudio/vibevoice
 
     return tts_model_read_chapters, processor, model_path
 
@@ -347,7 +360,7 @@ def generate_tts_for_line(
                 padding=True,
                 return_tensors="pt",
             )
-        else:
+        elif tts_engine == 'vibevoice':
             # Use VibeVoice processor with voice_samples
             if voice_path is None:
                 voice_path = voice_mapper.get_voice_path(voice_name)
@@ -358,37 +371,75 @@ def generate_tts_for_line(
                 return_tensors="pt",
                 return_attention_mask=True,
             )
-
-        for k, v in inputs.items():
-            if torch.is_tensor(v):
-                inputs[k] = v.to(device)
-
-        outputs = tts_model.generate(
-            **inputs,
-            max_new_tokens=DEFAULTS["max_new_tokens"],
-            cfg_scale=cfg_scale,
-            tokenizer=processor.tokenizer,
-            do_sample=False,
-            verbose=False
-        )
+        elif tts_engine == 'qwen3':
+            # Use Qwen3 TTS model with voice clone
+            # Use provided voice_path if available, otherwise look up via voice_mapper
+            if voice_path is None:
+                voice_path = voice_mapper.get_voice_path(voice_name)
+            # For VoiceDesign model, use generate_voice_design with instruct
+            # Note: qwen3 doesn't use processor like kugelaudio/vibevoice
+            inputs = None  # Qwen3 uses direct generation methods, not processor inputs
 
         output_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.tmp.wav")
 
-        if tts_engine == 'kugelaudio':
-            # KugelAudio returns audio directly in speech_outputs
-            processor.save_audio(
-                outputs.speech_outputs[0],
-                output_path=output_path,
-            )
-        else:
-            # VibeVoice also returns audio in speech_outputs
-            processor.save_audio(
-                outputs.speech_outputs[0],
-                output_path=output_path,
+        if tts_engine == 'qwen3':
+            # Qwen3 uses direct generation methods, not processor inputs
+            # Use the voice sample as reference for voice cloning
+            if voice_path is None:
+                voice_path = voice_mapper.get_voice_path(voice_name)
+
+            # Load the voice sample to use as reference
+            import soundfile as sf
+            voice_audio, sr = sf.read(voice_path)
+
+            # Create instruct text that describes the voice style
+            # Using the character name as the primary indicator
+            instruct = f"Voice design for {voice_name}: Read this text using this voice style."
+
+            # Generate using VoiceDesign model's generate_voice_design method
+            wavs, out_sr = tts_model.generate_voice_design(
+                text=full_script,
+                language="Auto",
+                instruct=instruct,
+                max_new_tokens=DEFAULTS["max_new_tokens"],
             )
 
-        del inputs
-        del outputs
+            # Save audio using soundfile
+            if wavs and len(wavs) > 0:
+                sf.write(output_path, wavs[0], out_sr)
+            else:
+                return False, 0.0
+        else:
+            # KugelAudio and VibeVoice use processor inputs
+            for k, v in inputs.items():
+                if torch.is_tensor(v):
+                    inputs[k] = v.to(device)
+
+            outputs = tts_model.generate(
+                **inputs,
+                max_new_tokens=DEFAULTS["max_new_tokens"],
+                cfg_scale=cfg_scale,
+                tokenizer=processor.tokenizer,
+                do_sample=False,
+                verbose=False
+            )
+
+            if tts_engine == 'kugelaudio':
+                # KugelAudio returns audio directly in speech_outputs
+                processor.save_audio(
+                    outputs.speech_outputs[0],
+                    output_path=output_path,
+                )
+            else:
+                # VibeVoice also returns audio in speech_outputs
+                processor.save_audio(
+                    outputs.speech_outputs[0],
+                    output_path=output_path,
+                )
+
+        if tts_engine != 'qwen3':
+            del inputs
+            del outputs
 
         gc.collect()
         torch.cuda.empty_cache()
@@ -913,6 +964,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         print(f"  TTS engine: {tts_engine}")
         if turbo and tts_engine == "kugelaudio":
             print(f"  Using turbo model (kugel-1-turbo)")
+        elif turbo and tts_engine != "kugelaudio":
+            print(f"  Warning: --turbo flag is only valid for kugelaudio engine, ignoring for {tts_engine}")
         print(f"  Device: {device}")
 
     # Generate TTS for all chapters
@@ -1032,7 +1085,7 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true", help="Print verbose output")
     parser.add_argument("--api-key", help="LLM API key for speaker labeling")
     parser.add_argument("--llm-port", default="1234", help="LLM endpoint port (for LM Studio)")
-    parser.add_argument("--tts-engine", default="kugelaudio", choices=["kugelaudio", "vibevoice"],
+    parser.add_argument("--tts-engine", default="kugelaudio", choices=["kugelaudio", "vibevoice", "qwen3"],
                         help="TTS engine to use")
     parser.add_argument("--turbo", action="store_true", help="Use KugelAudio turbo model (kugel-1-turbo)")
     parser.add_argument("--device", default="cuda", help="CUDA device to use")

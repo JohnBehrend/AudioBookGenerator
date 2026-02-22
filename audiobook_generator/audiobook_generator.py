@@ -238,7 +238,7 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio"):
             torch_dtype=torch.bfloat16,
             device_map=device,
             **attn_kwargs,
-        ).to(device)
+        )
         # tts_model_read_chapters.set_ddpm_inference_steps(num_steps=13)
         tts_model_read_chapters.eval()
         processor = KugelAudioProcessor.from_pretrained(model_path)
@@ -265,9 +265,14 @@ def setup_validation_model(device: str = "cuda"):
         device: Device to run on
 
     Returns:
-        WhisperX model
+        WhisperX model or None if validation is disabled
     """
-    return whisperx.load_model("distil-medium.en", device, compute_type="float16")
+    validation_model_name = DEFAULTS.get("validation_model_name")
+
+    if validation_model_name is None:
+        return None
+
+    return whisperx.load_model(validation_model_name, device, compute_type="float16")
 
 
 def generate_tts_for_line(

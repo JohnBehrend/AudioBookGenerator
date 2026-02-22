@@ -6,6 +6,7 @@ import argparse
 import os
 import sys
 import json
+import re
 from typing import Dict, Tuple
 from collections import Counter
 from openai import OpenAI
@@ -251,6 +252,8 @@ IMPORTANT:
 - TAKE YOUR TIME AND PROCESS ALL QUOTED LINES INDIVIDUALLY.
 - Report every line with a quote. There will be many times where thinking will have a range of lines. We need to process each quoted line and print the speaker for each line.
 """
+# PROMPT_TXT: Base LLM prompt for speaker labeling.
+# Used by create_prompt_with_context() to build the full prompt with character context.
 PROMPT_TXT = """
 # Role: Provide detailed character attribution annotations for dialogues within audiobook chapters.
 ## Goals
@@ -294,6 +297,113 @@ Begin processing the chapter now.
 """
 #TODO: Update prompt to ensre we give non numbered, first name driven naming for characters...And narrator for occasions where it is too difficult to determine.
 
+
+def load_all_previous_chapter_maps(chapter_file_base) -> Dict[str, str] | None:
+    """Load all previous chapter character maps to seed character names for consistent naming.
+
+    Args:
+        chapter_file_base: Base path without extension for current chapter
+
+    Returns:
+        Dict mapping lowercase char names to original names from previous chapters, or None if no previous chapters
+    """
+    import json
+    import re
+    import glob
+    from pathlib import Path
+
+    # Extract directory and chapter pattern
+    chapter_path = Path(chapter_file_base)
+    chapters_dir = chapter_path.parent
+
+    # Find all map.json files in the directory
+    map_files = sorted(chapters_dir.glob("chapter_*.map.json"))
+
+    # Extract chapter number from current file to filter previous chapters
+    chapter_match = re.search(r'chapter[_\s]?(\d+)', str(chapter_file_base), re.IGNORECASE)
+    current_chapter_num = None
+    if chapter_match:
+        current_chapter_num = int(chapter_match.group(1))
+
+    # Aggregate all characters from previous chapters
+    all_characters = {}
+
+    for map_file in map_files:
+        # Extract chapter number from map file name
+        file_match = re.search(r'chapter[_\s]?(\d+)', map_file.name, re.IGNORECASE)
+        if not file_match:
+            continue
+
+        file_chapter_num = int(file_match.group(1))
+
+        # Skip current and future chapters
+        if current_chapter_num is not None and file_chapter_num >= current_chapter_num:
+            continue
+
+        # Load the map file
+        try:
+            with open(map_file, "r", encoding='utf-8') as f:
+                data = json.load(f)
+                if len(data) >= 2:
+                    char_map = data[0]  # character_map is first element
+                    # Merge characters, preserving first occurrence key
+                    for key, char_name in char_map.items():
+                        char_lower = char_name.lower().strip()
+                        if char_lower not in all_characters:
+                            all_characters[char_lower] = char_name
+        except Exception as e:
+            pass
+
+    return all_characters if all_characters else None
+
+
+# create_prompt_with_context(): Builds LLM prompt by inserting character context into PROMPT_TXT.
+# It inserts the existing character names before the "## Output format" section.
+def create_prompt_with_context(prompt_template, existing_characters=None, chapter_num=None):
+    """Create LLM prompt with optional context from existing character names.
+
+    Args:
+        prompt_template: The base prompt template string
+        existing_characters: Dict mapping lowercase char names to original names from previous chapters
+        chapter_num: Current chapter number for context
+
+    Returns:
+        Formatted prompt string with context if available
+    """
+    if existing_characters is None:
+        return prompt_template
+
+    # Build context message about existing characters
+    context_lines = []
+    context_lines.append("\n## Existing Character Names (from previous chapters)")
+    context_lines.append("These character names have been used in prior chapters. When you encounter the same character, use the same name:")
+    context_lines.append("")
+
+    # Add unique character names
+    for char_name in sorted(set(existing_characters.values())):
+        context_lines.append(f"- \"{char_name}\"")
+
+    context_lines.append("")
+    context_lines.append("Guidelines:")
+    context_lines.append("1. If a character matches one from the existing list above, use the same name")
+    context_lines.append("2. Use simple, consistent names (first names preferred)")
+    context_lines.append("3. Keep the narrator as character 1")
+    context_lines.append("")
+
+    # Insert context before the output format section
+    context_text = "\n".join(context_lines)
+
+    # Find the output format section and insert context before it
+    if "## Output format" in prompt_template:
+        parts = prompt_template.split("## Output format")
+        return parts[0] + context_text + "\n## Output format" + parts[1]
+    elif "Output format" in prompt_template:
+        parts = prompt_template.split("Output format")
+        return parts[0] + context_text + "\nOutput format" + parts[1]
+
+    # If no output format section found, append context at the end
+    return prompt_template + "\n" + context_text
+
 #- Do NOT base attribution solely on the quote content itself
 #- Print with final format in mind.
 #- Do not stop until the full text is processed!
@@ -317,6 +427,15 @@ if __name__ == "__main__":
 
     chapter_file_base, _ = os.path.splitext(args.txt_file)
 
+    # Load existing character map from previous chapter for naming consistency
+    existing_characters = load_all_previous_chapter_maps(chapter_file_base)
+
+    # Extract chapter number from filename for context
+    chapter_num = None
+    chapter_match = re.search(r'chapter[_\s]?(\d+)', args.txt_file, re.IGNORECASE)
+    if chapter_match:
+        chapter_num = int(chapter_match.group(1))
+
     if not args.skip_llm:
         with open(args.txt_file, "r", encoding='utf-8') as f:
             lines = f.readlines()
@@ -325,8 +444,10 @@ if __name__ == "__main__":
             messages = [
                 {"role": "system", "content": "You are a helpful assistant." + OLD_PROMPT_TXT}]
         else:
+            # Create prompt with context from existing character map
+            prompt_content = create_prompt_with_context(PROMPT_TXT, existing_characters, chapter_num)
             messages = [
-                {"role": "system", "content": PROMPT_TXT}]
+                {"role": "system", "content": prompt_content}]
         [messages.append({"role": "user", "content": x}) for x in lines]
 
         for a, attempt in enumerate(range(args.num_llm_attempts)):
@@ -401,6 +522,16 @@ def label_speakers(
     chapter_file_base, _ = os.path.splitext(txt_file)
     client = get_llm_client(api_key, port)
 
+    # Load existing character map from previous chapter for naming consistency
+    existing_characters = load_all_previous_chapter_maps(chapter_file_base)
+
+    # Extract chapter number from filename for context
+    chapter_num = None
+    import re
+    chapter_match = re.search(r'chapter[_\s]?(\d+)', txt_file, re.IGNORECASE)
+    if chapter_match:
+        chapter_num = int(chapter_match.group(1))
+
     if not skip_llm:
         with open(txt_file, "r", encoding='utf-8') as f:
             lines = f.readlines()
@@ -410,8 +541,10 @@ def label_speakers(
             messages = [
                 {"role": "system", "content": "You are a helpful assistant." + OLD_PROMPT_TXT}]
         else:
+            # Create prompt with context from existing character map
+            prompt_content = create_prompt_with_context(PROMPT_TXT, existing_characters, chapter_num)
             messages = [
-                {"role": "system", "content": PROMPT_TXT}]
+                {"role": "system", "content": prompt_content}]
         messages.extend([{"role": "user", "content": x} for x in lines])
 
         for a, attempt in enumerate(range(num_attempts)):

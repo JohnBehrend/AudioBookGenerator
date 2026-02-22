@@ -210,12 +210,13 @@ class VoiceMapper:
 # ============================================================================
 
 
-def setup_tts_engine(device: str, tts_engine: str = "kugelaudio"):
+def setup_tts_engine(device: str, tts_engine: str = "kugelaudio", turbo: bool = False):
     """Initialize and return the TTS model and processor.
 
     Args:
         device: Device to run on ('cuda:0' or 'cuda:1')
         tts_engine: Either 'kugelaudio' or 'vibevoice'
+        turbo: Use KugelAudio turbo model (kugel-1-turbo)
 
     Returns:
         Tuple of (model, processor, model_path)
@@ -230,7 +231,7 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio"):
 
     attn_impl = _get_attn_implementation()
     if tts_engine == 'kugelaudio':
-        model_path = "kugelaudio/kugelaudio-0-open"
+        model_path = "kugel-1-turbo" if turbo else "kugelaudio/kugelaudio-0-open"
         attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
         tts_model_read_chapters = KugelAudioForConditionalGenerationInference.from_pretrained(
             model_path,
@@ -491,6 +492,7 @@ def generate_audiobook_from_chapters(
     cfg_scale: float = 1.30,
     max_chapters: Optional[int] = None,
     verbose: bool = False,
+    turbo: bool = False,
     progress: Optional[callable] = None,
     validation_model = None
 ) -> Tuple[str, int]:
@@ -509,6 +511,7 @@ def generate_audiobook_from_chapters(
         cfg_scale: CFG scale value
         max_chapters: Maximum number of chapters to process
         verbose: Print verbose output
+        turbo: Use KugelAudio turbo model (kugel-1-turbo)
         progress: Optional progress callback (gr.Progress() for Gradio, None for CLI)
         validation_model: Optional faster-whisper validation model. If not provided, validation is skipped.
 
@@ -526,7 +529,7 @@ def generate_audiobook_from_chapters(
         with ProgressHandler(progress=progress, total=len(chapters_to_process), desc="Audiobook Generation") as progress_handler:
 
             # Setup models
-            tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine)
+            tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)
             # Only setup validation model if explicitly provided (not None)
             # This avoids crashes from faster-whisper dependencies
             voice_mapper = VoiceMapper()
@@ -796,7 +799,8 @@ class PipelineState:
 
 def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       verbose: bool = False, api_key: str = None, llm_port: str = None,
-                      tts_engine: str = "kugelaudio", device: str = "cuda") -> str:
+                      tts_engine: str = "kugelaudio", turbo: bool = False,
+                      device: str = "cuda") -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -807,6 +811,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         api_key: LLM API key for speaker labeling and character descriptions
         llm_port: LLM endpoint port (e.g., LM Studio)
         tts_engine: 'kugelaudio' or 'vibevoice'
+        turbo: Use KugelAudio turbo model (kugel-1-turbo)
         device: CUDA device (e.g., 'cuda', 'cuda:1')
 
     Returns:
@@ -900,12 +905,14 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         print(f"[STAGE 5] Generating audiobook...")
 
     # Setup models for TTS generation
-    tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine)
+    tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)
     validation_model = setup_validation_model(device)
     voice_mapper = VoiceMapper()
 
     if verbose:
         print(f"  TTS engine: {tts_engine}")
+        if turbo and tts_engine == "kugelaudio":
+            print(f"  Using turbo model (kugel-1-turbo)")
         print(f"  Device: {device}")
 
     # Generate TTS for all chapters
@@ -921,6 +928,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 output_dir=str(state.chapters_dir),
                 device=device,
                 tts_engine=tts_engine,
+                turbo=turbo,
                 verbose=verbose,
                 progress=None,
                 validation_model=validation_model
@@ -1026,6 +1034,7 @@ def main():
     parser.add_argument("--llm-port", default="1234", help="LLM endpoint port (for LM Studio)")
     parser.add_argument("--tts-engine", default="kugelaudio", choices=["kugelaudio", "vibevoice"],
                         help="TTS engine to use")
+    parser.add_argument("--turbo", action="store_true", help="Use KugelAudio turbo model (kugel-1-turbo)")
     parser.add_argument("--device", default="cuda", help="CUDA device to use")
     parser.add_argument("--gradio", action="store_true", help="Launch Gradio interface instead of CLI")
     parser.add_argument("--num-llm-attempts", type=int, default=2, help="Number of LLM attempts for speaker labeling")
@@ -1069,6 +1078,7 @@ def main():
             api_key=args.api_key,
             llm_port=args.llm_port,
             tts_engine=args.tts_engine,
+            turbo=args.turbo,
             device=args.device
         )
 

@@ -485,6 +485,7 @@ def generate_tts_audio(
     pipeline_state: PipelineState,
     log_output: str,
     max_chapters: Optional[int],
+    turbo: bool = False,
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 5.1: Generate TTS audio for each line/voice.
@@ -493,6 +494,7 @@ def generate_tts_audio(
         pipeline_state: Current pipeline state (contains chapters from Stage 1)
         log_output: Current log output string
         max_chapters: Maximum number of chapters to process
+        turbo: Use KugelAudio turbo model (kugel-1-turbo)
         progress: Gradio progress callback
 
     Returns:
@@ -585,6 +587,7 @@ def generate_tts_audio(
             tts_engine=tts_engine,
             cfg_scale=cfg_scale,
             max_chapters=max_chapters,
+            turbo=turbo,
             verbose=verbose,
             progress=progress,
             validation_model=validation_model
@@ -608,6 +611,7 @@ def generate_full_audiobook(
     pipeline_state: PipelineState,
     log_output: str,
     max_chapters: Optional[int],
+    turbo: bool = False,
 ) -> Tuple[str, PipelineState]:
     """Stage 5: Generate full audiobook using generate_audiobook_from_chapters().
 
@@ -615,12 +619,13 @@ def generate_full_audiobook(
         pipeline_state: Current pipeline state (contains chapters from Stage 1)
         log_output: Current log output string
         max_chapters: Maximum number of chapters to process
+        turbo: Use KugelAudio turbo model (kugel-1-turbo)
     """
     log_output += "\n\n=== Stage 5: Full Audiobook Generation ==="
 
     try:
         # Use the unified generate_audiobook_from_chapters function
-        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters)
+        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters, turbo)
 
         # Update state to audiobook complete (MP3s are created during generate_audiobook_from_chapters)
         log_output += f"\n\n=== Stage 5 Complete: Full Audiobook Generation === State: {pipeline_state.pipeline_state}"
@@ -956,6 +961,13 @@ def create_interface(
                     scale=2,
                 )
 
+            # Turbo model checkbox
+            turbo_checkbox = gr.Checkbox(
+                label="Use KugelAudio Turbo Model (kugel-1-turbo)",
+                value=False,
+                info="Enable the faster kugel-1-turbo TTS model"
+            )
+
             # EPUB upload
             epub_upload = gr.File(label="EPUB", file_types=[".epub"], value=epub_path_default)
 
@@ -1129,7 +1141,7 @@ def create_interface(
         # Generate Full Audiobook - Stage 5
         tts_btn.click(
             fn=generate_full_audiobook,
-            inputs=[pipeline_state_obj, log_output, max_chapters_slider],
+            inputs=[pipeline_state_obj, log_output, max_chapters_slider, turbo_checkbox],
             outputs=[log_output, pipeline_state_obj],
         ).then(
             fn=update_button_visibility_from_state,

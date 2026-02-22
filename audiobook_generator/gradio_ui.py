@@ -54,7 +54,6 @@ from audiobook_generator import (
     get_non_silent_audio_from_wavs,
     VoiceMapper,
     setup_tts_engine,
-    setup_validation_model,
 )
 from config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS, DEFAULT_EPUB_FILE
 
@@ -587,15 +586,6 @@ def generate_tts_audio(
         device = "cuda" if torch.cuda.is_available() else "cpu"
         log_output += f"\nUsing device: {device}"
 
-        # Setup validation model (WhisperX) for audio validation
-        # This enables ratio-based validation of generated audio
-        try:
-            validation_model = setup_validation_model(device)
-            log_output += "\nValidation model (WhisperX) loaded successfully."
-        except Exception as e:
-            log_output += f"\nWarning: Could not load validation model: {e}. Audio validation will be skipped."
-            validation_model = None
-
         # Use the unified generate_audiobook_from_chapters function from package
         verbose = True
         tts_engine = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
@@ -612,8 +602,7 @@ def generate_tts_audio(
             max_chapters=max_chapters,
             turbo=turbo,
             verbose=verbose,
-            progress=progress,
-            validation_model=validation_model
+            progress=progress
         )
 
         log_output += f"\n{status}"

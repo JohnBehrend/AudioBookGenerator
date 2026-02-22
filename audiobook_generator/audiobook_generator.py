@@ -600,7 +600,6 @@ def generate_audiobook_from_chapters(
     verbose: bool = False,
     turbo: bool = False,
     progress: Optional[callable] = None,
-    validation_model = None,
     voice_clone_prompts: dict = None
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
@@ -620,7 +619,6 @@ def generate_audiobook_from_chapters(
         verbose: Print verbose output
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         progress: Optional progress callback (gr.Progress() for Gradio, None for CLI)
-        validation_model: Optional faster-whisper validation model. If not provided, validation is skipped.
         voice_clone_prompts: For Qwen3, dict mapping voice_name to pre-built voice_clone_prompt
 
     Returns:
@@ -647,8 +645,9 @@ def generate_audiobook_from_chapters(
                 voice_design_model = None
                 base_model = None
                 tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)
-            # Only setup validation model if explicitly provided (not None)
-            # This avoids crashes from faster-whisper dependencies
+            # Setup validation model
+            validation_model = setup_validation_model(device)
+            # This avoids crashes from faster-whisper dependencies if validation_model is None
             voice_mapper = VoiceMapper()
 
             short_text_postfix = DEFAULTS["short_text_postfix"]
@@ -1032,20 +1031,6 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     if verbose:
         print(f"[STAGE 5] Generating audiobook...")
 
-    # Setup models for TTS generation
-    voice_clone_prompts = {}
-    if tts_engine == 'qwen3':
-        # Qwen3 uses two models: VoiceDesign for building prompts, Base for generation
-        voice_design_model, _, _, base_model = setup_tts_engine(device, tts_engine, turbo)
-        tts_model_read_chapters = base_model
-        processor = None
-    else:
-        voice_design_model = None
-        base_model = None
-        tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)
-    validation_model = setup_validation_model(device)
-    voice_mapper = VoiceMapper()
-
     if verbose:
         print(f"  TTS engine: {tts_engine}")
         if turbo and tts_engine == "kugelaudio":
@@ -1070,8 +1055,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 turbo=turbo,
                 verbose=verbose,
                 progress=None,
-                validation_model=validation_model,
-                voice_clone_prompts=voice_clone_prompts
+                voice_clone_prompts={}
             )
 
             if verbose:
@@ -1085,13 +1069,6 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         if verbose:
             print(f"[STAGE 5] Generated {len(mp3_files)} chapter MP3 files")
 
-        # Clean up TTS and validation models from GPU memory
-        del tts_model_read_chapters
-        del validation_model
-        gc.collect()
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-
         return f"Audiobook generation complete! Generated {len(mp3_files)} chapter MP3 files."
 
     except Exception as e:
@@ -1099,15 +1076,6 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         error_msg = f"Error in Stage 5: {str(e)}\n{traceback.format_exc()}"
         if verbose:
             print(error_msg)
-        # Clean up TTS and validation models from GPU memory on error
-        try:
-            del tts_model_read_chapters
-            del validation_model
-            gc.collect()
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-        except NameError:
-            pass  # Models may not have been created if error occurred earlier
         return error_msg
 
 

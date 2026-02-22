@@ -393,7 +393,7 @@ def generate_tts_for_line(
     postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0]) if short_text_flag else None
 
     set_seed(42)
-
+    print("\nSTART\n")
     while ratio < 0.85 and retries < 5:
         set_seed(42 + retries)
         inputs = None
@@ -436,12 +436,16 @@ def generate_tts_for_line(
                     language="English",
                     voice_clone_prompt=voice_clone_prompt,
                 )
+                print("\nGEN\n")
+
             else:
                 raise Exception("Invalid voice_clone_prompt.")
 
             # Save audio using soundfile
             if wavs and len(wavs) > 0:
                 sf.write(output_path, wavs[0], out_sr)
+                print("\nWRITE\n")
+
             else:
                 raise Exception("Empty Qwen3 tts speak for chapter text")
         else:
@@ -481,6 +485,7 @@ def generate_tts_for_line(
         # send through a cleaning ML algo
         sample_rate, waveform = wavfile.read(output_path)
         wavfile.write(output_path, sample_rate, waveform)
+        print("\nCLEAN\n")
 
         # Initialize variables for clipping/validation logic
         detected_string = ""
@@ -498,19 +503,23 @@ def generate_tts_for_line(
             scores = []
             start_times = []
             end_times = []
-
             for segment in segments_list:
+                print(f"\nSEG\n{segement}\n")
                 # faster-whisper returns segments with text, start, end
                 segments.append(distill_string(segment.text))
                 scores.append(segment.score)  # confidence score
                 start_times.append(segment.start)
                 end_times.append(segment.end)
-
-            detected_string = " ".join(segments)
-            ratio, last_valid_token = score_strings_pop(input_string, detected_string, lookahead=5, postfix=distill_string(short_text_postfix))
-
+            print(f"\nVALIDATE2 {segments}\n")
+            if len(segments)>0:
+                detected_string = " ".join(segments)
+                ratio, last_valid_token = score_strings_pop(input_string, detected_string, lookahead=5, postfix=distill_string(short_text_postfix))
+            else:
+                ratio = 0
+                last_valid_token=""
+        print(f"\nratio {ratio}, lastvalidtoken {last_valid_token}\n")
         # Clipping based on postfix detection (only when validation is available)
-        if short_text_flag and validation_model is not None:
+        if (short_text_flag!="") and validation_model is not None:
             if (distill_string(short_text_postfix) in detected_string) and (postfix_detect_token in segments):
                 if detected_string.startswith(distill_string(short_text_postfix)):
                     if verbose:
@@ -545,6 +554,7 @@ def generate_tts_for_line(
         # When validation is enabled: only save if ratio improved
         # When validation is disabled: save after first attempt (ratio stays 0.0)
         if validation_model is None or ratio > max_ratio:
+            print("\nNEWBEST\n")
             max_ratio = ratio
             final_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.wav")
             if os.path.exists(final_path):
@@ -558,7 +568,7 @@ def generate_tts_for_line(
             os.rename(output_path, final_path)
 
         retries += 1
-
+    print("\nPOSTCLEAN\n")
     # Clean up temp file if it exists
     temp_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.tmp.wav")
     if os.path.exists(temp_path):

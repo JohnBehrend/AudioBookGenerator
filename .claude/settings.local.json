@@ -15,7 +15,8 @@
       "Bash(git commit:*)",
       "Bash(ls:*)",
       "Bash(pip show:*)",
-      "Bash(uv pip show:*)"
+      "Bash(uv pip show:*)",
+      "Bash(grep:*)"
     ]
   }
 }

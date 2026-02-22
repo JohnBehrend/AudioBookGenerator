@@ -497,47 +497,6 @@ def regenerate_voice_sample(
 # ============================================================================
 
 
-def load_chapter_maps(chapters_dir: Path, log_output: str = "") -> Tuple[Dict[int, Tuple[Dict, Dict]], str]:
-    """Load all chapter map files from the chapters directory.
-
-    Args:
-        chapters_dir: Path to the chapters directory
-        log_output: Initial log output string
-
-    Returns:
-        Tuple of (Dict mapping chapter index -> (character_map, line_map), updated log_output)
-    """
-    chapter_maps = {}
-    map_files = sorted(glob.glob(str(chapters_dir / "*.map.json")))
-
-    for map_file in map_files:
-        try:
-            with open(map_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            # data is typically [character_map, line_map] or {"character_map": ..., "line_map": ...}
-            if isinstance(data, list) and len(data) >= 2:
-                character_map = data[0]
-                line_map = data[1]
-            elif isinstance(data, dict):
-                character_map = data.get("character_map", {})
-                line_map = data.get("line_map", {})
-            else:
-                continue
-
-            # Convert keys to proper types
-            character_map = {int(k): v for k, v in character_map.items()}
-            line_map = {int(k): v for k, v in line_map.items()}
-
-            # Remove .map.json extension to get chapter filename
-            map_filename = Path(map_file).name.replace(".map.json", "")
-            chapter_idx = int(map_filename.replace("chapter_", ""))
-            chapter_maps[chapter_idx] = (character_map, line_map)
-        except Exception as e:
-            log_output += f"\nError loading map file {map_file}: {e}"
-
-    return chapter_maps, log_output
-
-
 def generate_tts_audio(
     pipeline_state: Optional[str],
     log_output: str,
@@ -585,8 +544,11 @@ def generate_tts_audio(
             log_output += "\nNo voice samples found. Please run Stage 4 (Generate Voices) first."
             return log_output, pipeline_state
 
-        # Load chapter maps for character/line mapping
-        chapter_maps, log_output = load_chapter_maps(chapters_dir, log_output)
+        # Load chapter maps for character/line mapping using PipelineState
+        temp_output_dir = str(chapters_dir.parent) if chapters_dir else "chapters"
+        state = PipelineState(temp_output_dir)
+        state.chapters_dir = chapters_dir
+        chapter_maps = state.load_chapter_maps()
 
         # Count chapters for progress tracking
         chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))

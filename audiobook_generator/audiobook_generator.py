@@ -48,7 +48,6 @@ TTS_ENGINE = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
 # Voice to Text for validation
 from difflib import SequenceMatcher
 from faster_whisper import WhisperModel
-import whisperx
 
 # combine audio files
 import pydub
@@ -259,20 +258,20 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio"):
 
 
 def setup_validation_model(device: str = "cuda"):
-    """Initialize the WhisperX validation model.
+    """Initialize the faster-whisper validation model.
 
     Args:
         device: Device to run on
 
     Returns:
-        WhisperX model or None if validation is disabled
+        WhisperModel instance or None if validation is disabled
     """
     validation_model_name = DEFAULTS.get("validation_model_name")
 
     if validation_model_name is None:
         return None
 
-    return whisperx.load_model(validation_model_name, device, compute_type="float16")
+    return WhisperModel(validation_model_name, device=device, compute_type="float16")
 
 
 def generate_tts_for_line(
@@ -308,7 +307,7 @@ def generate_tts_for_line(
         cfg_scale: CFG scale value
         output_dir: Output directory for audio files
         short_text_postfix: Postfix for validation
-        validation_model: WhisperX model for validation
+        validation_model: Faster-whisper model for validation
         verbose: Print verbose output
 
     Returns:
@@ -403,23 +402,21 @@ def generate_tts_for_line(
         last_valid_token = None
 
         if validation_model is not None:
-            audio = whisperx.load_audio(output_path)
-            result = validation_model.transcribe(audio, batch_size=1)
-            model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
-            result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
+            # Use faster-whisper for validation
+            segments_list, info = validation_model.transcribe(output_path, beam_size=5)
 
-            prev_end = None
-            pauses = []
-            for segment in result["word_segments"]:
-                if prev_end is not None:
-                    pauses.append(segment["start"] - prev_end)
-                prev_end = segment["end"]
-            pauses.append(0)
+            # Collect segments and timestamps
+            segments = []
+            scores = []
+            start_times = []
+            end_times = []
 
-            segments = [distill_string(s["word"]) for s in result["word_segments"]]
-            scores = [s["score"] for s in result["word_segments"]]
-            start_times = [s["start"] for s in result["word_segments"]]
-            end_times = [s["end"] for s in result["word_segments"]]
+            for segment in segments_list:
+                # faster-whisper returns segments with text, start, end
+                segments.append(distill_string(segment.text))
+                scores.append(segment.score)  # confidence score
+                start_times.append(segment.start)
+                end_times.append(segment.end)
 
             detected_string = " ".join(segments)
             ratio, last_valid_token = score_strings_pop(input_string, detected_string, lookahead=5, postfix=distill_string(short_text_postfix))
@@ -511,7 +508,7 @@ def generate_audiobook_from_chapters(
         max_chapters: Maximum number of chapters to process
         verbose: Print verbose output
         progress: Optional progress callback (gr.Progress() for Gradio, None for CLI)
-        validation_model: Optional WhisperX validation model. If not provided, validation is skipped.
+        validation_model: Optional faster-whisper validation model. If not provided, validation is skipped.
 
     Returns:
         Tuple of (status_message, chapters_processed)
@@ -529,7 +526,7 @@ def generate_audiobook_from_chapters(
             # Setup models
             tts_model, processor, _ = setup_tts_engine(device, tts_engine)
             # Only setup validation model if explicitly provided (not None)
-            # This avoids crashes from whisperx/pyannote dependencies
+            # This avoids crashes from faster-whisper dependencies
             voice_mapper = VoiceMapper()
 
             short_text_postfix = DEFAULTS["short_text_postfix"]

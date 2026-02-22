@@ -576,6 +576,15 @@ def generate_tts_audio(
         device = "cuda" if torch.cuda.is_available() else "cpu"
         log_output += f"\nUsing device: {device}"
 
+        # Setup validation model (WhisperX) for audio validation
+        # This enables ratio-based validation of generated audio
+        try:
+            validation_model = setup_validation_model(device)
+            log_output += "\nValidation model (WhisperX) loaded successfully."
+        except Exception as e:
+            log_output += f"\nWarning: Could not load validation model: {e}. Audio validation will be skipped."
+            validation_model = None
+
         # Use the unified generate_audiobook_from_chapters function from package
         verbose = True
         tts_engine = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
@@ -591,7 +600,8 @@ def generate_tts_audio(
             cfg_scale=cfg_scale,
             max_chapters=max_chapters,
             verbose=verbose,
-            progress=progress
+            progress=progress,
+            validation_model=validation_model
         )
 
         log_output += f"\n{status}"

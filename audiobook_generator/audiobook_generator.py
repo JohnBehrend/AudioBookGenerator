@@ -491,17 +491,19 @@ def generate_tts_for_line(
         last_valid_token = None
 
         if short_text_postfix and (validation_model is not None):
-            # Use faster-whisper for validation
-            segments_list, info = validation_model.transcribe(output_path, beam_size=5)
+            # Use faster-whisper for validation with word timestamps for token-level matching
+            segments_list, info = validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
 
-            # Collect segments and timestamps
+            # Collect segments (words) and timestamps
+            # Whisper word_timestamps=True should give individual words, but we need to split on spaces just in case
             segments = []
             start_times = []
             end_times = []
             for segment in segments_list:
-                segments.append(distill_string(segment.text))
-                start_times.append(segment.start)
-                end_times.append(segment.end)
+                for word in segment.words:
+                    segments.append(distill_string(word))
+                    start_times.append(segment.start)
+                    end_times.append(segment.end)
 
             detected_string = distill_string(" ".join(segments))
             ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=distill_string(short_text_postfix))

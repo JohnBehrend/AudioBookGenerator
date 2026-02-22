@@ -863,6 +863,8 @@ def create_interface(
             # Log output with state on same element
             log_output = gr.Textbox(label="Log (State: Ready)", lines=3, max_lines=3, interactive=False)
         with gr.Row():
+            stop_btn = gr.Button("Stop", variant="stop", scale=1)
+        with gr.Row():
             with gr.Tab("Characters"):
                 # Character info
                 character_table = gr.Dataframe(
@@ -1038,6 +1040,17 @@ def create_interface(
             fn=update_state_display,
             inputs=pipeline_state,
             outputs=log_output,
+        )
+
+        # Stop button - clean up and exit
+        stop_btn.click(
+            fn=cleanup_temp_dir,
+            inputs=None,
+            outputs=None,
+        ).then(
+            fn=lambda: sys.exit(0),
+            inputs=None,
+            outputs=None,
         )
 
     return demo

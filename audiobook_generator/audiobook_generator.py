@@ -524,7 +524,7 @@ def generate_audiobook_from_chapters(
         with ProgressHandler(progress=progress, total=len(chapters_to_process), desc="Audiobook Generation") as progress_handler:
 
             # Setup models
-            tts_model, processor, _ = setup_tts_engine(device, tts_engine)
+            tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine)
             # Only setup validation model if explicitly provided (not None)
             # This avoids crashes from faster-whisper dependencies
             voice_mapper = VoiceMapper()
@@ -597,7 +597,8 @@ def generate_audiobook_from_chapters(
 
                         # Get the voice path for this character
                         if voice in voices_map:
-                            voice_path = voices_map[voice]
+                            # voices_map contains relative paths, prepend output_dir
+                            voice_path = os.path.join(output_dir, voices_map[voice])
                         else:
                             voice_path = voice_mapper.get_voice_path(voice)
 

@@ -387,7 +387,7 @@ def generate_tts_for_line(
         full_script = full_script + (" " if full_script[0] in end_characters else ". ") + short_text_postfix
 
     ratio = 0.0
-    max_ratio = 0.0
+    max_ratio = float('-inf')  # Initialize to lowest possible value to ensure first attempt is always saved
     retries = 0
     input_string = distill_string(full_script)
     postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0]) if short_text_flag else None

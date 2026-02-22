@@ -15,7 +15,7 @@ import sys
 import torch
 
 # Import config for default values
-from .config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
+from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
 
 try:
     from qwen_tts import Qwen3TTSModel

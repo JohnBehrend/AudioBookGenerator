@@ -40,7 +40,7 @@ def _get_attn_implementation() -> Optional[str]:
         return None
 
 # Import config for default values
-from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
+from config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
 
 # Text to speech generation - imports moved to setup_tts_engine() for lazy loading
 TTS_ENGINE = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
@@ -60,10 +60,10 @@ import pandas as pd
 from transformers import set_seed
 
 # Import modular stage functions - using clean public interfaces
-from . import parse_chapter
-from .llm_label_speakers import label_speakers  # Clean public function
-from .llm_describe_character import describe_characters  # Clean public function
-from .generate_voice_samples import generate_voice_samples as gen_voice_samples
+import parse_chapter
+from llm_label_speakers import label_speakers  # Clean public function
+from llm_describe_character import describe_characters  # Clean public function
+from generate_voice_samples import generate_voice_samples as gen_voice_samples
 
 
 # ============================================================================
@@ -934,7 +934,7 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         max_chapters: Max chapters to process
     """
     try:
-        from .gradio_ui import create_interface, cleanup_temp_dir
+        from gradio_ui import create_interface, cleanup_temp_dir
         import gradio as gr
 
         demo = create_interface(

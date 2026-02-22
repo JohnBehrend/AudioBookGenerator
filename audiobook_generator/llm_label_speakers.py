@@ -10,8 +10,8 @@ from typing import Dict, Tuple
 from collections import Counter
 from openai import OpenAI
 
-from .config import LLM_SETTINGS, DEFAULTS
-from .utils import get_llm_client, merge_line_maps, compare_characters
+from config import LLM_SETTINGS, DEFAULTS
+from utils import get_llm_client, merge_line_maps, compare_characters
 
 def add_quotes_around_keys(json_body):
     """For some json text, we don't have quotes around keys. Example:

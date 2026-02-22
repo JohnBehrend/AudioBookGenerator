@@ -9,7 +9,7 @@ from pathlib import Path
 from collections import Counter
 from openai import OpenAI
 
-from .config import LLM_SETTINGS
+from config import LLM_SETTINGS
 
 
 def get_characters_from_map_files(chapters_dir: Path) -> list:

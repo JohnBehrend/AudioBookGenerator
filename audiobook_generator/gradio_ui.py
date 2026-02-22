@@ -24,12 +24,12 @@ from typing import Optional, Tuple, Dict, Any, List
 from time import sleep
 
 # Import from package modules - using clean public interfaces
-from . import parse_chapter
-from .llm_label_speakers import label_speakers  # Clean public function
-from .llm_describe_character import describe_characters  # Clean public function
-from .generate_voice_samples import generate_voice_samples as gen_voice_samples
-from .utils import get_characters_from_map_files  # Use shared version
-from .audiobook_generator import (
+import parse_chapter
+from llm_label_speakers import label_speakers  # Clean public function
+from llm_describe_character import describe_characters  # Clean public function
+from generate_voice_samples import generate_voice_samples as gen_voice_samples
+from utils import get_characters_from_map_files  # Use shared version
+from audiobook_generator import (
     PipelineState,
     generate_audiobook_from_chapters,
     get_non_silent_audio_from_wavs,
@@ -37,7 +37,7 @@ from .audiobook_generator import (
     setup_tts_engine,
     setup_validation_model,
 )
-from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
+from config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
 
 
 # ============================================================================

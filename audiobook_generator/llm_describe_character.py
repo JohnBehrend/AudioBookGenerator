@@ -15,8 +15,8 @@ from openai import OpenAI
 import requests
 from bs4 import BeautifulSoup
 
-from .config import LLM_SETTINGS, OUTPUT_DIR
-from .utils import get_llm_client, compare_characters, get_characters_from_map_files
+from config import LLM_SETTINGS, OUTPUT_DIR
+from utils import get_llm_client, compare_characters, get_characters_from_map_files
 
 
 # Default prompt for character description

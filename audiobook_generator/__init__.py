@@ -12,6 +12,17 @@ from .audiobook_generator import (
     PipelineState,
     run_full_pipeline,
     generate_audiobook_from_chapters,
+    VoiceMapper,
+    get_non_silent_audio_from_wavs,
+    main,
+)
+from .gradio_ui import (
+    create_interface,
+    get_pipeline_state,
+    get_characters_from_map_files,
+    update_character_table,
+    update_button_visibility,
+    cleanup_temp_dir,
 )
 
 __all__ = [
@@ -25,4 +36,13 @@ __all__ = [
     "PipelineState",
     "run_full_pipeline",
     "generate_audiobook_from_chapters",
+    "VoiceMapper",
+    "get_non_silent_audio_from_wavs",
+    "main",
+    "create_interface",
+    "get_pipeline_state",
+    "get_characters_from_map_files",
+    "update_character_table",
+    "update_button_visibility",
+    "cleanup_temp_dir",
 ]

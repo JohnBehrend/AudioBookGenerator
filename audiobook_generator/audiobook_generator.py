@@ -924,8 +924,8 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
                             max_chapters: int = 10) -> None:
     """Create and launch the Gradio interface for the audiobook pipeline.
 
-    This function contains the UI element definitions and event handlers.
-    It uses the PipelineState class for managing pipeline state.
+    This function launches the Gradio interface imported from the package's
+    gradio_ui module. The actual UI definition is in gradio_ui.py.
 
     Args:
         output_dir: Output directory for generated files
@@ -935,8 +935,10 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         max_chapters: Max chapters to process
     """
     try:
-        import audiobook_gradio_ui as ui
-        demo = ui.create_interface(
+        from .gradio_ui import create_interface, cleanup_temp_dir
+        import gradio as gr
+
+        demo = create_interface(
             api_key_default=api_key or DEFAULTS.get("api_key", "lm-studio"),
             port_default=port or LLM_SETTINGS.get("port", "1234"),
             num_attempts_default=num_attempts,
@@ -946,13 +948,8 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         demo.launch(share=False, theme=gr.themes.Soft())
 
     except ImportError as e:
-        print(f"Error: Could not import audiobook_gradio_ui module")
+        print(f"Error: Could not import gradio_ui module")
         print(f"Make sure the module is in place: {e}")
-
-
-def cleanup_gradio_state():
-    """Clean up temporary directory used by Gradio interface."""
-    pass  # State is managed by the UI module
 
 
 # ============================================================================

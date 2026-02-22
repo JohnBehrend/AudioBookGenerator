@@ -186,14 +186,18 @@ def progress_iterator(items, progress=None, desc="Processing"):
 
 def parse_epub_to_file(
     epub_file, max_chapters: Optional[int], progress=gr.Progress()
-) -> Tuple[str, int]:
-    """Stage 1: Parse EPUB file into chapter text files."""
+) -> Tuple[str, int, list]:
+    """Stage 1: Parse EPUB file into chapter text files.
+
+    Returns:
+        Tuple of (log_output, pipeline_state, parsed_chapters)
+    """
     if epub_file is None:
-        return "Error: No EPUB file uploaded.", 0
+        return "Error: No EPUB file uploaded.", 0, None
 
     chapters_dir = get_chapters_dir()
     if not chapters_dir:
-        return "Error: Failed to create temporary directory.", 0
+        return "Error: Failed to create temporary directory.", 0, None
 
     try:
         # Clean up existing files in the chapters directory before starting fresh
@@ -216,7 +220,7 @@ def parse_epub_to_file(
         )
 
         if not chapters:
-            return "Error: No chapters found in EPUB file.", 0
+            return "Error: No chapters found in EPUB file.", 0, None
 
         # Count total lines across all chapters for progress tracking
         total_lines = sum(len(chapter) for chapter in chapters)
@@ -246,11 +250,11 @@ def parse_epub_to_file(
                     f.write("\n")
 
         progress(1.0, desc=f"Successfully parsed {total_chapters} chapters with {total_lines} lines. (temp: {chapters_dir.parent})")
-        return "=== Stage 1: EPUB Parsing Complete ===\n", "epub_parsed"
+        return "=== Stage 1: EPUB Parsing Complete ===\n", "epub_parsed", chapters
     except Exception as e:
         log_output = f"Error parsing EPUB: {str(e)}"
         log_output += f"\n{traceback.format_exc()}"
-        return log_output, 0
+        return log_output, 0, None
 
 
 # ============================================================================
@@ -503,9 +507,21 @@ def generate_tts_audio(
     pipeline_state: Optional[str],
     log_output: str,
     max_chapters: Optional[int],
+    chapters: Optional[list],
     progress=gr.Progress()
 ) -> Tuple[str, Optional[str]]:
-    """Stage 5.1: Generate TTS audio for each line/voice."""
+    """Stage 5.1: Generate TTS audio for each line/voice.
+
+    Args:
+        pipeline_state: Current pipeline state
+        log_output: Current log output string
+        max_chapters: Maximum number of chapters to process
+        chapters: Parsed chapter objects from Stage 1 (to avoid re-parsing EPUB)
+        progress: Gradio progress callback
+
+    Returns:
+        Tuple of (log_output, pipeline_state)
+    """
     log_output += "\n\n=== Stage 5.1: Generating TTS Audio ==="
     progress(0, desc=f"Starting TTS audio generation... (temp: {get_chapters_dir().parent})")
     try:
@@ -559,16 +575,19 @@ def generate_tts_audio(
             num_chapters = min(num_chapters, int(max_chapters))
         log_output += f"\nGenerating TTS audio for {num_chapters} chapters... (temp: {chapters_dir.parent})"
 
-        # Parse the EPUB to get chapters (same as Stage 1)
-        epub_path = str(chapters_dir / "uploaded.epub")
-
-        chapters = parse_chapter.parse_epub_to_chapters(
-            epub_path,
-            max_chapters=int(max_chapters) if max_chapters else None
-        )
+        # Use chapters from Stage 1 if provided, otherwise parse from EPUB (fallback)
+        if chapters is not None:
+            log_output += "\nUsing chapters from Stage 1 (no re-parsing)."
+        else:
+            log_output += "\nNo chapters found in memory - parsing EPUB (this may cause memory issues for large files)."
+            epub_path = str(chapters_dir / "uploaded.epub")
+            chapters = parse_chapter.parse_epub_to_chapters(
+                epub_path,
+                max_chapters=int(max_chapters) if max_chapters else None
+            )
 
         if not chapters:
-            log_output += "\nError: No chapters found in EPUB file."
+            log_output += "\nError: No chapters found."
             return log_output, pipeline_state
 
         # Determine device (use CUDA if available, default to cuda:0)
@@ -619,13 +638,21 @@ def generate_full_audiobook(
     pipeline_state: Optional[str],
     log_output: str,
     max_chapters: Optional[int],
+    chapters: Optional[list],
 ) -> Tuple[str, str]:
-    """Stage 5: Generate full audiobook using generate_audiobook_from_chapters()."""
+    """Stage 5: Generate full audiobook using generate_audiobook_from_chapters().
+
+    Args:
+        pipeline_state: Current pipeline state
+        log_output: Current log output string
+        max_chapters: Maximum number of chapters to process
+        chapters: Parsed chapter objects from Stage 1 (to avoid re-parsing EPUB)
+    """
     log_output += "\n\n=== Stage 5: Full Audiobook Generation ==="
 
     try:
         # Use the unified generate_audiobook_from_chapters function
-        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters)
+        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters, chapters)
 
         # Update state to audiobook complete (MP3s are created during generate_audiobook_from_chapters)
         new_state = "audiobook_complete"
@@ -915,6 +942,9 @@ def create_interface(
                 chapter_audio = gr.Audio(label="", type="filepath", visible=False, scale=1)
                 generate_chap_btn = gr.Button("Regen", variant="secondary", scale=0, visible=False)
 
+        # State to track parsed chapter objects (to avoid re-parsing EPUB)
+        chapters_state = gr.State(None)
+
         # State to track characters
         characters_state = gr.State(None)
 
@@ -932,11 +962,11 @@ def create_interface(
         parse_btn.click(
             fn=parse_epub_to_file,
             inputs=[epub_upload, max_chapters_slider],
-            outputs=[log_output, pipeline_state],
+            outputs=[log_output, pipeline_state, chapters_state],
         ).then(
-            fn=lambda: (None, None),  # Clear characters_state and selected_character
+            fn=lambda: (None, None, None),  # Clear characters_state, selected_character, and chapters_state
             inputs=[],
-            outputs=[characters_state, selected_character],
+            outputs=[characters_state, selected_character, chapters_state],
         ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
@@ -1060,7 +1090,7 @@ def create_interface(
         # Generate Full Audiobook - Stage 5
         tts_btn.click(
             fn=generate_full_audiobook,
-            inputs=[pipeline_state, log_output, max_chapters_slider],
+            inputs=[pipeline_state, log_output, max_chapters_slider, chapters_state],
             outputs=[log_output, pipeline_state],
         ).then(
             fn=update_button_visibility,

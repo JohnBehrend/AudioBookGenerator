@@ -11,7 +11,7 @@ Core Pipeline Stages:
     Stage 5: audiobook_generator.generate_audiobook_from_chapters() - All -> Audiobook MP3s
 """
 
-from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
+from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR, DEFAULT_EPUB_FILE
 from .llm_label_speakers import label_speakers
 from .llm_describe_character import describe_characters
 from .generate_voice_samples import generate_voice_samples
@@ -37,6 +37,7 @@ __all__ = [
     "LLM_SETTINGS",
     "AUDIO_SETTINGS",
     "VOICE_SAMPLES_DIR",
+    "DEFAULT_EPUB_FILE",
     # Stage functions (public interfaces)
     "label_speakers",
     "describe_characters",

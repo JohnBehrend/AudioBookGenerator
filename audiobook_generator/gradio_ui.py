@@ -58,7 +58,7 @@ from audiobook_generator import (
     setup_tts_engine,
     setup_validation_model,
 )
-from config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
+from config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS, DEFAULT_EPUB_FILE
 
 
 # ============================================================================
@@ -849,7 +849,7 @@ def create_interface(
     api_key_default: str = DEFAULT_API_KEY,
     port_default: str = DEFAULT_PORT,
     num_attempts_default: int = DEFAULT_NUM_ATTEMPTS,
-    epub_path_default: Optional[str] = None,
+    epub_path_default: Optional[str] = str(DEFAULT_EPUB_FILE),
     max_chapters_default: int = DEFAULT_MAX_CHAPTERS,
 ):
     """Create the Gradio interface with all stages using a state machine pattern."""

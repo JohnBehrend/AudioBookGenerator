@@ -4,15 +4,18 @@ This module provides a single source of truth for all configuration settings,
 including LLM settings, device selection, defaults, and file paths.
 
 Usage:
-    from config import LLM_SETTINGS, AUDIO_SETTINGS, DEFAULTS
+    from config import LLM_SETTINGS, AUDIO_SETTINGS, DEFAULTS, DEFAULT_EPUB_FILE
 
     # Access settings
     port = LLM_SETTINGS["port"]
     device = AUDIO_SETTINGS["default_device"]
+    default_epub = DEFAULT_EPUB_FILE
 """
 
 import os
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 # ============================================================================
 # LLM SETTINGS
@@ -80,6 +83,9 @@ DEFAULTS = {
 # Output directories
 OUTPUT_DIR = Path("chapters")
 VOICE_SAMPLES_DIR = Path(AUDIO_SETTINGS.get("voice_samples_dir", "character_voice_samples"))
+
+# Default EPUB file for Gradio interface
+DEFAULT_EPUB_FILE = SCRIPT_DIR.parent / "voice_test" / "test_pride_and_prejudice.epub"
 
 # File patterns
 CHAPTER_PATTERN = "chapter_*.txt"

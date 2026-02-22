@@ -279,7 +279,7 @@ def process_chapters_for_labels(
 
         try:
             # Import and call directly instead of subprocess
-            result_msg, char_map, line_map = label_speakers_in_file(
+            result_msg, char_map, line_map = label_speakers(
                 txt_file=chapter_file,
                 api_key=api_key,
                 port=port,
@@ -349,9 +349,9 @@ def describe_characters(
 
         log_output += f"\nFound {num_characters} characters from map files. (temp: {chapters_dir.parent})"
 
-        # Call describe_characters_in_dir directly instead of subprocess
+        # Call describe_characters directly instead of subprocess
         progress(0.5, desc=f"Describing {num_characters} characters with LLM... (temp: {chapters_dir.parent})")
-        result_msg, character_descriptions = describe_characters_in_dir(
+        result_msg, character_descriptions = describe_characters(
             output_dir=str(chapters_dir),
             api_key=api_key,
             port=port,
@@ -596,70 +596,19 @@ def generate_tts_audio(
         return log_output, pipeline_state
 
 
-def assemble_chapter_audiobooks(
-    pipeline_state: Optional[str],
-    log_output: str,
-) -> Tuple[str, Optional[str]]:
-    """Stage 5.3: Assemble final chapter MP3 files from WAV files."""
-    log_output += "\n\n=== Stage 5.3: Assembling Chapter MP3 Files ==="
-
-    try:
-        chapters_dir = get_chapters_dir()
-        if not chapters_dir:
-            return log_output + "\nError: Chapters directory not initialized.", pipeline_state
-
-        chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
-        if not chapter_files:
-            log_output += "\nNo chapter text files found. Please run Stage 5.1 first."
-            return log_output, pipeline_state
-
-        num_chapters = len(chapter_files)
-        log_output += f"\nFound {num_chapters} chapters to assemble. (temp: {chapters_dir.parent})"
-
-        # Process each chapter
-        for i in range(num_chapters):
-            # Find all WAV files for this chapter
-            wav_files = sorted(glob.glob(str(chapters_dir / f"chapter_{str(i).zfill(2)}.*.wav")))
-
-            if not wav_files:
-                log_output += f"\nNo WAV files found for chapter {i}, skipping."
-                continue
-
-            # Combine audio files using package function
-            audio = get_non_silent_audio_from_wavs(wav_files)
-            output_mp3 = chapters_dir / f"chapter_{str(i).zfill(2)}.mp3"
-            audio.export(str(output_mp3), format="mp3")
-
-            # Clean up individual WAV files
-            for wav in wav_files:
-                os.unlink(wav)
-
-            log_output += f"\nChapter {i}: Created {output_mp3.name} from {len(wav_files)} audio segments. (temp: {chapters_dir.parent})"
-
-        log_output += "\n\nStage 5.3 (Assembly) complete! (temp: {chapters_dir.parent})"
-        return log_output, pipeline_state
-
-    except Exception as e:
-        log_output += f"\nError assembling audiobooks: {str(e)}"
-        return log_output, pipeline_state
-
-
 def generate_full_audiobook(
     pipeline_state: Optional[str],
     log_output: str,
     max_chapters: Optional[int],
 ) -> Tuple[str, str]:
-    """Stage 5: Generate full audiobook - runs TTS generation and assembly."""
+    """Stage 5: Generate full audiobook using generate_audiobook_from_chapters()."""
     log_output += "\n\n=== Stage 5: Full Audiobook Generation ==="
 
     try:
-        # Step 5.1: Generate TTS audio
+        # Use the unified generate_audiobook_from_chapters function
         log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters)
 
-        # Step 5.2: Assemble chapter MP3s
-        log_output, pipeline_state = assemble_chapter_audiobooks(pipeline_state, log_output)
-
-        # Update state to audiobook complete
+        # Update state to audiobook complete (MP3s are created during generate_audiobook_from_chapters)
         new_state = "audiobook_complete"
         log_output += f"\n\n=== Stage 5 Complete: Full Audiobook Generation === State: {new_state}"
         return log_output, new_state

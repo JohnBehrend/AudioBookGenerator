@@ -6,6 +6,7 @@ import argparse
 import os
 import sys
 import json
+from typing import Dict, Tuple
 from collections import Counter
 from openai import OpenAI
 

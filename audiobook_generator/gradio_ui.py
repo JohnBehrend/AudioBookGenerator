@@ -964,10 +964,6 @@ def create_interface(
             inputs=[epub_upload, max_chapters_slider],
             outputs=[log_output, pipeline_state, chapters_state],
         ).then(
-            fn=lambda: (None, None, None),  # Clear characters_state, selected_character, and chapters_state
-            inputs=[],
-            outputs=[characters_state, selected_character, chapters_state],
-        ).then(
             fn=update_button_visibility,
             inputs=pipeline_state,
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],

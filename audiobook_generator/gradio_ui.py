@@ -47,7 +47,7 @@ import parse_chapter
 from llm_label_speakers import label_speakers  # Clean public function
 from llm_describe_character import describe_characters as describe_chars  # Clean public function
 from generate_voice_samples import generate_voice_samples as gen_voice_samples
-from utils import get_chapters_dir, get_temp_dir, cleanup_temp_dir
+from utils import get_chapters_dir, get_temp_dir, cleanup_temp_dir, ProgressHandler
 from audiobook_generator import (
     PipelineState,
     generate_audiobook_from_chapters,
@@ -150,20 +150,23 @@ def progress_iterator(items, progress=None, desc="Processing"):
 
 def parse_epub_to_file(
     epub_file, max_chapters: Optional[int], progress=gr.Progress()
-) -> Tuple[str, int, list]:
+) -> Tuple[str, PipelineState]:
     """Stage 1: Parse EPUB file into chapter text files.
 
     Returns:
-        Tuple of (log_output, pipeline_state, parsed_chapters)
+        Tuple of (log_output, PipelineState instance)
     """
     if epub_file is None:
-        return "Error: No EPUB file uploaded.", 0, None
+        return "Error: No EPUB file uploaded.", None
 
     chapters_dir = get_chapters_dir()
     if not chapters_dir:
-        return "Error: Failed to create temporary directory.", 0, None
+        return "Error: Failed to create temporary directory.", None
 
     try:
+        # Create PipelineState
+        state = PipelineState(str(chapters_dir))
+
         # Clean up existing files in the chapters directory before starting fresh
         if chapters_dir.exists():
             for item in chapters_dir.iterdir():
@@ -184,7 +187,10 @@ def parse_epub_to_file(
         )
 
         if not chapters:
-            return "Error: No chapters found in EPUB file.", 0, None
+            return "Error: No chapters found in EPUB file.", None
+
+        # Store parsed chapters in state for reuse (avoid re-parsing)
+        state.chapters = chapters
 
         # Count total lines across all chapters for progress tracking
         total_lines = sum(len(chapter) for chapter in chapters)
@@ -214,11 +220,12 @@ def parse_epub_to_file(
                     f.write("\n")
 
         progress(1.0, desc=f"Successfully parsed {total_chapters} chapters with {total_lines} lines. (temp: {chapters_dir.parent})")
-        return "=== Stage 1: EPUB Parsing Complete ===\n", "epub_parsed", chapters
+        state.pipeline_state = "epub_parsed"
+        return "=== Stage 1: EPUB Parsing Complete ===\n", state
     except Exception as e:
         log_output = f"Error parsing EPUB: {str(e)}"
         log_output += f"\n{traceback.format_exc()}"
-        return log_output, 0, None
+        return log_output, None
 
 
 # ============================================================================
@@ -230,22 +237,24 @@ def process_chapters_for_labels(
     api_key: str,
     port: str,
     num_attempts: int,
-    pipeline_state: Optional[str],
+    pipeline_state: PipelineState,
     log_output: str,
     progress=gr.Progress()
-) -> Tuple[str, str, List[str]]:
+) -> Tuple[str, PipelineState]:
     """Stage 2: Run LLM to label speakers in all chapters."""
     chapters_dir = get_chapters_dir()
     if not chapters_dir:
         progress(1.0, desc=f"Error: Chapters directory not initialized. (temp: {chapters_dir.parent})")
-        return log_output + "\nError: Chapters directory not initialized.", pipeline_state, []
+        log_output += "\nError: Chapters directory not initialized."
+        return log_output, pipeline_state
 
     chapter_files = sorted([f for f in chapters_dir.glob("chapter_*.txt")
                            if re.match(r"^chapter_\d+\.txt$", f.name)])
 
     if not chapter_files:
         progress(1.0, desc="No chapter files found. Please run Stage 1 (Parse EPUB) first.")
-        return log_output + "\nNo chapter files found. Please run Stage 1 (Parse EPUB) first.", pipeline_state, []
+        log_output += "\nNo chapter files found. Please run Stage 1 (Parse EPUB) first."
+        return log_output, pipeline_state
 
     num_chapters = len(chapter_files)
     log_output += f"\nProcessing {num_chapters} chapters with LLM... (temp: {chapters_dir.parent})"
@@ -278,15 +287,16 @@ def process_chapters_for_labels(
             log_output += f"\nError processing {chapter_file}: {str(e)}"
             log_output += f"\n{traceback.format_exc()}"
 
-    new_state = "labels_complete"
-    log_output += f"\n\nStage 2 complete! State: {new_state}"
+    # Load chapter maps and characters into state
+    pipeline_state.load_chapter_maps()
+    pipeline_state.get_characters()
+    pipeline_state.pipeline_state = "labels_complete"
 
-    # Convert to sorted list for consistent ordering
-    character_list = sorted(list(all_character_names))
-    log_output += f"\nFound {len(character_list)} characters: {', '.join(character_list)}"
+    log_output += f"\n\nStage 2 complete! State: {pipeline_state.pipeline_state}"
+    log_output += f"\nFound {len(pipeline_state.characters)} characters: {', '.join(pipeline_state.characters)}"
 
     progress(1.0, desc=f"LLM speaker labeling complete. (temp: {chapters_dir.parent})")
-    return log_output, new_state, character_list
+    return log_output, pipeline_state
 
 
 # ============================================================================
@@ -297,10 +307,10 @@ def process_chapters_for_labels(
 def describe_characters_ui(
     api_key: str,
     port: str,
-    pipeline_state: Optional[str],
+    pipeline_state: PipelineState,
     log_output: str,
     progress=gr.Progress()
-) -> Tuple[str, str, Optional[Dict[str, Any]]]:
+) -> Tuple[str, PipelineState]:
     """Stage 3: Use LLM to describe characters."""
     progress(0, desc="Starting character description generation...")
     log_output += "\n\nGenerating character descriptions..."
@@ -308,23 +318,22 @@ def describe_characters_ui(
     try:
         chapters_dir = get_chapters_dir()
         if not chapters_dir:
-            return log_output + "\nError: Chapters directory not initialized.", pipeline_state, None
+            log_output += "\nError: Chapters directory not initialized."
+            return log_output, pipeline_state
 
         # Check if map files exist
         map_files = glob.glob(str(chapters_dir / "*.map.json"))
         if not map_files:
             log_output += "\nNo .map.json files found. Please run Stage 2 (Label Speakers) first."
-            return log_output, pipeline_state, None
+            return log_output, pipeline_state
 
-        # Extract characters using PipelineState
-        # chapters_dir is already the correct directory (not nested)
-        state_manager = PipelineState(str(chapters_dir))
-        characters = state_manager.get_characters()
+        # Get characters from existing state
+        characters = pipeline_state.get_characters()
         num_characters = len(characters)
 
         if num_characters == 0:
             log_output += "\nNo characters found in map files. Please run Stage 2 first."
-            return log_output, pipeline_state, None
+            return log_output, pipeline_state
 
         log_output += f"\nFound {num_characters} characters from map files. (temp: {chapters_dir.parent})"
 
@@ -339,22 +348,18 @@ def describe_characters_ui(
 
         log_output += f"\n{result_msg}"
         progress(1.0, desc=f"Character description generation complete. (temp: {chapters_dir.parent})")
-        # Load and return the character descriptions for state tracking
-        descriptions_file = get_characters_descriptions_file()
-        try:
-            with open(descriptions_file, "r", encoding="utf-8") as f:
-                characters_state = json.load(f)
-        except Exception:
-            characters_state = {}
 
-        new_state = "characters_described"
-        log_output += f" State: {new_state}"
-        return log_output, new_state, characters_state
+        # Load and store character descriptions in state
+        pipeline_state.load_character_descriptions()
+        pipeline_state.pipeline_state = "characters_described"
+
+        log_output += f" State: {pipeline_state.pipeline_state}"
+        return log_output, pipeline_state
 
     except Exception as e:
         log_output += f"\nError describing characters: {str(e)}"
         log_output += f"\n{traceback.format_exc()}"
-        return log_output, pipeline_state, None
+        return log_output, pipeline_state
 
 
 # ============================================================================
@@ -363,10 +368,10 @@ def describe_characters_ui(
 
 
 def generate_voice_samples(
-    pipeline_state: Optional[str],
+    pipeline_state: PipelineState,
     log_output: str,
     progress=gr.Progress()
-) -> Tuple[str, str]:
+) -> Tuple[str, PipelineState]:
     """Stage 4: Generate voice samples for each character."""
     log_output += "\n\nGenerating voice samples..."
 
@@ -374,7 +379,8 @@ def generate_voice_samples(
         progress(0, desc="Starting voice sample generation...")
         chapters_dir = get_chapters_dir()
         if not chapters_dir:
-            return log_output + "\nError: Chapters directory not initialized.", pipeline_state
+            log_output += "\nError: Chapters directory not initialized."
+            return log_output, pipeline_state
 
         descriptions_file = get_characters_descriptions_file()
         if not descriptions_file or not descriptions_file.exists():
@@ -399,9 +405,12 @@ def generate_voice_samples(
 
         log_output += f"\n{result_msg}"
         progress(1.0, desc=f"Voice sample generation complete. (temp: {chapters_dir.parent})")
-        new_state = "voice_samples_complete"
-        log_output += f" State: {new_state}"
-        return log_output, new_state
+
+        # Load voice map into state
+        pipeline_state.load_voice_map()
+        pipeline_state.pipeline_state = "voice_samples_complete"
+        log_output += f" State: {pipeline_state.pipeline_state}"
+        return log_output, pipeline_state
 
     except Exception as e:
         import traceback
@@ -412,17 +421,18 @@ def generate_voice_samples(
 
 def regenerate_voice_sample(
     character_name: str,
-    pipeline_state: Optional[str],
+    pipeline_state: PipelineState,
     log_output: str,
     progress=gr.Progress()
-) -> Tuple[str, Optional[str], Optional[str]]:
+) -> Tuple[str, PipelineState, Optional[str]]:
     """Regenerate a single voice sample for a character."""
     log_output += f"\n\nRegenerating voice sample for: {character_name}"
 
     try:
         chapters_dir = get_chapters_dir()
         if not chapters_dir:
-            return log_output + "\nError: Chapters directory not initialized.", pipeline_state, None
+            log_output += "\nError: Chapters directory not initialized."
+            return log_output, pipeline_state, None
 
         descriptions_file = get_characters_descriptions_file()
         if not descriptions_file or not descriptions_file.exists():
@@ -454,6 +464,9 @@ def regenerate_voice_sample(
         # Return the path to the regenerated file
         wav_path = get_character_wav_file(character_name, chapters_dir)
         log_output += f"\n\nVoice sample regenerated for: {character_name} (temp: {chapters_dir.parent})"
+
+        # Reload voice map
+        pipeline_state.load_voice_map()
         return log_output, pipeline_state, wav_path
 
     except Exception as e:
@@ -469,19 +482,17 @@ def regenerate_voice_sample(
 
 
 def generate_tts_audio(
-    pipeline_state: Optional[str],
+    pipeline_state: PipelineState,
     log_output: str,
     max_chapters: Optional[int],
-    chapters: Optional[list],
     progress=gr.Progress()
-) -> Tuple[str, Optional[str]]:
+) -> Tuple[str, PipelineState]:
     """Stage 5.1: Generate TTS audio for each line/voice.
 
     Args:
-        pipeline_state: Current pipeline state
+        pipeline_state: Current pipeline state (contains chapters from Stage 1)
         log_output: Current log output string
         max_chapters: Maximum number of chapters to process
-        chapters: Parsed chapter objects from Stage 1 (to avoid re-parsing EPUB)
         progress: Gradio progress callback
 
     Returns:
@@ -492,7 +503,8 @@ def generate_tts_audio(
     try:
         chapters_dir = get_chapters_dir()
         if not chapters_dir:
-            return log_output + "\nError: Chapters directory not initialized.", pipeline_state
+            log_output += "\nError: Chapters directory not initialized."
+            return log_output, pipeline_state
 
         # Check if chapter map files exist
         map_files = glob.glob(str(chapters_dir / "*.map.json"))
@@ -527,33 +539,23 @@ def generate_tts_audio(
             log_output += "\nNo voice samples found. Please run Stage 4 (Generate Voices) first."
             return log_output, pipeline_state
 
-        # Load chapter maps for character/line mapping using PipelineState
-        # chapters_dir is already the correct directory (not nested)
-        state = PipelineState(str(chapters_dir))
-        chapter_maps = state.load_chapter_maps()
+        # Load chapter maps from existing state
+        pipeline_state.load_chapter_maps()
+        chapter_maps = pipeline_state.chapter_maps
+
+        # Get chapters from state (no re-parsing!)
+        chapters = pipeline_state.chapters
+        if not chapters:
+            log_output += "\nError: Chapters not found in state. Please parse EPUB first."
+            return log_output, pipeline_state
 
         # Count chapters for progress tracking
-        chapter_files = sorted([f for f in chapters_dir.glob("chapter_*.txt")
-                               if re.match(r"^chapter_\d+\.txt$", f.name)])
-        num_chapters = len(chapter_files)
+        num_chapters = len(chapters)
         if max_chapters:
             num_chapters = min(num_chapters, int(max_chapters))
         log_output += f"\nGenerating TTS audio for {num_chapters} chapters... (temp: {chapters_dir.parent})"
 
-        # Use chapters from Stage 1 if provided, otherwise parse from EPUB (fallback)
-        if chapters is not None:
-            log_output += "\nUsing chapters from Stage 1 (no re-parsing)."
-        else:
-            log_output += "\nNo chapters found in memory - parsing EPUB (this may cause memory issues for large files)."
-            epub_path = str(chapters_dir / "uploaded.epub")
-            chapters = parse_chapter.parse_epub_to_chapters(
-                epub_path,
-                max_chapters=int(max_chapters) if max_chapters else None
-            )
-
-        if not chapters:
-            log_output += "\nError: No chapters found."
-            return log_output, pipeline_state
+        log_output += "\nUsing chapters from Stage 1 (no re-parsing)."
 
         # Determine device (use CUDA if available, default to cuda:0)
         import torch
@@ -590,6 +592,9 @@ def generate_tts_audio(
 
         log_output += f"\n{status}"
         log_output += "\n\nStage 5.1 (TTS Audio) complete!"
+
+        # Update state to audiobook complete
+        pipeline_state.pipeline_state = "audiobook_complete"
         return log_output, pipeline_state
 
     except Exception as e:
@@ -600,33 +605,30 @@ def generate_tts_audio(
 
 
 def generate_full_audiobook(
-    pipeline_state: Optional[str],
+    pipeline_state: PipelineState,
     log_output: str,
     max_chapters: Optional[int],
-    chapters: Optional[list],
-) -> Tuple[str, str]:
+) -> Tuple[str, PipelineState]:
     """Stage 5: Generate full audiobook using generate_audiobook_from_chapters().
 
     Args:
-        pipeline_state: Current pipeline state
+        pipeline_state: Current pipeline state (contains chapters from Stage 1)
         log_output: Current log output string
         max_chapters: Maximum number of chapters to process
-        chapters: Parsed chapter objects from Stage 1 (to avoid re-parsing EPUB)
     """
     log_output += "\n\n=== Stage 5: Full Audiobook Generation ==="
 
     try:
         # Use the unified generate_audiobook_from_chapters function
-        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters, chapters)
+        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters)
 
         # Update state to audiobook complete (MP3s are created during generate_audiobook_from_chapters)
-        new_state = "audiobook_complete"
-        log_output += f"\n\n=== Stage 5 Complete: Full Audiobook Generation === State: {new_state}"
-        return log_output, new_state
+        log_output += f"\n\n=== Stage 5 Complete: Full Audiobook Generation === State: {pipeline_state.pipeline_state}"
+        return log_output, pipeline_state
     except Exception as e:
         log_output += f"\nError generating audiobook: {str(e)}"
         log_output += f"\n{traceback.format_exc()}"
-        return log_output, pipeline_state or "error"
+        return log_output, pipeline_state
 
 
 # ============================================================================
@@ -784,6 +786,21 @@ def update_character_table(
     return gr.Dataframe(value=[])
 
 
+def create_or_get_pipeline_state(output_dir: str = None) -> PipelineState:
+    """Create a new PipelineState or get the existing one from gr.State().
+
+    Args:
+        output_dir: Optional output directory path. If None, uses get_chapters_dir().
+
+    Returns:
+        PipelineState instance
+    """
+    if output_dir is None:
+        chapters_dir = get_chapters_dir()
+        output_dir = str(chapters_dir)
+    return PipelineState(output_dir)
+
+
 def get_next_step_recommendation(state: Optional[str]) -> str:
     """Get a recommendation for the next step based on pipeline state."""
     recommendations = {
@@ -812,11 +829,13 @@ def update_state_display(state: Optional[str]) -> gr.Textbox:
     return gr.update(label=f"Log (State: {state_text}) - {next_step}")
 
 
-def update_button_visibility(state: Optional[str]):
+def update_button_visibility_from_state(pipeline_state: PipelineState):
     """
     Update button enabled state based on pipeline state.
     Returns tuple of updates for all buttons and components.
     """
+    state = pipeline_state.pipeline_state if pipeline_state else None
+
     if state is None:
         # Initial state: only Parse EPUB is enabled
         _states = [True, False, False, False, False, False, False]
@@ -828,9 +847,74 @@ def update_button_visibility(state: Optional[str]):
         _states = [True,  True,  True,  True,  True, False, False]
     elif state == "voice_samples_complete":
         _states = [True,  True,  True,  True,  True,  True, True]
-    else:  # AUDIOBOOK_COMPLETE or beyond
+    elif state == "audiobook_complete":
+        _states = [True,  True,  True,  True,  True,  True,  True]
+    else:
         _states = [True,  True,  True,  True,  True,  True,  True]
     return tuple(gr.update(interactive=state) for state in _states)
+
+
+def update_state_display_from_state(pipeline_state: PipelineState) -> gr.Textbox:
+    """Update log label with state based on pipeline state."""
+    state = pipeline_state.pipeline_state if pipeline_state else None
+    state_labels = {
+        None: "Ready",
+        "epub_parsed": "EPUB Parsed",
+        "labels_complete": "Speakers Labeled",
+        "characters_described": "Characters Described",
+        "voice_samples_complete": "Voice Samples Ready",
+        "audiobook_complete": "Audiobook Complete",
+    }
+    state_text = state_labels.get(state, "Unknown")
+    next_step = get_next_step_recommendation(state)
+    return gr.update(label=f"Log (State: {state_text}) - {next_step}")
+
+
+def update_character_table_from_state(pipeline_state: PipelineState) -> gr.Dataframe:
+    """Update character table based on PipelineState."""
+    chapters_dir = get_chapters_dir()
+
+    # Check if we have descriptions (Stage 3+)
+    descriptions_file = get_characters_descriptions_file()
+    if descriptions_file and descriptions_file.exists() and pipeline_state and pipeline_state.character_descriptions:
+        try:
+            descriptions = pipeline_state.character_descriptions
+
+            # Get character lines from map files
+            character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
+
+            # Build table data with character name, truncated description, and lines spoken
+            table_data = []
+            for char_name, char_desc in descriptions.items():
+                truncated_desc = char_desc[:100] + ("..." if len(char_desc) > 100 else "")
+                lines_spoken = character_lines.get(char_name, 0)
+                table_data.append([char_name, truncated_desc, lines_spoken])
+
+            # Sort by lines spoken (descending)
+            table_data.sort(key=lambda x: x[2], reverse=True)
+
+            return gr.Dataframe(
+                headers=["Character", "Description", "Lines Spoken"],
+                datatype=["str", "str", "int"],
+                value=table_data,
+                wrap=True,
+            )
+        except Exception:
+            return gr.Dataframe(value=[])
+
+    # Check if we have character list (Stage 2)
+    if pipeline_state and pipeline_state.characters:
+        if isinstance(pipeline_state.characters, list):
+            # Build table data with just character names (no descriptions or line counts yet)
+            table_data = [[char_name, "", 0] for char_name in sorted(pipeline_state.characters)]
+            return gr.Dataframe(
+                headers=["Character", "Description", "Lines Spoken"],
+                datatype=["str", "str", "int"],
+                value=table_data,
+                wrap=True,
+            )
+
+    return gr.Dataframe(value=[])
 
 
 # ============================================================================
@@ -908,17 +992,9 @@ def create_interface(
                 chapter_audio = gr.Audio(label="", type="filepath", visible=False, scale=1)
                 generate_chap_btn = gr.Button("Regen", variant="secondary", scale=0, visible=False)
 
-        # State to track parsed chapter objects (to avoid re-parsing EPUB)
-        chapters_state = gr.State(None)
-
-        # State to track characters
-        characters_state = gr.State(None)
-
-        # State to track selected character for Regen button
-        selected_character = gr.State(None)
-
-        # State to track pipeline state
-        pipeline_state = gr.State(None)
+        # Use PipelineState as the unified state for both CLI and Gradio
+        # This replaces separate gr.State() for chapters, characters, and pipeline_state
+        pipeline_state_obj = gr.State(None)
 
         # ============================================================================
         # EVENT HANDLERS
@@ -928,139 +1004,140 @@ def create_interface(
         parse_btn.click(
             fn=parse_epub_to_file,
             inputs=[epub_upload, max_chapters_slider],
-            outputs=[log_output, pipeline_state, chapters_state],
+            outputs=[log_output, pipeline_state_obj],
         ).then(
-            fn=update_button_visibility,
-            inputs=pipeline_state,
+            fn=update_button_visibility_from_state,
+            inputs=pipeline_state_obj,
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
         ).then(
-            fn=update_state_display,
-            inputs=pipeline_state,
+            fn=update_state_display_from_state,
+            inputs=pipeline_state_obj,
             outputs=log_output,
         )
 
         # Label Speakers - Stage 2
         label_btn.click(
             fn=process_chapters_for_labels,
-            inputs=[api_key_input, port_input, num_attempts_input, pipeline_state, log_output],
-            outputs=[log_output, pipeline_state, characters_state],
+            inputs=[api_key_input, port_input, num_attempts_input, pipeline_state_obj, log_output],
+            outputs=[log_output, pipeline_state_obj],
         ).then(
-            fn=lambda log, state, chars: (update_character_table(state, chars), state),
-            inputs=[log_output, pipeline_state, characters_state],
-            outputs=[character_table, pipeline_state],
-        ).then(
-            fn=update_button_visibility,
-            inputs=pipeline_state,
+            fn=update_button_visibility_from_state,
+            inputs=pipeline_state_obj,
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
         ).then(
-            fn=update_state_display,
-            inputs=pipeline_state,
+            fn=update_state_display_from_state,
+            inputs=pipeline_state_obj,
             outputs=log_output,
+        ).then(
+            fn=update_character_table_from_state,
+            inputs=pipeline_state_obj,
+            outputs=character_table,
         )
 
         # Describe Characters - Stage 3
         describe_btn.click(
             fn=describe_characters_ui,
-            inputs=[api_key_input, port_input, pipeline_state, log_output],
-            outputs=[log_output, pipeline_state, characters_state],
+            inputs=[api_key_input, port_input, pipeline_state_obj, log_output],
+            outputs=[log_output, pipeline_state_obj],
         ).then(
-            fn=lambda log, state, chars: (update_character_table(state, chars), state),
-            inputs=[log_output, pipeline_state, characters_state],
-            outputs=[character_table, pipeline_state],
-        ).then(
-            fn=update_button_visibility,
-            inputs=pipeline_state,
+            fn=update_button_visibility_from_state,
+            inputs=pipeline_state_obj,
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
         ).then(
-            fn=update_state_display,
-            inputs=pipeline_state,
+            fn=update_state_display_from_state,
+            inputs=pipeline_state_obj,
             outputs=log_output,
+        ).then(
+            fn=update_character_table_from_state,
+            inputs=pipeline_state_obj,
+            outputs=character_table,
         )
 
         # Generate All Voice Samples - Stage 4
         voice_samples_btn.click(
             fn=generate_voice_samples,
-            inputs=[pipeline_state, log_output],
-            outputs=[log_output, pipeline_state],
+            inputs=[pipeline_state_obj, log_output],
+            outputs=[log_output, pipeline_state_obj],
         ).then(
-            fn=update_button_visibility,
-            inputs=pipeline_state,
+            fn=update_button_visibility_from_state,
+            inputs=pipeline_state_obj,
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
         ).then(
-            fn=update_state_display,
-            inputs=pipeline_state,
+            fn=update_state_display_from_state,
+            inputs=pipeline_state_obj,
             outputs=log_output,
         )
 
         # Handle row selection in character table - show audio when character selected
-        def on_character_select(evt: gr.SelectData, _characters_state, _selected_character):
+        def on_character_select(evt: gr.SelectData, _pipeline_state_obj):
             """Handle row selection in the character table."""
-            # If clicking away (no row selected), preserve the existing selected character
             if evt is None or evt.index is None:
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=_selected_character)
+                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
 
             character_name = evt.row_value[0] if evt.row_value and len(evt.row_value) > 0 else None
 
             if not character_name:
-                # If no character name, preserve existing selection
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=_selected_character)
+                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
+
+            if not _pipeline_state_obj:
+                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
 
             chapters_dir = get_chapters_dir()
             if not chapters_dir:
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=_selected_character)
+                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
 
             wav_path = get_character_wav_file(character_name, chapters_dir)
 
             if wav_path and os.path.exists(wav_path):
                 return gr.update(visible=True, value=wav_path), gr.update(visible=True), gr.update(value=character_name)
             else:
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=_selected_character)
+                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
 
         character_table.select(
             fn=on_character_select,
-            inputs=[characters_state, selected_character],
+            inputs=pipeline_state_obj,
             outputs=[character_audio, generate_char_btn, selected_character],
         )
 
         # Regenerate voice sample for selected character
-        def on_regenerate_click(pipeline_state, log_output, selected_char):
+        def on_regenerate_click(pipeline_state_obj, log_output, character_name):
             """Regenerate voice sample for the selected character."""
-            if not selected_char:
+            if not character_name:
                 log_output += "\nNo character selected."
-                return log_output, pipeline_state, None
+                return log_output, pipeline_state_obj, None
 
-            return regenerate_voice_sample(selected_char, pipeline_state, log_output)
+            return regenerate_voice_sample(character_name, pipeline_state_obj, log_output)
 
         generate_char_btn.click(
             fn=on_regenerate_click,
-            inputs=[pipeline_state, log_output, selected_character],
-            outputs=[log_output, pipeline_state, character_audio],
+            inputs=[pipeline_state_obj, log_output, selected_character],
+            outputs=[log_output, pipeline_state_obj, character_audio],
         ).then(
-            fn=lambda log, state, chars: (update_character_table(state, chars), state),
-            inputs=[log_output, pipeline_state, characters_state],
-            outputs=[character_table, pipeline_state],
-        ).then(
-            fn=update_button_visibility,
-            inputs=pipeline_state,
+            fn=update_button_visibility_from_state,
+            inputs=pipeline_state_obj,
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
         ).then(
-            fn=update_state_display,
-            inputs=pipeline_state,
+            fn=update_state_display_from_state,
+            inputs=pipeline_state_obj,
             outputs=log_output,
+        ).then(
+            fn=update_character_table_from_state,
+            inputs=pipeline_state_obj,
+            outputs=character_table,
         )
 
         # Generate Full Audiobook - Stage 5
         tts_btn.click(
             fn=generate_full_audiobook,
-            inputs=[pipeline_state, log_output, max_chapters_slider, chapters_state],
-            outputs=[log_output, pipeline_state],
+            inputs=[pipeline_state_obj, log_output, max_chapters_slider],
+            outputs=[log_output, pipeline_state_obj],
         ).then(
-            fn=update_button_visibility,
-            inputs=pipeline_state,
+            fn=update_button_visibility_from_state,
+            inputs=pipeline_state_obj,
             outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
         ).then(
-            fn=update_state_display,
-            inputs=pipeline_state,
+            fn=update_state_display_from_state,
+            inputs=pipeline_state_obj,
             outputs=log_output,
         )
 

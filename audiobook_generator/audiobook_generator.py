@@ -810,76 +810,87 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     # Initialize state
     state = PipelineState(output_dir)
 
-    # Stage 1: Parse EPUB
+    # Store chapters in state for reuse (avoid re-parsing)
+    # Stage 1: Parse EPUB with progress
     if verbose:
         print(f"[STAGE 1] Parsing EPUB: {epub_path}")
-    chapters = parse_chapter.parse_epub_to_chapters(epub_path, max_chapters=max_chapters)
 
-    if not chapters:
-        return "Error: No chapters found in EPUB file."
+    # Use tqdm for progress tracking (falls back to verbose print if tqdm not available)
+    total_lines_estimate = None  # We'll estimate from the EPUB parsing
+    with ProgressHandler(progress=None, use_tqdm=True, total=0, desc="Parsing EPUB") as handler:
+        chapters = parse_chapter.parse_epub_to_chapters(epub_path, max_chapters=max_chapters)
+        if not chapters:
+            return "Error: No chapters found in EPUB file."
 
-    state.write_chapter_text_files(chapters)
-    if verbose:
-        print(f"[STAGE 1] Parsed {len(chapters)} chapters")
+        # Store chapters in state for Stage 5 reuse
+        state.chapters = chapters
+        state.write_chapter_text_files(chapters)
+        if verbose:
+            print(f"[STAGE 1] Parsed {len(chapters)} chapters")
 
-    # Stage 2: Label Speakers
+    # Stage 2: Label Speakers with progress
     if verbose:
         print(f"[STAGE 2] Labeling speakers...")
-    # Only match chapter files with simple numeric names (chapter_X.txt, not chapter_X.result.N.txt)
     chapter_files = sorted([f for f in state.chapters_dir.glob("chapter_*.txt")
                            if re.match(r"^chapter_\d+\.txt$", f.name)])
     num_chapters = len(chapter_files)
 
-    for i, chapter_file in enumerate(chapter_files):
-        if verbose:
-            print(f"  Processing {chapter_file.name} ({i+1}/{num_chapters})")
+    with ProgressHandler(progress=None, use_tqdm=True, total=num_chapters, desc="Labeling speakers") as handler:
+        for i, chapter_file in enumerate(chapter_files):
+            handler.update((i + 1) / num_chapters, desc=f"Labeling chapter {i + 1}/{num_chapters}")
 
-        result_msg, char_map, line_map = label_speakers(
-            txt_file=str(chapter_file),
+            result_msg, char_map, line_map = label_speakers(
+                txt_file=str(chapter_file),
+                api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
+                port=llm_port or LLM_SETTINGS.get("port", "1234"),
+                num_attempts=DEFAULTS.get("num_llm_attempts", 2),
+                verbose=verbose
+            )
+
+            if verbose:
+                print(f"  {result_msg}")
+
+    state.load_chapter_maps()
+    state.get_characters()
+
+    # Stage 3: Describe Characters with progress
+    if verbose:
+        print(f"[STAGE 3] Describing {len(state.characters)} characters...")
+
+    with ProgressHandler(progress=None, use_tqdm=True, total=1, desc="Describing characters") as handler:
+        result_msg, character_descriptions = describe_characters(
+            output_dir=str(state.output_dir),
             api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
             port=llm_port or LLM_SETTINGS.get("port", "1234"),
-            num_attempts=DEFAULTS.get("num_llm_attempts", 2),
             verbose=verbose
         )
 
         if verbose:
             print(f"  {result_msg}")
 
-    state.load_chapter_maps()
-    state.get_characters()
+        handler.update(1, desc="Character descriptions complete")
+        state.load_character_descriptions()
 
-    # Stage 3: Describe Characters
-    if verbose:
-        print(f"[STAGE 3] Describing {len(state.characters)} characters...")
-
-    result_msg, character_descriptions = describe_characters(
-        output_dir=str(state.output_dir),
-        api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
-        port=llm_port or LLM_SETTINGS.get("port", "1234"),
-        verbose=verbose
-    )
-
-    if verbose:
-        print(f"  {result_msg}")
-
-    state.load_character_descriptions()
-
-    # Stage 4: Generate Voice Samples
+    # Stage 4: Generate Voice Samples with progress
     if verbose:
         print(f"[STAGE 4] Generating voice samples...")
 
-    result_msg, generated_voices = gen_voice_samples(
-        descriptions=state.character_descriptions,
-        output_dir=str(state.output_dir),
-        verbose=verbose
-    )
+    num_characters = len(state.character_descriptions)
+    with ProgressHandler(progress=None, use_tqdm=True, total=num_characters, desc="Generating voice samples") as handler:
+        result_msg, generated_voices = gen_voice_samples(
+            descriptions=state.character_descriptions,
+            output_dir=str(state.output_dir),
+            verbose=verbose,
+            progress=None  # CLI mode, no gr.Progress
+        )
 
-    if verbose:
-        print(f"  {result_msg}")
+        if verbose:
+            print(f"  {result_msg}")
 
-    state.load_voice_map()
+        handler.update(num_characters, desc="Voice samples complete")
+        state.load_voice_map()
 
-    # Stage 5: Generate Audiobook
+    # Stage 5: Generate Audiobook with progress
     if verbose:
         print(f"[STAGE 5] Generating audiobook...")
 
@@ -894,20 +905,26 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
     # Generate TTS for all chapters
     try:
-        status, processed = generate_audiobook_from_chapters(
-            chapters=chapters,
-            chapter_maps=state.chapter_maps,
-            voices_map=state.voice_map,
-            output_dir=str(state.chapters_dir),
-            device=device,
-            tts_engine=tts_engine,
-            verbose=verbose,
-            progress=None,
-            validation_model=validation_model
-        )
+        # Count chapters for progress
+        num_chapters_to_process = len(chapters) if chapters else 0
 
-        if verbose:
-            print(f"  {status}")
+        with ProgressHandler(progress=None, use_tqdm=True, total=num_chapters_to_process, desc="Generating audiobook") as handler:
+            status, processed = generate_audiobook_from_chapters(
+                chapters=chapters,
+                chapter_maps=state.chapter_maps,
+                voices_map=state.voice_map,
+                output_dir=str(state.chapters_dir),
+                device=device,
+                tts_engine=tts_engine,
+                verbose=verbose,
+                progress=None,
+                validation_model=validation_model
+            )
+
+            if verbose:
+                print(f"  {status}")
+
+            handler.update(processed, desc=f"Generated {processed} chapters")
 
         # MP3 files are created during generate_audiobook_from_chapters
         mp3_files = sorted(glob.glob(str(state.chapters_dir / "chapter_*.mp3")))

@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import torch
+from typing import Optional
 
 # Import config for default values
 from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
@@ -159,7 +160,7 @@ def main():
 # The CLI main() function above calls this function to do the actual work.
 # This provides a single, consistent interface for all callers.
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 
 def generate_voice_samples(

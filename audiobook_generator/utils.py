@@ -5,11 +5,51 @@ Utility functions shared across multiple modules.
 
 import json
 import os
+import re
+import tempfile
+import atexit
 from pathlib import Path
 from collections import Counter
 from openai import OpenAI
 
 from config import LLM_SETTINGS
+
+
+def get_chapters_dir() -> Path:
+    """Get or create a temporary chapters directory for this session.
+
+    This provides a consistent way for both CLI and Gradio to use temporary
+    directories that auto-clean on program exit.
+
+    Returns:
+        Path to the chapters directory (temp_dir / "chapters")
+    """
+    if not hasattr(get_chapters_dir, "_temp_dir"):
+        # Use TemporaryDirectory which auto-cleans on program exit
+        get_chapters_dir._temp_context = tempfile.TemporaryDirectory(prefix="jbab_chapters_")
+        get_chapters_dir._temp_dir = get_chapters_dir._temp_context.name
+        # Register cleanup on normal exit
+        atexit.register(cleanup_temp_dir)
+    if not hasattr(get_chapters_dir, "_chapters_dir"):
+        get_chapters_dir._chapters_dir = Path(get_chapters_dir._temp_dir) / "chapters"
+        get_chapters_dir._chapters_dir.mkdir(parents=True, exist_ok=True)
+    return get_chapters_dir._chapters_dir
+
+
+def get_temp_dir() -> str:
+    """Get the temporary directory path for display purposes."""
+    if hasattr(get_chapters_dir, "_temp_dir") and get_chapters_dir._temp_dir:
+        return get_chapters_dir._temp_dir
+    return ""
+
+
+def cleanup_temp_dir() -> None:
+    """Clean up the temporary directory created by get_chapters_dir."""
+    if hasattr(get_chapters_dir, "_temp_context") and get_chapters_dir._temp_context:
+        get_chapters_dir._temp_context.cleanup()
+        get_chapters_dir._temp_dir = None
+        get_chapters_dir._chapters_dir = None
+        get_chapters_dir._temp_context = None
 
 
 def get_characters_from_map_files(chapters_dir: Path) -> list:
@@ -23,7 +63,8 @@ def get_characters_from_map_files(chapters_dir: Path) -> list:
     """
     characters = set()
 
-    map_files = sorted(chapters_dir.glob("*.map.json"))
+    map_files = sorted([f for f in chapters_dir.glob("*.map.json")
+                       if re.match(r"^chapter_\d+\.map\.json$", f.name)])
     for map_file in map_files:
         try:
             with open(map_file, "r", encoding="utf-8") as f:

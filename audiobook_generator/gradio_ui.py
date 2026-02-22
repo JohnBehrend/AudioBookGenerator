@@ -14,6 +14,7 @@ State machine pattern ensures each stage only runs when dependencies are met.
 
 import sys
 import io
+import re
 
 # ============================================================================
 # Suppress sox binary warning (sox Python package requires sox CLI binary)
@@ -36,10 +37,8 @@ import gradio as gr
 import os
 import json
 import glob
-import tempfile
 import shutil
 import traceback
-import atexit
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
 from time import sleep
@@ -49,7 +48,7 @@ import parse_chapter
 from llm_label_speakers import label_speakers  # Clean public function
 from llm_describe_character import describe_characters as describe_chars  # Clean public function
 from generate_voice_samples import generate_voice_samples as gen_voice_samples
-from utils import get_characters_from_map_files  # Use shared version
+from utils import get_characters_from_map_files, get_chapters_dir, get_temp_dir, cleanup_temp_dir
 from audiobook_generator import (
     PipelineState,
     generate_audiobook_from_chapters,
@@ -76,30 +75,6 @@ DEFAULT_MAX_CHAPTERS = DEFAULTS["max_chapters"]
 
 # ============================================================================
 # HELPER FUNCTIONS
-# ============================================================================
-
-
-def get_chapters_dir() -> Optional[Path]:
-    """Get or create a temporary chapters directory for this session."""
-    if not hasattr(get_chapters_dir, "_temp_dir"):
-        # Use TemporaryDirectory which auto-cleans on program exit
-        get_chapters_dir._temp_context = tempfile.TemporaryDirectory(prefix="jbab_chapters_")
-        get_chapters_dir._temp_dir = get_chapters_dir._temp_context.name
-        # Register cleanup on normal exit
-        atexit.register(cleanup_temp_dir)
-    if not hasattr(get_chapters_dir, "_chapters_dir"):
-        get_chapters_dir._chapters_dir = Path(get_chapters_dir._temp_dir) / "chapters"
-        get_chapters_dir._chapters_dir.mkdir(parents=True, exist_ok=True)
-    return get_chapters_dir._chapters_dir
-
-
-def get_temp_dir() -> Optional[str]:
-    """Get the temporary directory path for display purposes."""
-    if hasattr(get_chapters_dir, "_temp_dir") and get_chapters_dir._temp_dir:
-        return get_chapters_dir._temp_dir
-    return None
-
-
 def get_characters_descriptions_file() -> Optional[Path]:
     """Get the path to characters_descriptions.json in the temp directory."""
     chapters_dir = get_chapters_dir()
@@ -118,16 +93,16 @@ def get_duplicate_replacement_map_file() -> Optional[Path]:
 
 def cleanup_temp_dir() -> None:
     """Clean up the temporary directory when done."""
-    if hasattr(get_chapters_dir, "_temp_dir") and get_chapters_dir._temp_dir:
-        temp_dir = Path(get_chapters_dir._temp_dir)
+    if hasattr(cleanup_temp_dir, "_temp_dir") and cleanup_temp_dir._temp_dir:
+        temp_dir = Path(cleanup_temp_dir._temp_dir)
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
-        get_chapters_dir._temp_dir = None
-        get_chapters_dir._chapters_dir = None
+        cleanup_temp_dir._temp_dir = None
+        cleanup_temp_dir._chapters_dir = None
     # Clean up the TemporaryDirectory context if it exists
-    if hasattr(get_chapters_dir, "_temp_context") and get_chapters_dir._temp_context:
-        get_chapters_dir._temp_context.cleanup()
-        get_chapters_dir._temp_context = None
+    if hasattr(cleanup_temp_dir, "_temp_context") and cleanup_temp_dir._temp_context:
+        cleanup_temp_dir._temp_context.cleanup()
+        cleanup_temp_dir._temp_context = None
 
 
 def get_pipeline_state() -> Optional[str]:
@@ -137,8 +112,8 @@ def get_pipeline_state() -> Optional[str]:
         return None
 
     # Use PipelineState class for state determination
-    state_manager = PipelineState(str(chapters_dir.parent))
-    state_manager.chapters_dir = chapters_dir
+    # chapters_dir is already the correct directory (not nested)
+    state_manager = PipelineState(str(chapters_dir))
     return state_manager.get_pipeline_state()
 
 
@@ -276,7 +251,8 @@ def process_chapters_for_labels(
         progress(1.0, desc=f"Error: Chapters directory not initialized. (temp: {chapters_dir.parent})")
         return log_output + "\nError: Chapters directory not initialized.", pipeline_state, []
 
-    chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
+    chapter_files = sorted([f for f in chapters_dir.glob("chapter_*.txt")
+                           if re.match(r"^chapter_\d+\.txt$", f.name)])
 
     if not chapter_files:
         progress(1.0, desc="No chapter files found. Please run Stage 1 (Parse EPUB) first.")
@@ -352,8 +328,8 @@ def describe_characters_ui(
             return log_output, pipeline_state, None
 
         # Extract characters using PipelineState
-        state_manager = PipelineState(str(chapters_dir.parent))
-        state_manager.chapters_dir = chapters_dir
+        # chapters_dir is already the correct directory (not nested)
+        state_manager = PipelineState(str(chapters_dir))
         characters = state_manager.get_characters()
         num_characters = len(characters)
 
@@ -563,13 +539,13 @@ def generate_tts_audio(
             return log_output, pipeline_state
 
         # Load chapter maps for character/line mapping using PipelineState
-        temp_output_dir = str(chapters_dir.parent) if chapters_dir else "chapters"
-        state = PipelineState(temp_output_dir)
-        state.chapters_dir = chapters_dir
+        # chapters_dir is already the correct directory (not nested)
+        state = PipelineState(str(chapters_dir))
         chapter_maps = state.load_chapter_maps()
 
         # Count chapters for progress tracking
-        chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
+        chapter_files = sorted([f for f in chapters_dir.glob("chapter_*.txt")
+                               if re.match(r"^chapter_\d+\.txt$", f.name)])
         num_chapters = len(chapter_files)
         if max_chapters:
             num_chapters = min(num_chapters, int(max_chapters))
@@ -681,7 +657,8 @@ def count_lines_per_character(chapters_dir: Path) -> Dict[str, int]:
     """
     character_lines = {}
 
-    map_files = sorted(glob.glob(str(chapters_dir / "*.map.json")))
+    map_files = sorted([f for f in chapters_dir.glob("*.map.json")
+                       if re.match(r"^chapter_\d+\.map\.json$", f.name)])
     for map_file in map_files:
         try:
             with open(map_file, "r", encoding="utf-8") as f:

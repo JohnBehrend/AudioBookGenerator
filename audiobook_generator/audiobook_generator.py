@@ -65,6 +65,9 @@ from llm_label_speakers import label_speakers  # Clean public function
 from llm_describe_character import describe_characters  # Clean public function
 from generate_voice_samples import generate_voice_samples as gen_voice_samples
 
+# Import shared utilities for consistent temp directory handling
+from utils import get_chapters_dir, get_temp_dir, cleanup_temp_dir
+
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -664,7 +667,9 @@ class PipelineState:
 
     def __init__(self, output_dir: str):
         self.output_dir = Path(output_dir)
-        self.chapters_dir = self.output_dir / "chapters"
+        # Use output_dir directly as chapters_dir (not nested)
+        # This ensures consistent behavior between CLI and Gradio
+        self.chapters_dir = self.output_dir
         self.chapters_dir.mkdir(parents=True, exist_ok=True)
         self.pipeline_state = None
         self.chapters = None
@@ -676,7 +681,9 @@ class PipelineState:
     def load_chapter_maps(self):
         """Load all chapter map files from the chapters directory."""
         self.chapter_maps = {}
-        map_files = sorted(self.chapters_dir.glob("*.map.json"))
+        # Only match map files with simple numeric names (chapter_X.map.json, not chapter_X.result.N.map.json)
+        map_files = sorted([f for f in self.chapters_dir.glob("*.map.json")
+                           if re.match(r"^chapter_\d+\.map\.json$", f.name)])
 
         for map_file in map_files:
             try:
@@ -818,7 +825,9 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     # Stage 2: Label Speakers
     if verbose:
         print(f"[STAGE 2] Labeling speakers...")
-    chapter_files = sorted(state.chapters_dir.glob("chapter_*.txt"))
+    # Only match chapter files with simple numeric names (chapter_X.txt, not chapter_X.result.N.txt)
+    chapter_files = sorted([f for f in state.chapters_dir.glob("chapter_*.txt")
+                           if re.match(r"^chapter_\d+\.txt$", f.name)])
     num_chapters = len(chapter_files)
 
     for i, chapter_file in enumerate(chapter_files):
@@ -972,7 +981,7 @@ def main():
         description="Audiobook Generator - Parse EPUB and generate audiobook audio"
     )
     parser.add_argument("epub_file", nargs="?", help="Path to the EPUB file")
-    parser.add_argument("--output-dir", default="chapters", help="Output directory for generated files")
+    parser.add_argument("--output-dir", default=None, help="Output directory for generated files (default: temp directory)")
     parser.add_argument("--max-chapters", type=int, help="Maximum number of chapters to process")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print verbose output")
     parser.add_argument("--api-key", help="LLM API key for speaker labeling")
@@ -1007,9 +1016,16 @@ def main():
             print(f"Error: EPUB file not found: {args.epub_file}")
             sys.exit(1)
 
+        # Use temp directory by default, or user-specified output_dir if provided
+        if args.output_dir is None:
+            output_dir = str(get_chapters_dir())
+            print(f"Using temporary directory: {get_temp_dir()}")
+        else:
+            output_dir = args.output_dir
+
         status = run_full_pipeline(
             epub_path=args.epub_file,
-            output_dir=args.output_dir,
+            output_dir=output_dir,
             max_chapters=args.max_chapters,
             verbose=args.verbose,
             api_key=args.api_key,

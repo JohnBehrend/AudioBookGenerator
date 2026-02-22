@@ -382,18 +382,17 @@ def generate_tts_for_line(
 
     # Only add short_text_postfix when validation_model is provided
     # The validation loop is required to detect and dynamically remove the postfix
-    short_text_flag = validation_model is not None
-    if short_text_flag:
-        full_script = full_script + (" " if full_script[0] in end_characters else ". ") + short_text_postfix
+    postfix_detect_token = None
+    if short_text_postfix:
+        full_script = full_script + (" " if full_script[-1] in end_characters else ". ") + short_text_postfix
+        postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0]) # first word, ideal separator
 
     ratio = 0.0
     max_ratio = float('-inf')  # Initialize to lowest possible value to ensure first attempt is always saved
     retries = 0
     input_string = distill_string(full_script)
-    postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0]) if short_text_flag else None
-
+    
     set_seed(42)
-    print("\nSTART\n")
     while ratio < 0.85 and retries < 5:
         set_seed(42 + retries)
         inputs = None
@@ -436,7 +435,6 @@ def generate_tts_for_line(
                     language="English",
                     voice_clone_prompt=voice_clone_prompt,
                 )
-                print("\nGEN\n")
 
             else:
                 raise Exception("Invalid voice_clone_prompt.")
@@ -444,7 +442,6 @@ def generate_tts_for_line(
             # Save audio using soundfile
             if wavs and len(wavs) > 0:
                 sf.write(output_path, wavs[0], out_sr)
-                print("\nWRITE\n")
 
             else:
                 raise Exception("Empty Qwen3 tts speak for chapter text")
@@ -485,7 +482,6 @@ def generate_tts_for_line(
         # send through a cleaning ML algo
         sample_rate, waveform = wavfile.read(output_path)
         wavfile.write(output_path, sample_rate, waveform)
-        print("\nCLEAN\n")
 
         # Initialize variables for clipping/validation logic
         detected_string = ""
@@ -494,36 +490,28 @@ def generate_tts_for_line(
         end_times = []
         last_valid_token = None
 
-        if validation_model is not None:
+        if short_text_postfix and (validation_model is not None):
             # Use faster-whisper for validation
             segments_list, info = validation_model.transcribe(output_path, beam_size=5)
 
             # Collect segments and timestamps
             segments = []
-            # scores = []
             start_times = []
             end_times = []
             for segment in segments_list:
-                print(f"\nSEG\n{segment}\n")
-                # faster-whisper returns segments with text, start, end
                 segments.append(distill_string(segment.text))
-                # scores.append(segment.score)  # confidence score
                 start_times.append(segment.start)
                 end_times.append(segment.end)
-            print(f"\nVALIDATE2 {segments}\n")
-            if len(segments)>0:
-                detected_string = " ".join(segments)
-                ratio, last_valid_token = score_strings_pop(input_string, detected_string, lookahead=5, postfix=distill_string(short_text_postfix))
-            else:
-                ratio = 0
-                last_valid_token=None
-        print(f"\nratio {ratio}, lastvalidtoken {last_valid_token}\n")
+
+            detected_string = distill_string(" ".join(segments))
+            ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=distill_string(short_text_postfix))
+
         # Clipping based on postfix detection (only when validation is available)
-        if (short_text_flag!="") and validation_model is not None:
+        if short_text_postfix and (validation_model is not None):
             if (distill_string(short_text_postfix) in detected_string) and (postfix_detect_token in segments):
                 if detected_string.startswith(distill_string(short_text_postfix)):
                     if verbose:
-                        print("POSTFIX DETECTED BUT ONLY POSTFIX! -> Ratio 0")
+                        print("\nPOSTFIX DETECTED BUT ONLY POSTFIX! -> Ratio 0\n\n")
                     ratio = 0
                 else:
                     postfix_start_index = segments[::-1].index(postfix_detect_token)
@@ -533,47 +521,35 @@ def generate_tts_for_line(
                         clip_end2 = end_times[-1]
                     clip_end1 = start_times[::-1][postfix_start_index]
                     if verbose:
-                        print(f"POSTFIX DETECTED CLIPPING to {clip_end1} - {clip_end2}")
+                        print(f"\nPOSTFIX DETECTED CLIPPING to {clip_end1} - {clip_end2}\n\n")
                     audio = pydub.AudioSegment.from_wav(output_path)
                     trimmed_audio = audio[0:((clip_end1 + clip_end2) * 500)]
                     trimmed_audio.export(output_path, format="wav")
             else:
                 if ((last_valid_token is None) or (last_valid_token == "")):
                     if verbose:
-                        print("POSTFIX UN-DETECTED and INVALID VALUES. SKIP.")
+                        print("\nPOSTFIX UN-DETECTED and INVALID VALUES. SKIP.\n\n")
+                elif last_valid_token in segments:
+                    lastvalid_index = segments[::-1].index(last_valid_token)
+                    clip_end1 = end_times[::-1][lastvalid_index]
+                    if verbose:
+                        print(f"\nPOSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1}\n\n")
+                    audio = pydub.AudioSegment.from_wav(output_path)
+                    trimmed_audio = audio[0:(clip_end1 * 1000)]
+                    trimmed_audio.export(output_path, format="wav")
                 else:
-                    # last_valid_token may not be in segments if Whisper didn't detect it
-                    if last_valid_token in segments:
-                        lastvalid_index = segments[::-1].index(last_valid_token)
-                        clip_end1 = end_times[::-1][lastvalid_index]
-                        if verbose:
-                            print(f"POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1} ")
-                        audio = pydub.AudioSegment.from_wav(output_path)
-                        trimmed_audio = audio[0:(clip_end1 * 1000)]
-                        trimmed_audio.export(output_path, format="wav")
-                    else:
-                        if verbose:
-                            print(f"POSTFIX UN-DETECTED LAST VALID TOKEN '{last_valid_token}' NOT IN SEGMENTS. SKIP CLIPPING.")
+                    if verbose:
+                        print(f"\n\n\nPOSTFIX UN-DETECTED even though last_valid_token = {last_valid_token} should be in {segments}\n\n\n")
 
-        # Save the generated audio as .wav file
-        # When validation is enabled: only save if ratio improved
-        # When validation is disabled: save after first attempt (ratio stays 0.0)
-        if validation_model is None or ratio > max_ratio:
-            print("\nNEWBEST\n")
+        if ratio > max_ratio:
             max_ratio = ratio
             final_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.wav")
             if os.path.exists(final_path):
                 os.unlink(final_path)
-            timeout = 60  # 1 minute
-            start_time = time.time()
-            while os.path.exists(final_path):
-                if time.time() - start_time >= timeout:
-                    break
-                time.sleep(1)
+            time.sleep(2)
             os.rename(output_path, final_path)
 
         retries += 1
-    print("\nPOSTCLEAN\n")
     # Clean up temp file if it exists
     temp_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.tmp.wav")
     if os.path.exists(temp_path):
@@ -655,7 +631,6 @@ def generate_audiobook_from_chapters(
                 tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)                
 
             short_text_postfix = DEFAULTS["short_text_postfix"]
-            postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0])
 
             processed = 0
             for i, chapter in enumerate(chapters_to_process):
@@ -740,7 +715,7 @@ def generate_audiobook_from_chapters(
                             tts_engine=tts_engine,
                             cfg_scale=cfg_scale,
                             output_dir=output_dir,
-                            short_text_postfix=short_text_postfix,
+                            short_text_postfix=(short_text_postfix if (validation_model is not None) else None),
                             validation_model=validation_model,
                             verbose=verbose,
                             voice_path=voice_path,

@@ -631,25 +631,17 @@ def generate_audiobook_from_chapters(
         # Create unified progress handler for both Gradio and CLI
         # Using context manager for proper cleanup
         with ProgressHandler(progress=progress, total=len(chapters_to_process), desc="Audiobook Generation") as progress_handler:
-
+            # Setup validation model
+            validation_model = setup_validation_model(device)
+            # This avoids crashes from faster-whisper dependencies if validation_model is None
+            voice_mapper = VoiceMapper()
             # Setup models
+            voice_clone_prompts = {}
             if tts_engine == 'qwen3':
                 # Qwen3 uses two models: VoiceDesign for building prompts, Base for generation
                 voice_design_model, _, _, base_model = setup_tts_engine(device, tts_engine, turbo)
                 tts_model_read_chapters = base_model  # Use base_model for generation
                 processor = None
-            else:
-                voice_design_model = None
-                base_model = None
-                tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)
-            # Setup validation model
-            validation_model = setup_validation_model(device)
-            # This avoids crashes from faster-whisper dependencies if validation_model is None
-            voice_mapper = VoiceMapper()
-
-            # For Qwen3: Build voice_clone_prompt on-demand if not already built
-            if tts_engine == 'qwen3':
-                voice_clone_prompts = {}
                 for voice, relative_path in voices_map.items():
                     voice_path = os.path.join(output_dir, relative_path)
                     voice_clone_prompts[voice] = build_qwen3_voice_clone_prompt(
@@ -658,6 +650,10 @@ def generate_audiobook_from_chapters(
                         DEFAULTS["qwen3_ref_text"],
                         device
                     )
+            else:
+                voice_design_model = None
+                base_model = None
+                tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)                
 
             short_text_postfix = DEFAULTS["short_text_postfix"]
             postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0])

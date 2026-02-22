@@ -12,6 +12,26 @@ A unified web interface for the 5-stage audiobook creation pipeline:
 State machine pattern ensures each stage only runs when dependencies are met.
 """
 
+import sys
+import io
+
+# ============================================================================
+# Suppress sox binary warning (sox Python package requires sox CLI binary)
+# ============================================================================
+# The sox package prints a warning to stderr when the sox binary is not found.
+# We suppress this by temporarily redirecting stderr during the sox import.
+# This must run BEFORE any imports that might trigger qwen-tts -> sox.
+
+original_stderr = sys.stderr
+sys.stderr = io.StringIO()
+try:
+    # Import sox here - any warning goes to our buffer
+    import sox
+except ImportError:
+    pass
+finally:
+    sys.stderr = original_stderr
+
 import gradio as gr
 import os
 import json

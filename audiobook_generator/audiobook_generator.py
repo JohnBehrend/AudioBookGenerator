@@ -318,7 +318,9 @@ def generate_tts_for_line(
     full_script = str(text[0].upper() + text[1:])
     full_script = re.sub(r"(\s\.)+", r".", full_script)
 
-    short_text_flag = True
+    # Only add short_text_postfix when validation_model is provided
+    # The validation loop is required to detect and dynamically remove the postfix
+    short_text_flag = validation_model is not None
     if short_text_flag:
         full_script = full_script + (" " if full_script[0] in end_characters else ". ") + short_text_postfix
 
@@ -326,7 +328,7 @@ def generate_tts_for_line(
     max_ratio = 0.0
     retries = 0
     input_string = distill_string(full_script)
-    postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0])
+    postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0]) if short_text_flag else None
 
     set_seed(42)
 

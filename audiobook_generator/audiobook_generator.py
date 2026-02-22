@@ -500,14 +500,14 @@ def generate_tts_for_line(
 
             # Collect segments and timestamps
             segments = []
-            scores = []
+            # scores = []
             start_times = []
             end_times = []
             for segment in segments_list:
-                print(f"\nSEG\n{segement}\n")
+                print(f"\nSEG\n{segment}\n")
                 # faster-whisper returns segments with text, start, end
                 segments.append(distill_string(segment.text))
-                scores.append(segment.score)  # confidence score
+                # scores.append(segment.score)  # confidence score
                 start_times.append(segment.start)
                 end_times.append(segment.end)
             print(f"\nVALIDATE2 {segments}\n")
@@ -516,7 +516,7 @@ def generate_tts_for_line(
                 ratio, last_valid_token = score_strings_pop(input_string, detected_string, lookahead=5, postfix=distill_string(short_text_postfix))
             else:
                 ratio = 0
-                last_valid_token=""
+                last_valid_token=None
         print(f"\nratio {ratio}, lastvalidtoken {last_valid_token}\n")
         # Clipping based on postfix detection (only when validation is available)
         if (short_text_flag!="") and validation_model is not None:
@@ -542,13 +542,18 @@ def generate_tts_for_line(
                     if verbose:
                         print("POSTFIX UN-DETECTED and INVALID VALUES. SKIP.")
                 else:
-                    lastvalid_index = segments[::-1].index(last_valid_token)
-                    clip_end1 = end_times[::-1][lastvalid_index]
-                    if verbose:
-                        print(f"POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1} ")
-                    audio = pydub.AudioSegment.from_wav(output_path)
-                    trimmed_audio = audio[0:(clip_end1 * 1000)]
-                    trimmed_audio.export(output_path, format="wav")
+                    # last_valid_token may not be in segments if Whisper didn't detect it
+                    if last_valid_token in segments:
+                        lastvalid_index = segments[::-1].index(last_valid_token)
+                        clip_end1 = end_times[::-1][lastvalid_index]
+                        if verbose:
+                            print(f"POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1} ")
+                        audio = pydub.AudioSegment.from_wav(output_path)
+                        trimmed_audio = audio[0:(clip_end1 * 1000)]
+                        trimmed_audio.export(output_path, format="wav")
+                    else:
+                        if verbose:
+                            print(f"POSTFIX UN-DETECTED LAST VALID TOKEN '{last_valid_token}' NOT IN SEGMENTS. SKIP CLIPPING.")
 
         # Save the generated audio as .wav file
         # When validation is enabled: only save if ratio improved
@@ -616,7 +621,7 @@ def generate_audiobook_from_chapters(
     Returns:
         Tuple of (status_message, chapters_processed)
     """
-    try:
+    if True:
         os.makedirs(output_dir, exist_ok=True)
 
         # Limit chapters if specified
@@ -773,12 +778,12 @@ def generate_audiobook_from_chapters(
 
             return f"Generated {processed} chapters successfully.", processed
 
-    except Exception as e:
-        import traceback
-        error_msg = f"Error generating audiobook: {str(e)}\n{traceback.format_exc()}"
-        if verbose:
-            print(error_msg)
-        return error_msg, 0
+    # except Exception as e:
+    #     import traceback
+    #     error_msg = f"Error generating audiobook: {str(e)}\n{traceback.format_exc()}"
+    #     if verbose:
+    #         print(error_msg)
+    #     return error_msg, 0
 
 
 # ============================================================================

@@ -165,18 +165,36 @@ def write_chapters_to_txt(chapters, output_dir, prefix="chapter_"):
     return written_files
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Convert an epub file into text files for each character. Quotes will always be split into unique lines.")
-    parser.add_argument("-epub_file", help="Path to the EPUB file")
+def main():
+    """CLI entry point for EPUB parsing."""
+    parser = argparse.ArgumentParser(description="Parse an EPUB file into chapter text files.")
+    parser.add_argument("epub_file", help="Path to the EPUB file")
+    parser.add_argument("--output-dir", "-o", default="chapters", help="Output directory for chapter files")
+    parser.add_argument("--max-chapters", type=int, help="Maximum number of chapters to process")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     args = parser.parse_args()
-    chapters = parse_epub_to_chapters(args.epub_file)
-    for i, chapter in enumerate(chapters):
-        with open(f"./chapters/chapter_{i}.txt","w") as f:
-            for cobj in chapter:
-                f.write(f"Line {cobj.line_num}: ")
-                if cobj.has_quotes:
-                    f.write('"')
-                f.write(cobj.text)
-                if cobj.has_quotes:
-                    f.write('"')
-                f.write("\r\n")
+
+    if not os.path.exists(args.epub_file):
+        print(f"Error: EPUB file not found: {args.epub_file}", file=sys.stderr)
+        sys.exit(1)
+
+    chapters = parse_epub_to_chapters(args.epub_file, max_chapters=args.max_chapters)
+
+    if not chapters:
+        print("Error: No chapters found in EPUB file.", file=sys.stderr)
+        sys.exit(1)
+
+    written_files = write_chapters_to_txt(chapters, args.output_dir)
+
+    if args.verbose:
+        print(f"Parsed {len(chapters)} chapters, written to {args.output_dir}/")
+        for f in written_files:
+            print(f"  {os.path.basename(f)}")
+
+    print(f"EPUB parsing complete! Generated {len(written_files)} chapter files.")
+
+
+if __name__ == "__main__":
+    import sys
+    import os
+    main()

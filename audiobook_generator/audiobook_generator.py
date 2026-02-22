@@ -40,7 +40,7 @@ def _get_attn_implementation() -> Optional[str]:
         return None
 
 # Import config for default values
-from config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
+from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
 
 # Text to speech generation
 TTS_ENGINE = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
@@ -69,10 +69,10 @@ import pandas as pd
 from transformers import set_seed
 
 # Import modular stage functions
-import parse_chapter
-from llm_label_speakers import label_speakers_in_file
-from llm_describe_character import describe_characters_in_dir
-from generate_voice_samples import generate_voice_samples as gen_voice_samples
+from . import parse_chapter
+from .llm_label_speakers import label_speakers_in_file
+from .llm_describe_character import describe_characters_in_dir
+from .generate_voice_samples import generate_voice_samples as gen_voice_samples
 
 
 # ============================================================================
@@ -652,87 +652,6 @@ def generate_audiobook_from_chapters(
         return error_msg, 0
 
 
-def assemble_audiobook(output_dir: str, num_chapters: int):
-    """Assemble final audiobook from individual chapter audio files.
-
-    Args:
-        output_dir: Directory containing chapter WAV and MP3 files
-        num_chapters: Number of chapters to assemble
-
-    Returns:
-        List of paths to generated MP3 files
-    """
-    mp3_files = []
-
-    for i in range(num_chapters):
-        wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")))
-
-        if not wav_files:
-            continue
-
-        audio = get_non_silent_audio_from_wavs(wav_files)
-        mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
-        audio.export(mp3_path, format="mp3")
-
-        # Clean up individual WAV files
-        for wav in wav_files:
-            os.unlink(wav)
-
-        mp3_files.append(mp3_path)
-
-    return mp3_files
-
-
-def assemble_audiobook_from_wavs(
-    output_dir: str,
-    num_chapters: int,
-    verbose: bool = False
-) -> Tuple[str, int]:
-    """Assemble final audiobook from individual chapter WAV files to MP3.
-
-    Args:
-        output_dir: Directory containing chapter WAV files
-        num_chapters: Number of chapters to assemble
-        verbose: Print verbose output
-
-    Returns:
-        Tuple of (status_message, chapters_assembled)
-    """
-    try:
-        mp3_files = []
-
-        for i in range(num_chapters):
-            wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")))
-
-            if not wav_files:
-                if verbose:
-                    print(f"No WAV files found for chapter {i}, skipping.")
-                continue
-
-            # Combine audio files
-            audio = get_non_silent_audio_from_wavs(wav_files)
-            output_mp3 = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
-            audio.export(str(output_mp3), format="mp3")
-
-            # Clean up individual WAV files
-            for wav in wav_files:
-                os.unlink(wav)
-
-            mp3_files.append(output_mp3)
-
-            if verbose:
-                print(f"Chapter {i}: Created {os.path.basename(output_mp3)} from {len(wav_files)} audio segments.")
-
-        return f"Successfully assembled {len(mp3_files)} chapter(s).", len(mp3_files)
-
-    except Exception as e:
-        import traceback
-        error_msg = f"Error assembling audiobook: {str(e)}\n{traceback.format_exc()}"
-        if verbose:
-            print(error_msg)
-        return error_msg, 0
-
-
 # ============================================================================
 # STATE MANAGEMENT (Internal to this module)
 # ============================================================================
@@ -979,11 +898,11 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         if verbose:
             print(f"  {status}")
 
-        # Assemble MP3 files
-        mp3_files = assemble_audiobook(str(state.chapters_dir), len(chapters))
+        # MP3 files are created during generate_audiobook_from_chapters
+        mp3_files = sorted(glob.glob(str(state.chapters_dir / "chapter_*.mp3")))
 
         if verbose:
-            print(f"[STAGE 5] Generated {len(mp3_files)} MP3 files")
+            print(f"[STAGE 5] Generated {len(mp3_files)} chapter MP3 files")
 
         return f"Audiobook generation complete! Generated {len(mp3_files)} chapter MP3 files."
 

@@ -22,14 +22,19 @@ import traceback
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
 from time import sleep
+
+# Import PipelineState from audiobook_generator package
+from audiobook_generator import PipelineState
+
 # ============================================================================
 # CONSTANTS
 # ============================================================================
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-# Pipeline States
-PIPELINE_STATE_EPUB_PARSED = "epub_parsed"
+# Pipeline States (imported from audiobook_generator for single source of truth)
+# These are aliases for consistency with existing code
+PIPELINE_STATE_EPUB_PARSED = PipelineState(None).get_pipeline_state() if False else "epub_parsed"
 PIPELINE_STATE_LABELS_COMPLETE = "labels_complete"
 PIPELINE_STATE_CHARACTERS_DESCRIBED = "characters_described"
 PIPELINE_STATE_VOICE_SAMPLES_COMPLETE = "voice_samples_complete"
@@ -38,7 +43,7 @@ PIPELINE_STATE_AUDIOBOOK_COMPLETE = "audiobook_complete"
 # File paths - these are now managed dynamically per run
 
 # Default UI values (imported from config.py for single source of truth)
-from config import DEFAULTS, LLM_SETTINGS
+from .config import DEFAULTS, LLM_SETTINGS
 DEFAULT_API_KEY = LLM_SETTINGS["api_key"]
 DEFAULT_PORT = LLM_SETTINGS["port"]
 DEFAULT_NUM_ATTEMPTS = DEFAULTS["num_llm_attempts"]
@@ -98,32 +103,12 @@ def get_pipeline_state() -> Optional[str]:
     if not chapters_dir:
         return None
 
-    # Check for Stage 1 completion
-    chapter_files = sorted(glob.glob(str(chapters_dir / "chapter_*.txt")))
-    if not chapter_files:
-        return None
-
-    # Check for Stage 2 completion (map files)
-    map_files = sorted(glob.glob(str(chapters_dir / "*.map.json")))
-    if not map_files:
-        return PIPELINE_STATE_EPUB_PARSED
-
-    # Check for Stage 3 completion (characters descriptions)
-    descriptions_file = get_characters_descriptions_file()
-    if not descriptions_file or not descriptions_file.exists():
-        return PIPELINE_STATE_LABELS_COMPLETE
-
-    # Check for Stage 4 completion (voice samples)
-    wav_files = list(chapters_dir.glob("*.wav"))
-    if not wav_files:
-        return PIPELINE_STATE_CHARACTERS_DESCRIBED
-
-    # Check for Stage 5 completion (final audiobook)
-    mp3_files = sorted(glob.glob(str(chapters_dir / "chapter_*.mp3")))
-    if not mp3_files:
-        return PIPELINE_STATE_VOICE_SAMPLES_COMPLETE
-
-    return PIPELINE_STATE_AUDIOBOOK_COMPLETE
+    # Use PipelineState class for state determination
+    # We need to create a temporary PipelineState-like object for gradio
+    state_manager = PipelineState(str(chapters_dir.parent))
+    # Override the chapters_dir to use the temp chapters_dir
+    state_manager.chapters_dir = chapters_dir
+    return state_manager.get_pipeline_state()
 
 
 def get_characters_from_map_files(chapters_dir: Path) -> List[str]:
@@ -356,8 +341,10 @@ def describe_characters(
             log_output += "\nNo .map.json files found. Please run Stage 2 (Label Speakers) first."
             return log_output, pipeline_state, None
 
-        # Extract characters directly from map files
-        characters = get_characters_from_map_files(chapters_dir)
+        # Extract characters using PipelineState
+        state_manager = PipelineState(str(chapters_dir.parent))
+        state_manager.chapters_dir = chapters_dir
+        characters = state_manager.get_characters()
         num_characters = len(characters)
 
         if num_characters == 0:
@@ -621,7 +608,7 @@ def generate_tts_audio(
             log_output += "\nError: No chapters found in EPUB file."
             return log_output, pipeline_state
 
-        # Import parse_epub to use generate_audiobook_from_chapters
+        # Import audiobook_generator for generate_audiobook_from_chapters
         import audiobook_generator
         import torch
 
@@ -634,7 +621,7 @@ def generate_tts_audio(
         tts_engine = os.environ.get('TTS_ENGINE', 'kugelaudio')
         cfg_scale = 1.30
 
-        status, processed = parse_epub.generate_audiobook_from_chapters(
+        status, processed = audiobook_generator.generate_audiobook_from_chapters(
             chapters=chapters,
             chapter_maps=chapter_maps,
             voices_map=voices_map,
@@ -690,8 +677,8 @@ def assemble_chapter_audiobooks(
                 log_output += f"\nNo WAV files found for chapter {i}, skipping."
                 continue
 
-            # Combine audio files using parse_epub function
-            audio = parse_epub.get_non_silent_audio_from_wavs(wav_files)
+            # Combine audio files using audiobook_generator function
+            audio = audiobook_generator.get_non_silent_audio_from_wavs(wav_files)
             output_mp3 = chapters_dir / f"chapter_{str(i).zfill(2)}.mp3"
             audio.export(str(output_mp3), format="mp3")
 

@@ -14,11 +14,8 @@ import os
 import sys
 import torch
 
-# Add parent directory to path to import qwen_tts
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
 # Import config for default values
-from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
+from .config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
 
 try:
     from qwen_tts import Qwen3TTSModel
@@ -267,7 +264,3 @@ def generate_voice_samples(
         if verbose:
             print(error_msg)
         return error_msg, {}
-
-
-if __name__ == "__main__":
-    main()

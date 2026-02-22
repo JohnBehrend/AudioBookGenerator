@@ -15,7 +15,7 @@ from openai import OpenAI
 import requests
 from bs4 import BeautifulSoup
 
-from config import LLM_SETTINGS, OUTPUT_DIR
+from .config import LLM_SETTINGS, OUTPUT_DIR
 
 
 # Default prompt for character description
@@ -651,7 +651,3 @@ def describe_characters_in_dir(
         if verbose:
             print(error_msg)
         return error_msg, {}
-
-
-if __name__ == "__main__":
-    main()

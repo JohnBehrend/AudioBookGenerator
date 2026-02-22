@@ -46,16 +46,19 @@ dependencies = [
 ]
 
 [project.scripts]
-audiobook-interface = "gradio_audiobook_interface:main"
-parse-epub = "parse_epub:main"
-llm-label-speakers = "llm_label_speakers:main"
-analyze-chapters = "analyze_chapters:main"
-llm-describe-character = "llm_describe_character:main"
-generate-voice-samples = "generate_voice_samples:main"
+audiobook-interface = "audiobook_generator.audiobook_generator:main"
+parse-epub = "audiobook_generator.parse_chapter:main"
+llm-label-speakers = "audiobook_generator.llm_label_speakers:main"
+llm-describe-character = "audiobook_generator.llm_describe_character:main"
+generate-voice-samples = "audiobook_generator.generate_voice_samples:main"
 
+
+[tool.uv]
+package = true
 
 [tool.setuptools.packages.find]
-include = ["gradio_audiobook_interface.py", "parse_epub.py", "llm_label_speakers.py", "analyze_chapters.py", "llm_describe_character.py", "generate_voice_samples.py", "analyze_chapters.py"]
+where = ["."]
+include = ["audiobook_generator*"]
 
 [dependency-groups]
 dev = [

@@ -599,8 +599,7 @@ def generate_audiobook_from_chapters(
     max_chapters: Optional[int] = None,
     verbose: bool = False,
     turbo: bool = False,
-    progress: Optional[callable] = None,
-    voice_clone_prompts: dict = None
+    progress: Optional[callable] = None
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -619,7 +618,6 @@ def generate_audiobook_from_chapters(
         verbose: Print verbose output
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         progress: Optional progress callback (gr.Progress() for Gradio, None for CLI)
-        voice_clone_prompts: For Qwen3, dict mapping voice_name to pre-built voice_clone_prompt
 
     Returns:
         Tuple of (status_message, chapters_processed)
@@ -635,7 +633,6 @@ def generate_audiobook_from_chapters(
         with ProgressHandler(progress=progress, total=len(chapters_to_process), desc="Audiobook Generation") as progress_handler:
 
             # Setup models
-            voice_clone_prompts = {}
             if tts_engine == 'qwen3':
                 # Qwen3 uses two models: VoiceDesign for building prompts, Base for generation
                 voice_design_model, _, _, base_model = setup_tts_engine(device, tts_engine, turbo)
@@ -649,6 +646,18 @@ def generate_audiobook_from_chapters(
             validation_model = setup_validation_model(device)
             # This avoids crashes from faster-whisper dependencies if validation_model is None
             voice_mapper = VoiceMapper()
+
+            # For Qwen3: Build voice_clone_prompt on-demand if not already built
+            if tts_engine == 'qwen3':
+                voice_clone_prompts = {}
+                for voice, relative_path in voices_map.items():
+                    voice_path = os.path.join(output_dir, relative_path)
+                    voice_clone_prompts[voice] = build_qwen3_voice_clone_prompt(
+                        base_model,
+                        voice_path,
+                        DEFAULTS["qwen3_ref_text"],
+                        device
+                    )
 
             short_text_postfix = DEFAULTS["short_text_postfix"]
             postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0])
@@ -722,16 +731,6 @@ def generate_audiobook_from_chapters(
                             voice_path = os.path.join(output_dir, voices_map[voice])
                         else:
                             voice_path = voice_mapper.get_voice_path(voice)
-
-                        # For Qwen3: Build voice_clone_prompt on-demand if not already built
-                        if tts_engine == 'qwen3' and voice not in voice_clone_prompts:
-                            if os.path.exists(voice_path):
-                                voice_clone_prompts[voice] = build_qwen3_voice_clone_prompt(
-                                    base_model,
-                                    voice_path,
-                                    DEFAULTS["qwen3_ref_text"],
-                                    device
-                                )
 
                         # Generate TTS for this line
                         success, ratio = generate_tts_for_line(
@@ -1054,9 +1053,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 tts_engine=tts_engine,
                 turbo=turbo,
                 verbose=verbose,
-                progress=None,
-                voice_clone_prompts={}
-            )
+                progress=None)
 
             if verbose:
                 print(f"  {status}")

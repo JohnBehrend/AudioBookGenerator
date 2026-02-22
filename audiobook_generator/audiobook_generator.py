@@ -42,17 +42,8 @@ def _get_attn_implementation() -> Optional[str]:
 # Import config for default values
 from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
 
-# Text to speech generation
+# Text to speech generation - imports moved to setup_tts_engine() for lazy loading
 TTS_ENGINE = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
-
-if TTS_ENGINE == 'kugelaudio':
-    # KugelAudio is installed as a Python package dependency
-    from kugelaudio_open.processors.kugelaudio_processor import KugelAudioProcessor
-    from kugelaudio_open.models.kugelaudio_inference import KugelAudioForConditionalGenerationInference
-else:
-    # VibeVoice imports
-    from vibevoice.processor.vibevoice_processor import VibeVoiceProcessor
-    from vibevoice.modular.modeling_vibevoice_inference import VibeVoiceForConditionalGenerationInference
 
 # Voice to Text for validation
 from difflib import SequenceMatcher
@@ -227,6 +218,14 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio"):
     Returns:
         Tuple of (model, processor, model_path)
     """
+    # Lazy imports to avoid requiring both TTS engines to be installed
+    if tts_engine == 'kugelaudio':
+        from kugelaudio_open.processors.kugelaudio_processor import KugelAudioProcessor
+        from kugelaudio_open.models.kugelaudio_inference import KugelAudioForConditionalGenerationInference
+    else:
+        from vibevoice.processor.vibevoice_processor import VibeVoiceProcessor
+        from vibevoice.modular.modeling_vibevoice_inference import VibeVoiceForConditionalGenerationInference
+
     attn_impl = _get_attn_implementation()
     if tts_engine == 'kugelaudio':
         model_path = "kugelaudio/kugelaudio-0-open"

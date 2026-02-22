@@ -232,26 +232,34 @@ def generate_voice_samples(
         failed = []
         total_chars = len(descriptions)
 
-        for i, (char_name, char_desc) in enumerate(descriptions.items()):
-            if verbose:
-                print(f"[{i+1}/{total_chars}] {char_name}")
-
-            # Update progress bar for each character
-            if progress is not None:
-                progress((i + 1) / total_chars, desc=f"Generating voice for '{char_name}'...")
-
-            success, output_file, duration = generate_voice_sample(
-                tts_model, char_name, char_desc, output_dir, max_new_tokens=max_tokens
-            )
-
-            if success:
-                generated[char_name] = output_file
+        try:
+            for i, (char_name, char_desc) in enumerate(descriptions.items()):
                 if verbose:
-                    print(f"    Generated: {duration:.2f}s -> {output_file}")
-            else:
-                failed.append(char_name)
-                if verbose:
-                    print(f"    Failed")
+                    print(f"[{i+1}/{total_chars}] {char_name}")
+
+                # Update progress bar for each character
+                if progress is not None:
+                    progress((i + 1) / total_chars, desc=f"Generating voice for '{char_name}'...")
+
+                success, output_file, duration = generate_voice_sample(
+                    tts_model, char_name, char_desc, output_dir, max_new_tokens=max_tokens
+                )
+
+                if success:
+                    generated[char_name] = output_file
+                    if verbose:
+                        print(f"    Generated: {duration:.2f}s -> {output_file}")
+                else:
+                    failed.append(char_name)
+                    if verbose:
+                        print(f"    Failed")
+        finally:
+            # Clean up model from GPU memory after generation
+            del tts_model
+            import gc
+            gc.collect()
+            torch.cuda.synchronize()  # Wait for pending GPU operations to complete
+            torch.cuda.empty_cache()  # Release cached memory
 
         if verbose:
             print("\n" + "=" * 60)

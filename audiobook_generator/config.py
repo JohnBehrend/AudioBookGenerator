@@ -62,8 +62,8 @@ if os.environ.get("GRADIO_PORT"):
 # ============================================================================
 
 DEFAULTS = {
-    "num_llm_attempts": 2,
-    "max_chapters": 10,
+    "num_llm_attempts": 1,
+    "max_chapters": 1,
     "max_new_tokens": 512,
     "sample_text_length": 150,
     "description_length": 400,

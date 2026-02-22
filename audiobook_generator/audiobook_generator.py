@@ -233,29 +233,29 @@ def setup_tts_engine(device: str, tts_engine: str = "kugelaudio"):
     if tts_engine == 'kugelaudio':
         model_path = "kugelaudio/kugelaudio-0-open"
         attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
-        tts_model = KugelAudioForConditionalGenerationInference.from_pretrained(
+        tts_model_read_chapters = KugelAudioForConditionalGenerationInference.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
             device_map=device,
             **attn_kwargs,
         ).to(device)
-        # tts_model.set_ddpm_inference_steps(num_steps=13)
-        tts_model.eval()
+        # tts_model_read_chapters.set_ddpm_inference_steps(num_steps=13)
+        tts_model_read_chapters.eval()
         processor = KugelAudioProcessor.from_pretrained(model_path)
     else:
         model_path = "Jmica/VibeVoice7B"
         attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
-        tts_model = VibeVoiceForConditionalGenerationInference.from_pretrained(
+        tts_model_read_chapters = VibeVoiceForConditionalGenerationInference.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
             device_map=device,
             **attn_kwargs,
         )
-        # tts_model.set_ddpm_inference_steps(num_steps=13)
-        tts_model.eval()
+        # tts_model_read_chapters.set_ddpm_inference_steps(num_steps=13)
+        tts_model_read_chapters.eval()
         processor = VibeVoiceProcessor.from_pretrained(model_path)
 
-    return tts_model, processor, model_path
+    return tts_model_read_chapters, processor, model_path
 
 
 def setup_validation_model(device: str = "cuda"):
@@ -605,7 +605,7 @@ def generate_audiobook_from_chapters(
                             line_idx=j,
                             text=chapter_obj.text,
                             voice_name=voice,
-                            tts_model=tts_model,
+                            tts_model=tts_model_read_chapters,
                             processor=processor,
                             voice_mapper=voice_mapper,
                             device=device,
@@ -895,7 +895,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         print(f"[STAGE 5] Generating audiobook...")
 
     # Setup models for TTS generation
-    tts_model, processor, _ = setup_tts_engine(device, tts_engine)
+    tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine)
     validation_model = setup_validation_model(device)
     voice_mapper = VoiceMapper()
 
@@ -932,6 +932,13 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         if verbose:
             print(f"[STAGE 5] Generated {len(mp3_files)} chapter MP3 files")
 
+        # Clean up TTS and validation models from GPU memory
+        del tts_model_read_chapters
+        del validation_model
+        gc.collect()
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+
         return f"Audiobook generation complete! Generated {len(mp3_files)} chapter MP3 files."
 
     except Exception as e:
@@ -939,6 +946,15 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         error_msg = f"Error in Stage 5: {str(e)}\n{traceback.format_exc()}"
         if verbose:
             print(error_msg)
+        # Clean up TTS and validation models from GPU memory on error
+        try:
+            del tts_model_read_chapters
+            del validation_model
+            gc.collect()
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+        except NameError:
+            pass  # Models may not have been created if error occurred earlier
         return error_msg
 
 

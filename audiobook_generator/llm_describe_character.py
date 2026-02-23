@@ -26,11 +26,10 @@ You are an expert voice actor and audiobook narrator. Your task is to create sho
 Focus on the most distinctive, memorable traits that would help a professional voice actor embody the character.
 
 FOLLOW THE EXACT FORMAT shown in the examples below - use key-value pairs with colons, covering all voice characteristics:
-- gender, accent, age, speed, volume,  clarity, tone
+- gender, age, speed, volume,  clarity, tone
 
 example_one: Ewin
 gender: Male.
-accent: British English.
 age: 30.
 speed: Fast-paced delivery with deliberate pauses for dramatic effect.
 volume: Loud and projecting, increasing notably during moments of praise and announcements.
@@ -39,7 +38,6 @@ tone: Upbeat, authoritative, and performative.
 
 example_two: Sandra.
 gender: Female.
-accent: American English.
 age: 30.
 speed: Starts measured, then accelerates rapidly during emotional outburst.
 volume: Begins conversational, escalates quickly to loud and forceful.

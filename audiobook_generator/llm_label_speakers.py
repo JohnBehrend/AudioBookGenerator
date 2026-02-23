@@ -528,7 +528,7 @@ def label_speakers(
     # Extract chapter number from filename for context
     chapter_num = None
     import re
-    chapter_match = re.search(r'chapter[_\s]?(\d+)', txt_file, re.IGNORECASE)
+    chapter_match = re.search(r'chapter[_\s]?(\d+)', str(txt_file), re.IGNORECASE)
     if chapter_match:
         chapter_num = int(chapter_match.group(1))
 

@@ -501,9 +501,9 @@ def generate_tts_for_line(
             end_times = []
             for segment in segments_list:
                 for word in segment.words:
-                    segments.append(distill_string(word.word))
-                    start_times.append(segment.start)
-                    end_times.append(segment.end)
+                    segments.append(distill_string(word.word.strip()))
+                    start_times.append(word.start)
+                    end_times.append(word.end)
 
             detected_string = distill_string(" ".join(segments))
             ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=distill_string(short_text_postfix))
@@ -513,7 +513,7 @@ def generate_tts_for_line(
             if (distill_string(short_text_postfix) in detected_string) and (postfix_detect_token in segments):
                 if detected_string.startswith(distill_string(short_text_postfix)):
                     if verbose:
-                        print("\nPOSTFIX DETECTED BUT ONLY POSTFIX! -> Ratio 0\n\n")
+                        print("\nERROR: POSTFIX DETECTED BUT ONLY POSTFIX! -> Ratio 0\n")
                     ratio = 0
                 else:
                     postfix_start_index = segments[::-1].index(postfix_detect_token)
@@ -523,25 +523,25 @@ def generate_tts_for_line(
                         clip_end2 = end_times[-1]
                     clip_end1 = start_times[::-1][postfix_start_index]
                     if verbose:
-                        print(f"\nPOSTFIX DETECTED CLIPPING to {clip_end1} - {clip_end2}\n\n")
+                        print(f"\nPOSTFIX DETECTED CLIPPING to {clip_end1} - {clip_end2}\n")
                     audio = pydub.AudioSegment.from_wav(output_path)
                     trimmed_audio = audio[0:((clip_end1 + clip_end2) * 500)]
                     trimmed_audio.export(output_path, format="wav")
             else:
                 if ((last_valid_token is None) or (last_valid_token == "")):
                     if verbose:
-                        print("\nPOSTFIX UN-DETECTED and INVALID VALUES. SKIP.\n\n")
+                        print("\nERROR: POSTFIX UN-DETECTED and INVALID VALUES. SKIP.\n")
                 elif last_valid_token in segments:
                     lastvalid_index = segments[::-1].index(last_valid_token)
                     clip_end1 = end_times[::-1][lastvalid_index]
                     if verbose:
-                        print(f"\nPOSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1}\n\n")
+                        print(f"\nERROR: POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1}\n")
                     audio = pydub.AudioSegment.from_wav(output_path)
                     trimmed_audio = audio[0:(clip_end1 * 1000)]
                     trimmed_audio.export(output_path, format="wav")
                 else:
                     if verbose:
-                        print(f"\n\n\nPOSTFIX UN-DETECTED even though last_valid_token = {last_valid_token} should be in {segments}\n\n\n")
+                        print(f"\nERROR: POSTFIX UN-DETECTED even though last_valid_token = {last_valid_token} should be in {segments}\n")
 
         if ratio > max_ratio:
             max_ratio = ratio

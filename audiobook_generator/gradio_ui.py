@@ -1096,28 +1096,28 @@ def create_interface(
         def on_character_select(evt: gr.SelectData, _pipeline_state_obj):
             """Handle row selection in the character table."""
             if evt is None or evt.index is None:
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
+                return gr.update(visible=False, value=None), gr.update(visible=False)
 
             character_name = evt.row_value[0] if evt.row_value and len(evt.row_value) > 0 else None
 
             if not character_name:
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
+                return gr.update(visible=False, value=None), gr.update(visible=False)
 
             if not _pipeline_state_obj:
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
+                return gr.update(visible=False, value=None), gr.update(visible=False)
 
             chapters_dir = get_chapters_dir()
             if not chapters_dir:
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
+                return gr.update(visible=False, value=None), gr.update(visible=False)
 
             wav_path = get_character_wav_file(character_name, chapters_dir)
 
             if wav_path and os.path.exists(wav_path):
                 # Update selected character in pipeline state
                 _pipeline_state_obj.selected_character = character_name
-                return gr.update(visible=True, value=wav_path), gr.update(visible=True), gr.update(value=character_name)
+                return gr.update(visible=True, value=wav_path), gr.update(visible=True)
             else:
-                return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
+                return gr.update(visible=False, value=None), gr.update(visible=False)
 
         character_table.select(
             fn=on_character_select,

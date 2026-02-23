@@ -23,42 +23,31 @@ from utils import get_llm_client, compare_characters, get_characters_from_map_fi
 CHARACTER_DESCRIPTION_PROMPT = """
 You are an expert voice actor and audiobook narrator. Your task is to create short, distinctive voice profiles for characters.
 
-Focus on the most distinctive, memorable traits that would help a voice actor embody the character.
+Focus on the most distinctive, memorable traits that would help a professional voice actor embody the character.
 
 FOLLOW THE EXACT FORMAT shown in the examples below - use key-value pairs with colons, covering all voice characteristics:
-- gender, pitch, speed, volume, age, clarity, fluency, accent, texture, emotion, tone, personality
+- gender, accent, age, speed, volume,  clarity, tone
 
 example_one: Ewin
 gender: Male.
-pitch: Low male pitch with significant upward inflections for emphasis and excitement.
+accent: British English.
+age: 30.
 speed: Fast-paced delivery with deliberate pauses for dramatic effect.
 volume: Loud and projecting, increasing notably during moments of praise and announcements.
-age: Young adult to middle-aged adult.
 clarity: Highly articulate and distinct pronunciation.
-fluency: Very fluent speech with no hesitations.
-accent: British English.
-texture: Bright and clear vocal texture.
-emotion: Enthusiastic and excited, especially when complimenting.
 tone: Upbeat, authoritative, and performative.
-personality: Confident, extroverted, and engaging.
 
 example_two: Sandra.
 gender: Female.
-pitch: Mid-range female pitch, rising sharply with frustration.
+accent: American English.
+age: 30.
 speed: Starts measured, then accelerates rapidly during emotional outburst.
 volume: Begins conversational, escalates quickly to loud and forceful.
-age: Young adult to middle-aged.
-clarity: High clarity and distinct articulation throughout.
-fluency: Highly fluent with no significant pauses or fillers.
-accent: General American English.
-texture: Bright and clear vocal quality.
-emotion: Shifts abruptly from neutral acceptance to intense resentment and anger.
+clarity: Slightly slurred pronunciation.
 tone: Initially accepting, becomes sharply accusatory and confrontational.
-personality: Assertive and emotionally expressive when provoked.
 
 For multiple characters, return a JSON object where keys are character names and values are the voice descriptions in the exact format above (just the description text with key-value pairs, NOT including the character name in the value).
 """
-
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)
 

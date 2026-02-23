@@ -1113,6 +1113,8 @@ def create_interface(
             wav_path = get_character_wav_file(character_name, chapters_dir)
 
             if wav_path and os.path.exists(wav_path):
+                # Update selected character in pipeline state
+                _pipeline_state_obj.selected_character = character_name
                 return gr.update(visible=True, value=wav_path), gr.update(visible=True), gr.update(value=character_name)
             else:
                 return gr.update(visible=False, value=None), gr.update(visible=False), gr.update(value=None)
@@ -1120,12 +1122,13 @@ def create_interface(
         character_table.select(
             fn=on_character_select,
             inputs=pipeline_state_obj,
-            outputs=[character_audio, generate_char_btn, selected_character],
+            outputs=[character_audio, generate_char_btn],
         )
 
         # Regenerate voice sample for selected character
-        def on_regenerate_click(pipeline_state_obj, log_output, character_name):
+        def on_regenerate_click(pipeline_state_obj, log_output):
             """Regenerate voice sample for the selected character."""
+            character_name = pipeline_state_obj.selected_character if pipeline_state_obj else None
             if not character_name:
                 log_output += "\nNo character selected."
                 return log_output, pipeline_state_obj, None
@@ -1134,7 +1137,7 @@ def create_interface(
 
         generate_char_btn.click(
             fn=on_regenerate_click,
-            inputs=[pipeline_state_obj, log_output, selected_character],
+            inputs=[pipeline_state_obj, log_output],
             outputs=[log_output, pipeline_state_obj, character_audio],
         ).then(
             fn=update_button_visibility_from_state,

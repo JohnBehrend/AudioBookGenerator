@@ -783,6 +783,7 @@ class PipelineState:
         self.characters = []
         self.character_descriptions = {}
         self.voice_map = {}
+        self.selected_character = None
 
     def load_chapter_maps(self):
         """Load all chapter map files from the chapters directory."""

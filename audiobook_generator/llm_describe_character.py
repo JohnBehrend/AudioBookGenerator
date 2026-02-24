@@ -28,7 +28,7 @@ Focus on the most distinctive, memorable traits that would help a professional v
 FOLLOW THE EXACT FORMAT shown in the examples below - use key-value pairs with colons, covering all voice characteristics:
 - gender, age, speed, volume,  clarity, tone
 
-example_one: Ewin
+Example format for a male character:
 gender: Male.
 age: 30.
 speed: Fast-paced delivery with deliberate pauses for dramatic effect.
@@ -36,7 +36,7 @@ volume: Loud and projecting, increasing notably during moments of praise and ann
 clarity: Highly articulate and distinct pronunciation.
 tone: Upbeat, authoritative, and performative.
 
-example_two: Sandra.
+Example format for a female character:
 gender: Female.
 age: 30.
 speed: Starts measured, then accelerates rapidly during emotional outburst.
@@ -263,9 +263,12 @@ def describe_character(client: OpenAI, model: str, character: str, context: str)
 
 def describe_all_characters(client: OpenAI, model: str, characters: list, context: str) -> dict:
     """Ask the LLM to describe all characters at once."""
+    # Build the user message
+    user_message = f"Describe all these characters in detail. Return a JSON object with character names as keys and descriptions as values.\n\nCharacters:\n{chr(10).join(characters)}\n\nContext:\n{context}"
+
     messages = [
         {"role": "system", "content": CHARACTER_DESCRIPTION_PROMPT},
-        {"role": "user", "content": f"Describe all these characters in detail. Return a JSON object with character names as keys and descriptions as values.\n\nCharacters:\n{chr(10).join(characters)}\n\nContext:\n{context}"}
+        {"role": "user", "content": user_message}
     ]
 
     try:
@@ -285,7 +288,24 @@ def describe_all_characters(client: OpenAI, model: str, characters: list, contex
             if content.endswith('```'):
                 content = content[:-3]
             content = content.strip()
-            return json.loads(content)
+            parsed = json.loads(content)
+
+            # Validate that the response contains all expected character names
+            # Check for at least one matching character name (case-insensitive)
+            missing_chars = []
+            for char in characters:
+                char_lower = char.lower()
+                found = any(k.lower() == char_lower for k in parsed.keys())
+                if not found:
+                    missing_chars.append(char)
+
+            if missing_chars:
+                # If we're missing character names, the LLM likely returned the example names
+                # Instead of the actual character names - use fallback
+                print(f"Warning: LLM response missing character names: {missing_chars}. Using fallback.")
+                return {char: content for char in characters}
+
+            return parsed
         except json.JSONDecodeError:
             # If parsing fails, return raw content
             return {char: content for char in characters}
@@ -573,11 +593,11 @@ def describe_characters(
             print("No characters found.", file=sys.stderr)
         return {}
 
-    # Filter out seed characters
-    if seed_characters:
-        characters = [c for c in characters if c not in seed_characters]
-        if verbose:
-            print(f"Filtered out {len(seed_characters)} seeded characters, {len(characters)} remaining")
+    # Note: We do NOT filter out seed characters here. Seed characters will still be
+    # described by the LLM (using their actual character names from the book), but
+    # voice samples will not be generated for them (handled in generate_voice_samples).
+    # This ensures that character descriptions are generated for all characters, not just
+    # the ones without seed voices.
 
     if single_character:
         if single_character not in characters:

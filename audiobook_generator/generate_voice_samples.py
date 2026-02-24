@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import sys
+import shutil
 import torch
 from typing import Optional
 
@@ -219,6 +220,19 @@ def generate_voice_samples(
             descriptions = {k: v for k, v in descriptions.items() if k not in seed_characters}
             if verbose:
                 print(f"Filtered out {initial_count - len(descriptions)} seeded characters, {len(descriptions)} remaining to generate")
+
+            # Copy seed voice files to output directory
+            if verbose:
+                print(f"Copying seed voice files to {output_dir}...")
+            for char_name, voice_path in seed_characters.items():
+                if os.path.exists(voice_path):
+                    dest_path = os.path.join(output_dir, os.path.basename(voice_path))
+                    shutil.copy2(voice_path, dest_path)
+                    if verbose:
+                        print(f"  Copied {voice_path} -> {dest_path}")
+                else:
+                    if verbose:
+                        print(f"  Warning: Seed voice file not found: {voice_path}")
 
         if verbose:
             print(f"\nLoading model: {model_path}")

@@ -928,6 +928,15 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     if seed_voice_map:
         seed_characters = load_json(seed_voice_map)
         if seed_characters:
+            # Resolve relative paths to absolute paths based on seed_voice_map location
+            seed_voice_map_dir = os.path.dirname(os.path.abspath(seed_voice_map))
+            resolved_seed_characters = {}
+            for char_name, voice_path in seed_characters.items():
+                if os.path.isabs(voice_path):
+                    resolved_seed_characters[char_name] = voice_path
+                else:
+                    resolved_seed_characters[char_name] = os.path.join(seed_voice_map_dir, voice_path)
+            seed_characters = resolved_seed_characters
             if verbose:
                 print(f"[SEED] Loaded {len(seed_characters)} seeded characters from {seed_voice_map}")
         else:

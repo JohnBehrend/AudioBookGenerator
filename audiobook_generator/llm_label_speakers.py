@@ -359,28 +359,40 @@ def load_all_previous_chapter_maps(chapter_file_base) -> Dict[str, str] | None:
 
 # create_prompt_with_context(): Builds LLM prompt by inserting character context into PROMPT_TXT.
 # It inserts the existing character names before the "## Output format" section.
-def create_prompt_with_context(prompt_template, existing_characters=None, chapter_num=None):
-    """Create LLM prompt with optional context from existing character names.
+def create_prompt_with_context(prompt_template, existing_characters=None, chapter_num=None, seed_characters=None):
+    """Create LLM prompt with optional context from existing character names and seed characters.
 
     Args:
         prompt_template: The base prompt template string
         existing_characters: Dict mapping lowercase char names to original names from previous chapters
         chapter_num: Current chapter number for context
+        seed_characters: Dict mapping character names to voice paths from seed voices_map
 
     Returns:
         Formatted prompt string with context if available
     """
-    if existing_characters is None:
+    # Combine existing characters and seed characters
+    all_characters = None
+    if existing_characters:
+        all_characters = existing_characters.copy()
+        if seed_characters:
+            # Merge seed characters, preferring existing character names if conflict
+            for char_name in seed_characters.keys():
+                char_lower = char_name.lower().strip()
+                if char_lower not in all_characters:
+                    all_characters[char_lower] = char_name
+
+    if all_characters is None:
         return prompt_template
 
     # Build context message about existing characters
     context_lines = []
-    context_lines.append("\n## Existing Character Names (from previous chapters)")
-    context_lines.append("These character names have been used in prior chapters. When you encounter the same character, use the same name:")
+    context_lines.append("\n## Existing Character Names (from previous chapters and seed voices)")
+    context_lines.append("These character names have been used in prior chapters or provided via seed voices. When you encounter the same character, use the same name:")
     context_lines.append("")
 
     # Add unique character names
-    for char_name in sorted(set(existing_characters.values())):
+    for char_name in sorted(set(all_characters.values())):
         context_lines.append(f"- \"{char_name}\"")
 
     context_lines.append("")
@@ -496,7 +508,8 @@ def label_speakers(
     num_attempts: int = 10,
     old_format: bool = False,
     skip_llm: bool = False,
-    verbose: bool = False
+    verbose: bool = False,
+    seed_characters: Dict[str, str] = None
 ) -> Tuple[str, Dict, Dict]:
     """Label speakers in a chapter file using LLM.
 
@@ -511,6 +524,7 @@ def label_speakers(
         old_format: Use older format for LLM query and parsing
         skip_llm: Skip call to LLM and just try to process existing files
         verbose: Print verbose output
+        seed_characters: Dict of character names -> voice paths from seed voices_map
 
     Returns:
         Tuple of (status_message, character_map, line_map)
@@ -541,8 +555,8 @@ def label_speakers(
             messages = [
                 {"role": "system", "content": "You are a helpful assistant." + OLD_PROMPT_TXT}]
         else:
-            # Create prompt with context from existing character map
-            prompt_content = create_prompt_with_context(PROMPT_TXT, existing_characters, chapter_num)
+            # Create prompt with context from existing character map and seed characters
+            prompt_content = create_prompt_with_context(PROMPT_TXT, existing_characters, chapter_num, seed_characters)
             messages = [
                 {"role": "system", "content": prompt_content}]
         messages.extend([{"role": "user", "content": x} for x in lines])

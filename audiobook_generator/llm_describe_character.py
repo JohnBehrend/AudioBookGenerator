@@ -522,7 +522,8 @@ def describe_characters(
     model: str = "local-model",
     single_character: Optional[str] = None,
     wiki_url_template: str = "",
-    verbose: bool = False
+    verbose: bool = False,
+    seed_characters: Dict[str, str] = None
 ) -> Dict[str, str]:
     """Describe characters from an audiobook using an LLM.
 
@@ -540,6 +541,7 @@ def describe_characters(
         single_character: Describe only one specific character
         wiki_url_template: Optional URL template for wiki lookup
         verbose: Print verbose output
+        seed_characters: Dict mapping character names to voice paths from seed voices_map
 
     Returns:
         Dict of character descriptions
@@ -570,6 +572,12 @@ def describe_characters(
         if verbose:
             print("No characters found.", file=sys.stderr)
         return {}
+
+    # Filter out seed characters
+    if seed_characters:
+        characters = [c for c in characters if c not in seed_characters]
+        if verbose:
+            print(f"Filtered out {len(seed_characters)} seeded characters, {len(characters)} remaining")
 
     if single_character:
         if single_character not in characters:

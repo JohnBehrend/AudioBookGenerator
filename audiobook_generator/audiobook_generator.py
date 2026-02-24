@@ -902,7 +902,7 @@ class PipelineState:
 def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       verbose: bool = False, api_key: str = None, llm_port: str = None,
                       tts_engine: str = "kugelaudio", turbo: bool = False,
-                      device: str = "cuda") -> str:
+                      device: str = "cuda", seed_voice_map: str = None) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -915,12 +915,24 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         tts_engine: 'kugelaudio' or 'vibevoice'
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         device: CUDA device (e.g., 'cuda', 'cuda:1')
+        seed_voice_map: Path to existing voices_map.json to seed voices
 
     Returns:
         Status message
     """
     # Initialize state
     state = PipelineState(output_dir)
+
+    # Load seed voices if provided
+    seed_characters = None
+    if seed_voice_map:
+        seed_characters = load_json(seed_voice_map)
+        if seed_characters:
+            if verbose:
+                print(f"[SEED] Loaded {len(seed_characters)} seeded characters from {seed_voice_map}")
+        else:
+            if verbose:
+                print(f"[SEED] No characters found in seed file: {seed_voice_map}")
 
     # Store chapters in state for reuse (avoid re-parsing)
     # Stage 1: Parse EPUB with progress
@@ -956,7 +968,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
                 port=llm_port or LLM_SETTINGS.get("port", "1234"),
                 num_attempts=DEFAULTS.get("num_llm_attempts", 2),
-                verbose=verbose
+                verbose=verbose,
+                seed_characters=seed_characters
             )
 
             if verbose:
@@ -974,7 +987,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             output_dir=str(state.output_dir),
             api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
             port=llm_port or LLM_SETTINGS.get("port", "1234"),
-            verbose=verbose
+            verbose=verbose,
+            seed_characters=seed_characters
         )
 
         if verbose:
@@ -993,7 +1007,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             descriptions=state.character_descriptions,
             output_dir=str(state.output_dir),
             verbose=verbose,
-            progress=None  # CLI mode, no gr.Progress
+            progress=None,  # CLI mode, no gr.Progress
+            seed_characters=seed_characters
         )
 
         if verbose:
@@ -1142,6 +1157,7 @@ def main():
     parser.add_argument("--gradio", action="store_true", help="Launch Gradio interface instead of CLI")
     parser.add_argument("--num-llm-attempts", type=int, default=2, help="Number of LLM attempts for speaker labeling")
     parser.add_argument("--gradio-port", type=int, default=None, help="Port for Gradio web interface")
+    parser.add_argument("--seed-voice-map", help="Path to existing voices_map.json to seed voices")
 
     args = parser.parse_args()
 
@@ -1184,7 +1200,8 @@ def main():
             llm_port=args.llm_port,
             tts_engine=args.tts_engine,
             turbo=args.turbo,
-            device=args.device
+            device=args.device,
+            seed_voice_map=args.seed_voice_map
         )
 
         print(status)

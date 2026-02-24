@@ -149,6 +149,25 @@ def get_all_character_wav_files(chapters_dir: Path) -> Dict[str, str]:
     return wav_files
 
 
+def load_seed_characters(seed_voice_map: str) -> Dict[str, str]:
+    """Load seed characters from a voices_map.json file.
+
+    Args:
+        seed_voice_map: Path to the seed voices_map.json file
+
+    Returns:
+        Dict mapping character names to voice file paths, or None if file not found
+    """
+    if not seed_voice_map or not os.path.exists(seed_voice_map):
+        return None
+
+    try:
+        with open(seed_voice_map, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        return None
+
+
 def progress_iterator(items, progress=None, desc="Processing"):
     """Generator that yields items and updates progress bar if available."""
     if progress is None:
@@ -261,6 +280,7 @@ def process_chapters_for_labels(
     num_attempts: int,
     pipeline_state: PipelineState,
     log_output: str,
+    seed_voice_map: str = None,
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 2: Run LLM to label speakers in all chapters."""
@@ -294,7 +314,8 @@ def process_chapters_for_labels(
                 api_key=api_key,
                 port=port,
                 num_attempts=num_attempts,
-                verbose=False
+                verbose=False,
+                seed_characters=load_seed_characters(seed_voice_map)
             )
 
             log_output += f"\n{result_msg}"
@@ -331,6 +352,7 @@ def describe_characters_ui(
     port: str,
     pipeline_state: PipelineState,
     log_output: str,
+    seed_voice_map: str = None,
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 3: Use LLM to describe characters."""
@@ -365,7 +387,8 @@ def describe_characters_ui(
             output_dir=str(chapters_dir),
             api_key=api_key,
             port=port,
-            verbose=False
+            verbose=False,
+            seed_characters=load_seed_characters(seed_voice_map)
         )
 
         log_output += f"\n{result_msg}"
@@ -392,6 +415,7 @@ def describe_characters_ui(
 def generate_voice_samples(
     pipeline_state: PipelineState,
     log_output: str,
+    seed_voice_map: str = None,
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 4: Generate voice samples for each character."""
@@ -422,7 +446,8 @@ def generate_voice_samples(
             descriptions=descriptions,
             output_dir=str(chapters_dir),
             verbose=False,
-            progress=progress
+            progress=progress,
+            seed_characters=load_seed_characters(seed_voice_map)
         )
 
         log_output += f"\n{result_msg}"
@@ -508,6 +533,7 @@ def generate_tts_audio(
     log_output: str,
     max_chapters: Optional[int],
     turbo: bool = False,
+    seed_voice_map: str = None,
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 5.1: Generate TTS audio for each line/voice.
@@ -546,10 +572,23 @@ def generate_tts_audio(
         with open(descriptions_file, "r", encoding="utf-8") as f:
             descriptions = json.load(f)
 
+        # Load seed voices if provided
+        seed_characters = load_seed_characters(seed_voice_map)
+
         # Create voices_map: character_name -> voice_path (wav file)
         voices_map = {}
+        # Start with seed characters (they already have voice samples)
+        if seed_characters:
+            for char_name, voice_path in seed_characters.items():
+                # Store just the filename (not full path) for consistency
+                voices_map[char_name] = os.path.basename(voice_path)
+            progress(0, desc=f"Loaded {len(seed_characters)} seeded voices from seed voice map")
+
         for char_name in descriptions.keys():
             progress(0, desc=f"Finding voice sample for character: {char_name}... (temp: {chapters_dir.parent})")
+            # Skip if already in seed characters
+            if char_name in voices_map:
+                continue
             wav_path = get_character_wav_file(char_name, chapters_dir)
             if wav_path and os.path.exists(wav_path):
                 voices_map[char_name] = wav_path
@@ -624,6 +663,7 @@ def generate_full_audiobook(
     log_output: str,
     max_chapters: Optional[int],
     turbo: bool = False,
+    seed_voice_map: str = None,
 ) -> Tuple[str, PipelineState]:
     """Stage 5: Generate full audiobook using generate_audiobook_from_chapters().
 
@@ -632,12 +672,13 @@ def generate_full_audiobook(
         log_output: Current log output string
         max_chapters: Maximum number of chapters to process
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
+        seed_voice_map: Path to seed voices_map.json for reusing existing voices
     """
     log_output += "\n\n=== Stage 5: Full Audiobook Generation ==="
 
     try:
         # Use the unified generate_audiobook_from_chapters function
-        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters, turbo)
+        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters, turbo, seed_voice_map)
 
         # Update state to audiobook complete (MP3s are created during generate_audiobook_from_chapters)
         log_output += f"\n\n=== Stage 5 Complete: Full Audiobook Generation === State: {pipeline_state.pipeline_state}"
@@ -983,6 +1024,13 @@ def create_interface(
             # EPUB upload
             epub_upload = gr.File(label="EPUB", file_types=[".epub"], value=epub_path_default)
 
+            # Seed voice map
+            seed_voice_map_input = gr.File(
+                label="Seed Voice Map (optional)",
+                file_types=[".json"],
+                info="Path to existing voices_map.json to reuse voice samples"
+            )
+
         # All 6 buttons in a single row - only Parse is clickable initially
         with gr.Row():
             parse_btn = gr.Button("1. Parse", variant="primary", scale=1, interactive=True)
@@ -1042,7 +1090,7 @@ def create_interface(
         # Label Speakers - Stage 2
         label_btn.click(
             fn=process_chapters_for_labels,
-            inputs=[api_key_input, port_input, num_attempts_input, pipeline_state_obj, log_output],
+            inputs=[api_key_input, port_input, num_attempts_input, pipeline_state_obj, log_output, seed_voice_map_input],
             outputs=[log_output, pipeline_state_obj],
         ).then(
             fn=update_button_visibility_from_state,
@@ -1061,7 +1109,7 @@ def create_interface(
         # Describe Characters - Stage 3
         describe_btn.click(
             fn=describe_characters_ui,
-            inputs=[api_key_input, port_input, pipeline_state_obj, log_output],
+            inputs=[api_key_input, port_input, pipeline_state_obj, log_output, seed_voice_map_input],
             outputs=[log_output, pipeline_state_obj],
         ).then(
             fn=update_button_visibility_from_state,
@@ -1080,7 +1128,7 @@ def create_interface(
         # Generate All Voice Samples - Stage 4
         voice_samples_btn.click(
             fn=generate_voice_samples,
-            inputs=[pipeline_state_obj, log_output],
+            inputs=[pipeline_state_obj, log_output, seed_voice_map_input],
             outputs=[log_output, pipeline_state_obj],
         ).then(
             fn=update_button_visibility_from_state,
@@ -1156,7 +1204,7 @@ def create_interface(
         # Generate Full Audiobook - Stage 5
         tts_btn.click(
             fn=generate_full_audiobook,
-            inputs=[pipeline_state_obj, log_output, max_chapters_slider, turbo_checkbox],
+            inputs=[pipeline_state_obj, log_output, max_chapters_slider, turbo_checkbox, seed_voice_map_input],
             outputs=[log_output, pipeline_state_obj],
         ).then(
             fn=update_button_visibility_from_state,

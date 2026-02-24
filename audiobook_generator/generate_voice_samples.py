@@ -115,6 +115,10 @@ def main():
         help="Generate only one character"
     )
     parser.add_argument(
+        "--seed-voice-map",
+        help="Path to existing voices_map.json to seed voices"
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose printing for debug."
@@ -134,6 +138,13 @@ def main():
             sys.exit(1)
         descriptions = {args.single_character: descriptions[args.single_character]}
 
+    # Load seed voices if provided
+    seed_characters = None
+    if args.seed_voice_map:
+        if os.path.exists(args.seed_voice_map):
+            with open(args.seed_voice_map, 'r', encoding='utf-8') as f:
+                seed_characters = json.load(f)
+
     status, generated = generate_voice_samples(
         descriptions=descriptions,
         output_dir=args.output_dir,
@@ -141,7 +152,8 @@ def main():
         device=args.device,
         max_tokens=args.max_tokens,
         single_character=args.single_character,
-        verbose=args.verbose
+        verbose=args.verbose,
+        seed_characters=seed_characters
     )
 
     print(status)
@@ -165,7 +177,8 @@ def generate_voice_samples(
     max_tokens: int = DEFAULTS["max_new_tokens"],
     single_character: Optional[str] = None,
     verbose: bool = False,
-    progress=None
+    progress=None,
+    seed_characters: Dict[str, str] = None
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters using Qwen3-TTS.
 
@@ -181,6 +194,7 @@ def generate_voice_samples(
         single_character: Generate only one character
         verbose: Print verbose output
         progress: Gradio progress bar to update during generation
+        seed_characters: Dict mapping character names to existing voice paths from seed voices_map
 
     Returns:
         Tuple of (status_message, character_voice_paths)
@@ -198,6 +212,13 @@ def generate_voice_samples(
         else:
             if verbose:
                 print(f"Found {len(descriptions)} characters")
+
+        # Filter out seed characters
+        if seed_characters:
+            initial_count = len(descriptions)
+            descriptions = {k: v for k, v in descriptions.items() if k not in seed_characters}
+            if verbose:
+                print(f"Filtered out {initial_count - len(descriptions)} seeded characters, {len(descriptions)} remaining to generate")
 
         if verbose:
             print(f"\nLoading model: {model_path}")
@@ -260,10 +281,27 @@ def generate_voice_samples(
             print(f"Summary: {len(generated)} generated, {len(failed)} failed")
             print("=" * 60)
 
-        if generated:
+        # Build final voices_map
+        if verbose:
+            print("\n" + "=" * 60)
+            print(f"Summary: {len(generated)} generated, {len(failed)} failed")
+            print("=" * 60)
+
+        if generated or seed_characters:
             # Generate voices_map.json for use in audiobook generation
             voices_map = {}
             voices_map["narrator"] = "narrator.wav"
+
+            # Start with seed characters (from voices_map.json)
+            if seed_characters:
+                for char_name, voice_path in seed_characters.items():
+                    # Extract just the filename if full path provided
+                    voice_file = os.path.basename(voice_path)
+                    voices_map[char_name] = voice_file
+                if verbose:
+                    print(f"Added {len(seed_characters)} seeded characters to voices_map")
+
+            # Add newly generated voices
             for char_name, path in generated.items():
                 voice_file = os.path.basename(path)
                 voices_map[char_name] = voice_file

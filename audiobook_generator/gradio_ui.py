@@ -986,6 +986,7 @@ def create_interface(
     num_attempts_default: int = DEFAULT_NUM_ATTEMPTS,
     epub_path_default: Optional[str] = str(DEFAULT_EPUB_FILE),
     max_chapters_default: int = DEFAULT_MAX_CHAPTERS,
+    seed_voice_map_default: Optional[str] = None,
 ):
     """Create the Gradio interface with all stages using a state machine pattern."""
 
@@ -1028,7 +1029,7 @@ def create_interface(
             seed_voice_map_input = gr.File(
                 label="Seed Voice Map (optional)",
                 file_types=[".json"],
-                info="Path to existing voices_map.json to reuse voice samples"
+                value=seed_voice_map_default,
             )
 
         # All 6 buttons in a single row - only Parse is clickable initially

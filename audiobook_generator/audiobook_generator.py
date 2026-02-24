@@ -1080,8 +1080,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
 def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
                             llm_port: str = None, gradio_port: int = None,
-                            num_attempts: int = 2,
-                            max_chapters: int = 10) -> None:
+                            num_attempts: int = 2, max_chapters: int = 10,
+                            seed_voice_map: str = None) -> None:
     """Create and launch the Gradio interface for the audiobook pipeline.
 
     This function launches the Gradio interface imported from the package's
@@ -1094,6 +1094,7 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         gradio_port: Port for Gradio web interface
         num_attempts: Number of LLM attempts
         max_chapters: Max chapters to process
+        seed_voice_map: Path to seed voices_map.json to pre-fill
     """
     try:
         from gradio_ui import create_interface, cleanup_temp_dir
@@ -1105,11 +1106,19 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         # Use provided gradio port or default from config
         effective_gradio_port = gradio_port if gradio_port is not None else AUDIO_SETTINGS.get("gradio_port", 7860)
 
+        # Resolve seed_voice_map to absolute path if provided
+        seed_voice_map_path = None
+        if seed_voice_map:
+            seed_voice_map_path = os.path.abspath(seed_voice_map)
+            if not os.path.exists(seed_voice_map_path):
+                print(f"Warning: Seed voice map file not found: {seed_voice_map_path}")
+
         demo = create_interface(
             api_key_default=api_key or DEFAULTS.get("api_key", "lm-studio"),
             port_default=effective_llm_port,
             num_attempts_default=num_attempts,
-            max_chapters_default=max_chapters
+            max_chapters_default=max_chapters,
+            seed_voice_map_default=seed_voice_map_path
         )
 
         demo.launch(share=False, theme=gr.themes.Soft(), server_port=effective_gradio_port, server_name="0.0.0.0")
@@ -1178,7 +1187,8 @@ def main():
             llm_port=args.llm_port,
             gradio_port=args.gradio_port,
             num_attempts=args.num_llm_attempts,
-            max_chapters=args.max_chapters or DEFAULTS.get("max_chapters", 10)
+            max_chapters=args.max_chapters or DEFAULTS.get("max_chapters", 10),
+            seed_voice_map=args.seed_voice_map
         )
     else:
         # Run CLI pipeline

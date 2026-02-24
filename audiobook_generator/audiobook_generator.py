@@ -630,8 +630,9 @@ def generate_audiobook_from_chapters(
             else:
                 voice_design_model = None
                 base_model = None
-                tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)                
-
+                tts_model_read_chapters, processor, _ = setup_tts_engine(device, tts_engine, turbo)
+                for voice, relative_path in voices_map.items():
+                    voice_path = os.path.join(output_dir, relative_path)
             short_text_postfix = DEFAULTS["short_text_postfix"]
 
             processed = 0

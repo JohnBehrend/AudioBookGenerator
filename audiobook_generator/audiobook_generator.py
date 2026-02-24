@@ -176,6 +176,8 @@ class VoiceMapper:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             voices_dir = os.path.join(script_dir, 'character_voice_samples')
         self.voices_dir = voices_dir
+        # Create the directory if it doesn't exist
+        os.makedirs(self.voices_dir, exist_ok=True)
 
     def get_voice_path(self, voice_name):
         """Get the path to a voice sample file for the given voice name.

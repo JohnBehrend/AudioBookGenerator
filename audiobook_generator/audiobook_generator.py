@@ -12,7 +12,7 @@ Usage:
     python audiobook_generator.py <epub_file> [--output-dir] [--verbose]
 
     # Launch Gradio interface
-    python audiobook_generator.py --gradio [--api-key KEY] [--llm-port PORT] [--gradio-port PORT]
+    python audiobook_generator.py --gradio [--epub EPUB] [--api-key KEY] [--llm-port PORT] [--gradio-port PORT]
 """
 
 import argparse
@@ -1081,7 +1081,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
                             llm_port: str = None, gradio_port: int = None,
                             num_attempts: int = 2, max_chapters: int = 10,
-                            seed_voice_map: str = None) -> None:
+                            seed_voice_map: str = None, epub: str = None) -> None:
     """Create and launch the Gradio interface for the audiobook pipeline.
 
     This function launches the Gradio interface imported from the package's
@@ -1113,10 +1113,18 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
             if not os.path.exists(seed_voice_map_path):
                 print(f"Warning: Seed voice map file not found: {seed_voice_map_path}")
 
+        # Resolve epub path to absolute path if provided
+        epub_path = None
+        if epub:
+            epub_path = os.path.abspath(epub)
+            if not os.path.exists(epub_path):
+                print(f"Warning: EPUB file not found: {epub_path}")
+
         demo = create_interface(
             api_key_default=api_key or DEFAULTS.get("api_key", "lm-studio"),
             port_default=effective_llm_port,
             num_attempts_default=num_attempts,
+            epub_path_default=epub_path,
             max_chapters_default=max_chapters,
             seed_voice_map_default=seed_voice_map_path
         )
@@ -1188,7 +1196,8 @@ def main():
             gradio_port=args.gradio_port,
             num_attempts=args.num_llm_attempts,
             max_chapters=args.max_chapters or DEFAULTS.get("max_chapters", 10),
-            seed_voice_map=args.seed_voice_map
+            seed_voice_map=args.seed_voice_map,
+            epub=args.epub_file
         )
     else:
         # Run CLI pipeline

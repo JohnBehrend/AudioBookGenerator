@@ -1104,33 +1104,3 @@ def create_interface(
         )
 
     return demo
-
-
-# ============================================================================
-# MAIN
-# ============================================================================
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Audiobook Pipeline Gradio Interface")
-    parser.add_argument("--api_key", type=str, default=DEFAULT_API_KEY, help="LLM API Key to pre-fill")
-    parser.add_argument("--port", type=str, default=DEFAULT_PORT, help="LLM Port to pre-fill")
-    parser.add_argument("--num_llm_attempts", type=int, default=DEFAULT_NUM_ATTEMPTS, help="Number of LLM attempts to pre-fill")
-    parser.add_argument("--epub", type=str, help="EPUB file path to pre-load")
-    parser.add_argument("--max_chapters", type=int, default=DEFAULT_MAX_CHAPTERS, help="Max chapters to pre-fill")
-    args = parser.parse_args()
-
-    demo = create_interface(
-        api_key_default=args.api_key,
-        port_default=args.port,
-        num_attempts_default=args.num_llm_attempts,
-        epub_path_default=args.epub,
-        max_chapters_default=args.max_chapters,
-    )
-
-    try:
-        demo.launch(share=False, theme=gr.themes.Soft())
-    finally:
-        cleanup_temp_dir()

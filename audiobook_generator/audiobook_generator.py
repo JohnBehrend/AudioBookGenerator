@@ -923,7 +923,8 @@ class PipelineState:
 def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       verbose: bool = False, api_key: str = None, llm_port: str = None,
                       tts_engine: str = "kugelaudio", turbo: bool = False,
-                      device: str = "cuda", seed_voice_map: str = None) -> str:
+                      device: str = "cuda", seed_voice_map: str = None,
+                      num_llm_attempts: int = 2) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -937,6 +938,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         device: CUDA device (e.g., 'cuda', 'cuda:1')
         seed_voice_map: Path to existing voices_map.json to seed voices
+        num_llm_attempts: Number of LLM attempts for speaker labeling
 
     Returns:
         Status message
@@ -946,7 +948,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
     # Load duplicate replacement map if available (from Stage 3)
     duplicate_replacement_map = {}
-    replacement_map_file = os.path.join(output_dir, "duplicate_replacement_map.json")
+    replacement_map_file = os.path.join(output_dir, "chapters", "duplicate_replacement_map.json")
     if os.path.exists(replacement_map_file):
         duplicate_replacement_map = load_json(replacement_map_file)
         if verbose and duplicate_replacement_map:
@@ -1005,7 +1007,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 txt_file=str(chapter_file),
                 api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
                 port=llm_port or LLM_SETTINGS.get("port", "1234"),
-                num_attempts=DEFAULTS.get("num_llm_attempts", 2),
+                num_attempts=num_llm_attempts,
                 verbose=verbose,
                 seed_characters=seed_characters
             )
@@ -1168,22 +1170,22 @@ def main():
         description="Audiobook Generator - Parse EPUB and generate audiobook audio"
     )
     parser.add_argument("epub_file", nargs="?", help="Path to the EPUB file")
-    parser.add_argument("--output-dir", default=None, help="Output directory for generated files (default: temp directory)")
-    parser.add_argument("--max-chapters", type=int, help="Maximum number of chapters to process")
+    parser.add_argument("-output_dir", default=None, help="Output directory for generated files (default: temp directory)")
+    parser.add_argument("-max_chapters", type=int, help="Maximum number of chapters to process")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print verbose output")
-    parser.add_argument("--api-key", help="LLM API key for speaker labeling")
-    parser.add_argument("--llm-port", default="1234", help="LLM endpoint port (for LM Studio)")
-    parser.add_argument("--tts-engine", default="kugelaudio", choices=["kugelaudio", "vibevoice", "qwen3"],
+    parser.add_argument("-api_key", help="LLM API key for speaker labeling")
+    parser.add_argument("-llm_port", default="1234", help="LLM endpoint port (for LM Studio)")
+    parser.add_argument("-tts_engine", default="kugelaudio", choices=["kugelaudio", "vibevoice", "qwen3"],
                         help="TTS engine to use")
     parser.add_argument("--turbo", action="store_true", help="Use KugelAudio turbo model (kugel-1-turbo)")
-    parser.add_argument("--device", default="cuda", help="CUDA device to use")
+    parser.add_argument("-device", default="cuda", help="CUDA device to use")
     parser.add_argument("--gradio", action="store_true", help="Launch Gradio interface instead of CLI")
-    parser.add_argument("--num-llm-attempts", type=int, default=2, help="Number of LLM attempts for speaker labeling")
-    parser.add_argument("--gradio-port", type=int, default=None, help="Port for Gradio web interface")
-    parser.add_argument("--seed-voice-map", help="Path to existing voices_map.json to seed voices")
+    parser.add_argument("-num_llm_attempts", type=int, default=DEFAULTS["num_llm_attempts"], help="Number of LLM attempts for speaker labeling")
+    parser.add_argument("-gradio_port", type=int, default=None, help="Port for Gradio web interface")
+    parser.add_argument("-seed_voice_map", help="Path to existing voices_map.json to seed voices")
 
     args = parser.parse_args()
-
+    print(args)
     if args.gradio:
         # Launch Gradio interface
         create_gradio_interface(
@@ -1225,7 +1227,8 @@ def main():
             tts_engine=args.tts_engine,
             turbo=args.turbo,
             device=args.device,
-            seed_voice_map=args.seed_voice_map
+            seed_voice_map=args.seed_voice_map,
+            num_llm_attempts=args.num_llm_attempts
         )
 
         print(status)

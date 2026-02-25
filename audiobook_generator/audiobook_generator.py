@@ -12,7 +12,7 @@ Usage:
     python audiobook_generator.py <epub_file> [--output-dir] [--verbose]
 
     # Launch Gradio interface
-    python audiobook_generator.py --gradio [--epub EPUB] [--api-key KEY] [--llm-port PORT] [--gradio-port PORT]
+    python audiobook_generator.py --gradio [--api-key KEY] [--llm-port PORT] [--gradio-port PORT]
 """
 
 import argparse
@@ -65,7 +65,19 @@ from llm_describe_character import describe_characters  # Clean public function
 from generate_voice_samples import generate_voice_samples as gen_voice_samples
 
 # Import shared utilities for consistent temp directory handling
-from utils import get_chapters_dir, get_temp_dir, cleanup_temp_dir, ProgressHandler
+from utils import (
+    get_chapters_dir,
+    get_temp_dir,
+    cleanup_temp_dir,
+    ProgressHandler,
+    copy_mp3_files_to_chapters,
+    load_json_file,
+    get_character_wav_file,
+    load_seed_characters,
+    get_chapter_map_files,
+    parse_map_file,
+    count_lines_per_character,
+)
 
 
 # ============================================================================
@@ -683,16 +695,16 @@ def generate_audiobook_from_chapters(
                     if speaker not in voices_used:
                         voices_used.append(speaker)
 
+                # Pre-compute already generated line indices for this chapter (O(1) lookup)
+                already_generated = {
+                    int(x.split(".")[-2])
+                    for x in glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav"))
+                    if not x.endswith(".tmp.wav")
+                }
+
                 # Generate TTS for each voice in this chapter
                 for voice in voices_used:
                     progress_handler.update(0, desc=f"Processing Chapter {i} Voice {voice}")
-
-                    # Check what's already generated
-                    already_generated = [
-                        int(x.split(".")[-2])
-                        for x in glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav"))
-                        if not x.endswith(".tmp.wav")
-                    ]
 
                     for j, chapter_obj in enumerate(chapter):
                         progress_handler.update((j + 1)/ len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j}")
@@ -1099,7 +1111,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
                             llm_port: str = None, gradio_port: int = None,
                             num_attempts: int = 2, max_chapters: int = 10,
-                            seed_voice_map: str = None, epub: str = None) -> None:
+                            seed_voice_map: str = None) -> None:
     """Create and launch the Gradio interface for the audiobook pipeline.
 
     This function launches the Gradio interface imported from the package's
@@ -1112,7 +1124,7 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         gradio_port: Port for Gradio web interface
         num_attempts: Number of LLM attempts
         max_chapters: Max chapters to process
-        seed_voice_map: Path to seed voices_map.json to pre-fill
+        seed_voice_map: Path to existing voices_map.json to seed voices
     """
     try:
         from gradio_ui import create_interface, cleanup_temp_dir
@@ -1131,18 +1143,10 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
             if not os.path.exists(seed_voice_map_path):
                 print(f"Warning: Seed voice map file not found: {seed_voice_map_path}")
 
-        # Resolve epub path to absolute path if provided
-        epub_path = None
-        if epub:
-            epub_path = os.path.abspath(epub)
-            if not os.path.exists(epub_path):
-                print(f"Warning: EPUB file not found: {epub_path}")
-
         demo = create_interface(
             api_key_default=api_key or DEFAULTS.get("api_key", "lm-studio"),
             port_default=effective_llm_port,
             num_attempts_default=num_attempts,
-            epub_path_default=epub_path,
             max_chapters_default=max_chapters,
             seed_voice_map_default=seed_voice_map_path
         )
@@ -1157,31 +1161,6 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
 # ============================================================================
 # MAIN
 # ============================================================================
-
-
-def copy_mp3_files_to_chapters(source_dir: str) -> None:
-    """Copy MP3 files from source_dir to ./chapters/ directory.
-
-    Args:
-        source_dir: Source directory containing chapter MP3 files
-    """
-    import shutil
-
-    # Find all MP3 files in source directory
-    mp3_files = sorted(glob.glob(os.path.join(source_dir, "chapter_*.mp3")))
-
-    if not mp3_files:
-        return
-
-    # Create ./chapters/ directory if it doesn't exist
-    os.makedirs("chapters", exist_ok=True)
-
-    # Copy each MP3 file
-    for mp3_path in mp3_files:
-        filename = os.path.basename(mp3_path)
-        dest_path = os.path.join("chapters", filename)
-        shutil.copy2(mp3_path, dest_path)
-        print(f"Copied {filename} to chapters/")
 
 
 def main():
@@ -1214,8 +1193,7 @@ def main():
             gradio_port=args.gradio_port,
             num_attempts=args.num_llm_attempts,
             max_chapters=args.max_chapters or DEFAULTS.get("max_chapters", 10),
-            seed_voice_map=args.seed_voice_map,
-            epub=args.epub_file
+            seed_voice_map=args.seed_voice_map
         )
     else:
         # Run CLI pipeline

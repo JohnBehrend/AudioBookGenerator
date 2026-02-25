@@ -1029,7 +1029,7 @@ def create_interface(
             seed_voice_map_input = gr.File(
                 label="Seed Voice Map (optional)",
                 file_types=[".json"],
-                value=seed_voice_map_default,
+                value=seed_voice_map_default
             )
 
         # All 6 buttons in a single row - only Parse is clickable initially

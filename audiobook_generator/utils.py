@@ -12,6 +12,7 @@ import glob
 import shutil
 from pathlib import Path
 from collections import Counter
+from typing import Dict, Optional, Tuple
 from openai import OpenAI
 
 from config import LLM_SETTINGS
@@ -250,3 +251,226 @@ def get_llm_client(api_key: str, port: str) -> OpenAI:
         OpenAI client configured for LM Studio
     """
     return OpenAI(base_url=f"http://localhost:{port}/v1", api_key=api_key)
+
+
+# ============================================================================
+# FILE OPERATIONS
+# ============================================================================
+
+
+def load_json_file(filepath: str) -> Optional[dict]:
+    """Load JSON file if it exists, return None otherwise.
+
+    Args:
+        filepath: Path to the JSON file
+
+    Returns:
+        Parsed JSON data or None if file doesn't exist
+    """
+    if os.path.exists(filepath):
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
+def copy_mp3_files_to_chapters(source_dir: str) -> int:
+    """Copy MP3 files from source_dir to ./chapters/ directory.
+
+    Args:
+        source_dir: Source directory containing chapter MP3 files
+
+    Returns:
+        Number of files copied
+    """
+    mp3_files = sorted(glob.glob(os.path.join(source_dir, "chapter_*.mp3")))
+
+    if not mp3_files:
+        return 0
+
+    os.makedirs("chapters", exist_ok=True)
+
+    for mp3_path in mp3_files:
+        filename = os.path.basename(mp3_path)
+        dest_path = os.path.join("chapters", filename)
+        shutil.copy2(mp3_path, dest_path)
+        print(f"Copied {filename} to chapters/")
+
+    return len(mp3_files)
+
+
+def get_character_wav_file(character_name: str, chapters_dir: Path) -> Optional[str]:
+    """Get the path to a character's generated WAV file.
+
+    Searches in both chapters_dir and SCRIPT_DIR for the file.
+
+    Args:
+        character_name: Name of the character
+        chapters_dir: Path to the chapters directory
+
+    Returns:
+        Path to the WAV file or None if not found
+    """
+    from pathlib import Path
+    script_dir = Path(__file__).resolve().parent
+
+    for base_dir in [chapters_dir, script_dir]:
+        wav_path = base_dir / f"{character_name}.wav"
+        if wav_path.exists():
+            return str(wav_path)
+    return None
+
+
+def load_seed_characters(seed_voice_map: str) -> Optional[Dict[str, str]]:
+    """Load seed characters from a voices_map.json file.
+
+    Args:
+        seed_voice_map: Path to the seed voices_map.json file
+
+    Returns:
+        Dict mapping character names to voice file paths, or None if file not found
+    """
+    if not seed_voice_map or not os.path.exists(seed_voice_map):
+        return None
+
+    try:
+        with open(seed_voice_map, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def normalize_character_name(name: str) -> str:
+    """Normalize a character name for comparison.
+
+    Args:
+        name: Character name to normalize
+
+    Returns:
+        Normalized name (lowercase, spaces instead of underscores/apostrophes)
+    """
+    return name.lower().strip().replace("_", " ").replace("'", " ")
+
+
+# ============================================================================
+# MAP FILE PARSING
+# ============================================================================
+
+
+def parse_map_file(map_file: Path) -> Optional[Tuple[Dict[int, str], Dict[int, int]]]:
+    """Parse a chapter map JSON file.
+
+    Handles both list format [char_map, line_map] and dict format.
+
+    Args:
+        map_file: Path to the map file
+
+    Returns:
+        Tuple of (character_map, line_map) with integer keys, or None if parsing fails
+    """
+    try:
+        with open(map_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if isinstance(data, list) and len(data) >= 2:
+            char_map = data[0]
+            line_map = data[1]
+        elif isinstance(data, dict):
+            char_map = data.get("character_map", {})
+            line_map = data.get("line_map", {})
+        else:
+            return None
+
+        # Convert keys to integers
+        char_map = {int(k): v for k, v in char_map.items()}
+        line_map = {int(k): v for k, v in line_map.items()}
+
+        return char_map, line_map
+    except Exception:
+        return None
+
+
+def get_chapter_map_files(chapters_dir: Path) -> list:
+    """Get sorted list of chapter map files.
+
+    Args:
+        chapters_dir: Path to the chapters directory
+
+    Returns:
+        Sorted list of map file paths
+    """
+    return sorted([f for f in chapters_dir.glob("*.map.json")
+                   if re.match(r"^chapter_\d+\.map\.json$", f.name)])
+
+
+def extract_characters_from_maps(chapters_dir: Path) -> list:
+    """Extract unique character names from all map files in a directory.
+
+    Args:
+        chapters_dir: Path to the chapters directory
+
+    Returns:
+        Sorted list of unique character names
+    """
+    characters = set()
+    map_files = get_chapter_map_files(chapters_dir)
+
+    for map_file in map_files:
+        result = parse_map_file(map_file)
+        if result:
+            char_map, _ = result
+            for char_name in char_map.values():
+                if isinstance(char_name, str):
+                    characters.add(char_name)
+
+    return sorted(list(characters))
+
+
+def count_lines_per_character(chapters_dir: Path) -> Dict[str, int]:
+    """Count lines spoken per character from map.json files.
+
+    Args:
+        chapters_dir: Path to the chapters directory
+
+    Returns:
+        Dict mapping character name to line count (including narrator for unlabeled lines)
+    """
+    character_lines = {}
+
+    for map_file in get_chapter_map_files(chapters_dir):
+        result = parse_map_file(map_file)
+        if not result:
+            continue
+
+        char_map, line_map = result
+        char_by_id = char_map
+
+        # Count labeled lines for each character
+        for char_num in line_map.values():
+            char_name = char_by_id.get(char_num)
+            if char_name:
+                character_lines[char_name] = character_lines.get(char_name, 0) + 1
+
+        # Count total spoken lines from the corresponding txt file
+        txt_file = map_file.with_suffix(".txt")
+        spoken_lines = set()
+        if txt_file.exists():
+            with open(txt_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("Line ") and ": " in line:
+                        try:
+                            line_num_str = line.split(": ", 1)[0].replace("Line ", "")
+                            line_num = int(line_num_str)
+                            content = line.split(": ", 1)[1] if ": " in line else ""
+                            if content.strip():
+                                spoken_lines.add(line_num)
+                        except (ValueError, IndexError):
+                            pass
+
+        # Add unlabeled spoken lines to narrator
+        labeled_count = len(line_map)
+        narrator_lines = len(spoken_lines) - labeled_count
+        if narrator_lines > 0:
+            character_lines["narrator"] = character_lines.get("narrator", 0) + narrator_lines
+
+    return character_lines

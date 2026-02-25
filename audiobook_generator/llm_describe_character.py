@@ -18,6 +18,9 @@ from bs4 import BeautifulSoup
 from config import LLM_SETTINGS, OUTPUT_DIR
 from utils import get_llm_client, compare_characters, get_characters_from_map_files
 
+# Module-level cache for chapter text content
+_chapter_text_cache: Dict[str, Dict[Path, str]] = {}
+
 
 # Default prompt for character description
 CHARACTER_DESCRIPTION_PROMPT = """
@@ -137,6 +140,34 @@ def load_chapter_text(chapter_file: str) -> str:
     """Load text from a chapter file."""
     with open(chapter_file, 'r', encoding='utf-8') as f:
         return f.read()
+
+
+def load_chapter_texts_with_cache(chapters_dir: Path) -> Tuple[List[str], List[Path]]:
+    """Load chapter texts with module-level caching.
+
+    Args:
+        chapters_dir: Path to the chapters directory
+
+    Returns:
+        Tuple of (list of chapter texts, list of chapter file paths)
+    """
+    chapters_dir_str = str(chapters_dir)
+
+    # Check if we have cached data for this directory
+    if chapters_dir_str in _chapter_text_cache:
+        return _chapter_text_cache[chapters_dir_str]
+
+    # Load and cache chapter texts
+    chapter_files = sorted(chapters_dir.glob("chapter_*.txt"))
+    chapter_texts = []
+
+    for chapter_file in chapter_files:
+        chapter_texts.append(load_chapter_text(str(chapter_file)))
+
+    # Store in cache
+    _chapter_text_cache[chapters_dir_str] = (chapter_texts, chapter_files)
+
+    return chapter_texts, chapter_files
 
 
 def find_chapters_with_character(chapter_texts: list, chapter_files: list, character_name: str) -> list:
@@ -606,16 +637,14 @@ def describe_characters(
             return {}
         characters = [single_character]
 
-    # Load chapter texts for context
-    chapter_texts = []
-    chapter_files = []
+    # Load chapter texts for context (with caching)
     chapters_dir_path = Path(chapters_dir)
     if chapters_dir_path.is_dir():
-        chapter_files = sorted(chapters_dir_path.glob("chapter_*.txt"))
-        for chapter_file in chapter_files:
-            chapter_texts.append(load_chapter_text(str(chapter_file)))
+        chapter_texts, chapter_files = load_chapter_texts_with_cache(chapters_dir_path)
         if verbose:
             print(f"Loaded {len(chapter_texts)} chapter files for context")
+    else:
+        chapter_texts, chapter_files = [], []
 
     # Initialize client
     client = get_llm_client(api_key or LLM_SETTINGS["api_key"], port or LLM_SETTINGS["port"])

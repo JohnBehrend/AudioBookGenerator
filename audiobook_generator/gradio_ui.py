@@ -47,7 +47,19 @@ import parse_chapter
 from llm_label_speakers import label_speakers  # Clean public function
 from llm_describe_character import describe_characters as describe_chars  # Clean public function
 from generate_voice_samples import generate_voice_samples as gen_voice_samples
-from utils import get_chapters_dir, get_temp_dir, cleanup_temp_dir, ProgressHandler
+from utils import (
+    get_chapters_dir,
+    get_temp_dir,
+    cleanup_temp_dir,
+    ProgressHandler,
+    copy_mp3_files_to_chapters,
+    load_json_file,
+    get_character_wav_file,
+    load_seed_characters,
+    get_chapter_map_files,
+    parse_map_file,
+    count_lines_per_character,
+)
 from audiobook_generator import (
     PipelineState,
     generate_audiobook_from_chapters,
@@ -73,29 +85,6 @@ DEFAULT_MAX_CHAPTERS = DEFAULTS["max_chapters"]
 
 # ============================================================================
 # HELPER FUNCTIONS
-def copy_mp3_files_to_chapters(source_dir: str) -> None:
-    """Copy MP3 files from source_dir to ./chapters/ directory.
-
-    Args:
-        source_dir: Source directory containing chapter MP3 files
-    """
-    # Find all MP3 files in source directory
-    mp3_files = sorted(glob.glob(os.path.join(source_dir, "chapter_*.mp3")))
-
-    if not mp3_files:
-        return
-
-    # Create ./chapters/ directory if it doesn't exist
-    os.makedirs("chapters", exist_ok=True)
-
-    # Copy each MP3 file
-    for mp3_path in mp3_files:
-        filename = os.path.basename(mp3_path)
-        dest_path = os.path.join("chapters", filename)
-        shutil.copy2(mp3_path, dest_path)
-        print(f"Copied {filename} to chapters/")
-
-
 def get_characters_descriptions_file() -> Optional[Path]:
     """Get the path to characters_descriptions.json in the temp directory."""
     chapters_dir = get_chapters_dir()
@@ -128,15 +117,6 @@ def cleanup_temp_dir() -> None:
 
 
 
-def get_character_wav_file(character_name: str, chapters_dir: Path) -> Optional[str]:
-    """Get the path to a character's generated WAV file."""
-    for base_dir in [chapters_dir, SCRIPT_DIR]:
-        wav_path = base_dir / f"{character_name}.wav"
-        if wav_path.exists():
-            return str(wav_path)
-    return None
-
-
 def get_all_character_wav_files(chapters_dir: Path) -> Dict[str, str]:
     """Get all generated character WAV files."""
     wav_files = {}
@@ -147,41 +127,6 @@ def get_all_character_wav_files(chapters_dir: Path) -> Dict[str, str]:
                 if not wav_name.startswith("chapter_") and wav_name not in ("narrator.wav", "uploaded.epub"):
                     wav_files[wav_path.stem] = str(wav_path)
     return wav_files
-
-
-def load_seed_characters(seed_voice_map: str) -> Dict[str, str]:
-    """Load seed characters from a voices_map.json file.
-
-    Args:
-        seed_voice_map: Path to the seed voices_map.json file
-
-    Returns:
-        Dict mapping character names to voice file paths, or None if file not found
-    """
-    if not seed_voice_map or not os.path.exists(seed_voice_map):
-        return None
-
-    try:
-        with open(seed_voice_map, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        return None
-
-
-def progress_iterator(items, progress=None, desc="Processing"):
-    """Generator that yields items and updates progress bar if available."""
-    if progress is None:
-        for item in items:
-            yield item
-        return
-
-    total = len(items) if hasattr(items, "__len__") else None
-    for i, item in enumerate(items):
-        if total:
-            progress((i + 1) / total, desc=f"{desc} ({i+1}/{total})")
-        else:
-            progress(i, desc=f"{desc} ({i+1})")
-        yield item
 
 
 # ============================================================================
@@ -692,76 +637,6 @@ def generate_full_audiobook(
 # ============================================================================
 # UI HELPERS
 # ============================================================================
-
-
-def count_lines_per_character(chapters_dir: Path) -> Dict[str, int]:
-    """
-    Count lines spoken per character from map.json files.
-
-    Args:
-        chapters_dir: Path to the chapters directory
-
-    Returns:
-        Dict mapping character name to line count (including narrator for unlabeled lines)
-    """
-    character_lines = {}
-
-    map_files = sorted([f for f in chapters_dir.glob("*.map.json")
-                       if re.match(r"^chapter_\d+\.map\.json$", f.name)])
-    for map_file in map_files:
-        try:
-            with open(map_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            # data is typically [character_map, line_map]
-            if isinstance(data, list) and len(data) >= 2:
-                character_map = data[0]
-                line_map = data[1]
-            elif isinstance(data, dict):
-                character_map = data.get("character_map", {})
-                line_map = data.get("line_map", {})
-            else:
-                continue
-
-            # Convert character_map values to get character names by ID
-            char_by_id = {int(k): v for k, v in character_map.items()}
-
-            # Count total spoken lines in this chapter from the corresponding txt file
-            # Only count lines that actually have content (not just line headers)
-            txt_file = map_file.replace(".map.json", ".txt")
-            spoken_lines = set()
-            if os.path.exists(txt_file):
-                with open(txt_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        # Only count lines that start with "Line N:" and have content after
-                        if line.startswith("Line ") and ": " in line:
-                            # Extract line number and check if there's actual content
-                            try:
-                                line_num_str = line.split(": ", 1)[0].replace("Line ", "")
-                                line_num = int(line_num_str)
-                                content = line.split(": ", 1)[1] if ": " in line else ""
-                                if content.strip():
-                                    spoken_lines.add(line_num)
-                            except (ValueError, IndexError):
-                                pass
-
-            # Count labeled lines for each character
-            labeled_count = 0
-            for char_id in line_map.values():
-                char_name = char_by_id.get(char_id)
-                if char_name:
-                    character_lines[char_name] = character_lines.get(char_name, 0) + 1
-                    labeled_count += 1
-
-            # Add unlabeled spoken lines to narrator
-            narrator_lines = len(spoken_lines) - labeled_count
-            if narrator_lines > 0:
-                character_lines["narrator"] = character_lines.get("narrator", 0) + narrator_lines
-
-        except Exception:
-            pass
-
-    return character_lines
 
 
 def update_character_table(

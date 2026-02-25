@@ -578,7 +578,8 @@ def generate_audiobook_from_chapters(
     max_chapters: Optional[int] = None,
     verbose: bool = False,
     turbo: bool = False,
-    progress: Optional[callable] = None
+    progress: Optional[callable] = None,
+    duplicate_replacement_map: Dict[str, str] = None
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -597,6 +598,7 @@ def generate_audiobook_from_chapters(
         verbose: Print verbose output
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         progress: Optional progress callback (gr.Progress() for Gradio, None for CLI)
+        duplicate_replacement_map: Dict mapping duplicate character names to canonical names
 
     Returns:
         Tuple of (status_message, chapters_processed)
@@ -613,7 +615,8 @@ def generate_audiobook_from_chapters(
             # Setup validation model
             validation_model = setup_validation_model(device)
             # This avoids crashes from faster-whisper dependencies if validation_model is None
-            voice_mapper = VoiceMapper()
+            # Initialize VoiceMapper with output_dir so it looks in the correct location
+            voice_mapper = VoiceMapper(voices_dir=output_dir)
             # Setup models
             voice_clone_prompts = {}
             if tts_engine == 'qwen3':
@@ -701,11 +704,17 @@ def generate_audiobook_from_chapters(
                             continue
 
                         # Get the voice path for this character
-                        if voice in voices_map:
+                        # Apply duplicate replacement map if available
+                        canonical_voice = voice
+                        if duplicate_replacement_map and voice in duplicate_replacement_map:
+                            canonical_voice = duplicate_replacement_map[voice]
+                            if verbose:
+                                print(f"  Remapping duplicate voice '{voice}' -> '{canonical_voice}'")
+                        if canonical_voice in voices_map:
                             # voices_map contains relative paths, prepend output_dir
-                            voice_path = os.path.join(output_dir, voices_map[voice])
+                            voice_path = os.path.join(output_dir, voices_map[canonical_voice])
                         else:
-                            voice_path = voice_mapper.get_voice_path(voice)
+                            voice_path = voice_mapper.get_voice_path(canonical_voice)
 
                         # Generate TTS for this line
                         success, ratio = generate_tts_for_line(
@@ -923,6 +932,14 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     # Initialize state
     state = PipelineState(output_dir)
 
+    # Load duplicate replacement map if available (from Stage 3)
+    duplicate_replacement_map = {}
+    replacement_map_file = os.path.join(output_dir, "duplicate_replacement_map.json")
+    if os.path.exists(replacement_map_file):
+        duplicate_replacement_map = load_json(replacement_map_file)
+        if verbose and duplicate_replacement_map:
+            print(f"[DUPLICATE MAP] Loaded {len(duplicate_replacement_map)} replacements from duplicate_replacement_map.json")
+
     # Load seed voices if provided
     seed_characters = None
     if seed_voice_map:
@@ -1052,7 +1069,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             tts_engine=tts_engine,
             turbo=turbo,
             verbose=verbose,
-            progress=None)
+            progress=None,
+            duplicate_replacement_map=duplicate_replacement_map)
 
         if verbose:
             print(f"  {status}")

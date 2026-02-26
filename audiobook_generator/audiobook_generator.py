@@ -1028,7 +1028,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
             port=llm_port or LLM_SETTINGS.get("port", "1234"),
             verbose=verbose,
-            seed_characters=seed_characters
+            seed_characters=seed_characters,
+            progress_callback=handler.update
         )
 
         if verbose:

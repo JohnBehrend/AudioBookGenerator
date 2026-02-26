@@ -285,8 +285,7 @@ def describe_character(client: OpenAI, model: str, character: str, context: str)
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=messages,
-            temperature=0.7,
+            messages=messages
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -303,11 +302,21 @@ def describe_all_characters(client: OpenAI, model: str, characters: list, contex
         {"role": "user", "content": user_message}
     ]
 
+    # DEBUG: Save the context and messages to a file for debugging
+    debug_output = {
+        "model": model,
+        "system_prompt": CHARACTER_DESCRIPTION_PROMPT,
+        "characters": characters,
+        "context": context,
+    }
+    with open("chapters/llm_character_description_debug.json", "w", encoding="utf-8") as f:
+        json.dump(debug_output, f, indent=2, ensure_ascii=False)
+    print("DEBUG: Saved LLM call context and messages to chapters/llm_character_description_debug.json")
+
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=messages,
-            temperature=0.7,
+            messages=messages
         )
         content = response.choices[0].message.content
         # Try to parse JSON from response
@@ -483,7 +492,8 @@ def describe_characters_shared(
     client: OpenAI,
     model: str,
     wiki_url_template: str = "",
-    verbose: bool = False
+    verbose: bool = False,
+    progress_callback: callable = None
 ) -> dict:
     """Shared logic for describing characters.
 
@@ -496,14 +506,12 @@ def describe_characters_shared(
         model: Model name to use for inference
         wiki_url_template: Optional URL template for wiki lookup
         verbose: Print verbose output
+        progress_callback: Optional callback(progress, desc) for progress updates
 
     Returns:
         Dict of character descriptions
     """
-    # Build context
-    context = build_character_context(characters, chapter_texts, chapter_files, wiki_url_template)
-
-    # Find duplicate characters before describing
+    # Step 1: De-dupe characters first
     duplicates = find_duplicate_characters(characters)
     if verbose and duplicates:
         print(f"Found duplicate character names: {duplicates}")
@@ -521,8 +529,45 @@ def describe_characters_shared(
     if verbose:
         print(f"Canonical characters to describe: {canonical_characters}")
 
-    # Describe only canonical characters
-    descriptions = describe_all_characters(client, model, canonical_characters, context)
+    # Step 2: Loop over canonical characters
+    descriptions = {}
+    total_chars = len(canonical_characters)
+
+    for idx, character in enumerate(canonical_characters, 1):
+        if verbose:
+            print(f"[{idx}/{total_chars}] Describing character: {character}")
+
+        # Build context for this character
+        context = build_character_context(
+            [character], chapter_texts, chapter_files, wiki_url_template
+        )
+
+        # Call describe_character for this single character
+        description = describe_character(client, model, character, context)
+        descriptions[character] = description
+
+        # Save debug output for this character
+        debug_output = {
+            "model": model,
+            "character": character,
+            "system_prompt": CHARACTER_DESCRIPTION_PROMPT,
+            "context": context,
+            "description": description,
+        }
+        debug_file = os.path.join(
+            output_dir, f"llm_character_debug_{character.replace(' ', '_')}.json"
+        )
+        with open(debug_file, "w", encoding="utf-8") as f:
+            json.dump(debug_output, f, indent=2, ensure_ascii=False)
+        if verbose:
+            print(f"  Saved debug output to: {debug_file}")
+
+        # Update progress
+        progress = idx / total_chars if total_chars > 0 else 1.0
+        if progress_callback:
+            progress_callback(progress, f"Describing: {character}")
+        if verbose:
+            print(f"  Completed: {character}")
 
     deduped_descriptions = descriptions
 
@@ -575,8 +620,9 @@ def describe_characters(
     single_character: Optional[str] = None,
     wiki_url_template: str = "",
     verbose: bool = False,
-    seed_characters: Dict[str, str] = None
-) -> Dict[str, str]:
+    seed_characters: Dict[str, str] = None,
+    progress_callback: callable = None
+) -> Tuple[str, Dict[str, str]]:
     """Describe characters from an audiobook using an LLM.
 
     This is the main public function for character description. It can be called
@@ -594,9 +640,10 @@ def describe_characters(
         wiki_url_template: Optional URL template for wiki lookup
         verbose: Print verbose output
         seed_characters: Dict mapping character names to voice paths from seed voices_map
+        progress_callback: Optional callback(progress, desc) for progress updates
 
     Returns:
-        Dict of character descriptions
+        Tuple of (status message, dict of character descriptions)
     """
     import json
     from pathlib import Path
@@ -659,7 +706,8 @@ def describe_characters(
         client=client,
         model=model,
         wiki_url_template=wiki_url_template,
-        verbose=verbose
+        verbose=verbose,
+        progress_callback=progress_callback
     )
 
     result_msg = f"Successfully described {len(descriptions)} characters."

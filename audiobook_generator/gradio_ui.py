@@ -326,18 +326,18 @@ def describe_characters_ui(
 
         log_output += f"\nFound {num_characters} characters from map files. (temp: {chapters_dir.parent})"
 
-        # Call describe_chars from llm_describe_character module
-        progress(0.5, desc=f"Describing {num_characters} characters with LLM... (temp: {chapters_dir.parent})")
+        # Call describe_chars from llm_describe_character module with progress
         result_msg, character_descriptions = describe_chars(
             output_dir=str(chapters_dir),
             api_key=api_key,
             port=port,
             verbose=False,
-            seed_characters=load_seed_characters(seed_voice_map)
+            seed_characters=load_seed_characters(seed_voice_map),
+            progress_callback=progress
         )
 
         log_output += f"\n{result_msg}"
-        progress(1.0, desc=f"Character description generation complete. (temp: {chapters_dir.parent})")
+        progress(1.0, desc="Character description generation complete.")
 
         # Load and store character descriptions in state
         pipeline_state.load_character_descriptions()

@@ -1025,6 +1025,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     with ProgressHandler(progress=None, use_tqdm=True, total=1, desc="Describing characters") as handler:
         result_msg, character_descriptions = describe_characters(
             output_dir=str(state.output_dir),
+            chapters_dir=str(state.output_dir),
             api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
             port=llm_port or LLM_SETTINGS.get("port", "1234"),
             verbose=verbose,

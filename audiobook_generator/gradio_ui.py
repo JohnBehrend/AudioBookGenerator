@@ -329,6 +329,7 @@ def describe_characters_ui(
         # Call describe_chars from llm_describe_character module with progress
         result_msg, character_descriptions = describe_chars(
             output_dir=str(chapters_dir),
+            chapters_dir=str(chapters_dir),
             api_key=api_key,
             port=port,
             verbose=False,

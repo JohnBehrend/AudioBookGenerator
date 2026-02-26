@@ -231,13 +231,115 @@ def lookup_character_on_wiki(character_name: str, wiki_url_template: str = "") -
     return ""
 
 
-def build_character_context(characters: list, chapter_texts: list, chapter_files: list = [], wiki_url_template: str = "") -> str:
-    """Build context string with character names and their appearances.
+def load_chapter_lines(chapter_file: str) -> list:
+    """Load a chapter file and return lines as a list (1-indexed for convenience).
+
+    Args:
+        chapter_file: Path to the chapter text file
+
+    Returns:
+        List of lines with empty string at index 0 for 1-indexed access
+        (Line N: prefixes are stripped if present)
+    """
+    with open(chapter_file, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    # Remove trailing newlines, strip "Line N: " prefix if present, and make 1-indexed
+    cleaned_lines = ['']  # Empty string at index 0 for 1-indexed access
+    for line in lines:
+        line = line.rstrip('\n\r')
+        # Strip "Line N: " prefix if present
+        if line.startswith("Line"):
+            match = re.match(r'^Line\s+\d+:\s*(.*)$', line)
+            if match:
+                line = match.group(1)
+        cleaned_lines.append(line)
+    return cleaned_lines
+
+
+def extract_character_dialogue(chapters_dir: Path, character_name: str, max_examples: int = 5) -> list:
+    """Extract actual dialogue lines spoken by a character from map files.
+
+    Args:
+        chapters_dir: Path to the chapters directory
+        character_name: The character name to extract dialogue for
+        max_examples: Maximum number of dialogue examples to return
+
+    Returns:
+        List of (chapter_name, dialogue_line) tuples
+    """
+    dialogue_examples = []
+    char_lower = character_name.lower()
+
+    # Get all map files sorted
+    map_files = sorted([f for f in chapters_dir.glob("*.map.json")
+                       if re.match(r"^chapter_\d+\.map\.json$", f.name)])
+
+    for map_file in map_files:
+        if len(dialogue_examples) >= max_examples:
+            break
+
+        try:
+            with open(map_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            # Handle both list format [char_map, line_map] and dict format
+            if isinstance(data, list) and len(data) >= 2:
+                character_map = data[0]
+                line_map = data[1]
+            elif isinstance(data, dict):
+                character_map = data.get("character_map", {})
+                line_map = data.get("line_map", {})
+            else:
+                continue
+
+            # Find the speaker key for this character
+            character_speaker_key = None
+            for speaker_key, char_name in character_map.items():
+                if char_name.lower() == char_lower:
+                    character_speaker_key = speaker_key
+                    break
+
+            if character_speaker_key is None:
+                continue
+
+            # Find all lines attributed to this character's speaker key
+            character_lines = []
+            for line_num_str, speaker_key_in_line in line_map.items():
+                if str(speaker_key_in_line) == str(character_speaker_key):
+                    character_lines.append(int(line_num_str))
+
+            # Load chapter text and extract dialogue
+            # Map files are named chapter_N.map.json, text files are chapter_N.txt
+            # So we need to strip the ".map" suffix from the stem
+            map_stem = map_file.stem  # e.g., "chapter_0.map"
+            chapter_stem = map_stem.rsplit(".map", 1)[0]  # e.g., "chapter_0"
+            chapter_txt_file = chapter_stem + ".txt"
+            chapter_txt_path = chapters_dir / chapter_txt_file
+            if chapter_txt_path.exists():
+                lines = load_chapter_lines(str(chapter_txt_path))
+                for line_num in sorted(character_lines):
+                    if line_num < len(lines):
+                        line_text = lines[line_num]
+                        # Only include lines that look like dialogue (start with quote)
+                        if line_text.strip().startswith('"'):
+                            dialogue_examples.append((map_file.stem, line_text.strip()))
+                            if len(dialogue_examples) >= max_examples:
+                                break
+        except Exception:
+            continue
+
+    return dialogue_examples[:max_examples]
+
+
+def build_character_context(characters: list, chapter_texts: list, chapter_files: list = [],
+                           chapters_dir: Path = None, wiki_url_template: str = "") -> str:
+    """Build context string with character names and their actual dialogue.
 
     Args:
         characters: List of character names
-        chapter_texts: List of chapter text content
-        chapter_files: List of chapter file paths (used for finding relevant chapters)
+        chapter_texts: List of chapter text content (deprecated, kept for compatibility)
+        chapter_files: List of chapter file paths (deprecated, kept for compatibility)
+        chapters_dir: Path to chapters directory (preferred method)
         wiki_url_template: Optional URL template for wiki lookup (with {name} placeholder)
 
     Returns:
@@ -255,23 +357,35 @@ def build_character_context(characters: list, chapter_texts: list, chapter_files
             if wiki_info:
                 context += f"--- {char} ---\n{wiki_info}\n\n"
 
-    # Build character-specific context using relevant chapters
-    if chapter_files and len(chapter_files) == len(chapter_texts):
-        context += "\n\nRelevant dialogue and context from the book:\n"
+    # Build character-specific context using actual dialogue from map files
+    context += "\n\nCharacter dialogue examples from the book:\n"
+
+    if chapters_dir and chapters_dir.is_dir():
+        for char in characters:
+            if char == "narrator":
+                continue
+            dialogue_examples = extract_character_dialogue(chapters_dir, char, max_examples=5)
+            if dialogue_examples:
+                context += f"\n--- {char} ---\n"
+                for chapter_name, dialogue_line in dialogue_examples:
+                    context += f"{dialogue_line}\n"
+            else:
+                context += f"\n--- {char} ---\n(No direct dialogue found)\n"
+    elif chapter_files and len(chapter_files) == len(chapter_texts):
+        # Fallback to old method if chapters_dir not provided
         for char in characters:
             relevant_chapters = find_chapters_with_character(chapter_texts, chapter_files, char)
             if relevant_chapters:
                 context += f"\n--- {char} Context ---\n"
-                # Use up to 2 most relevant chapters, first 800 chars each
                 for filepath, text in relevant_chapters[:2]:
                     context += f"[From {filepath.name}]\n"
                     context += text[:800] + "\n\n"
     else:
         # Fallback to first 3 chapters for all characters
-        context += "\n\nRelevant dialogue and context from the book:\n"
         for i, text in enumerate(chapter_texts[:3]):
             context += f"--- Chapter {i+1} Excerpt ---\n"
             context += text[:1000] + "\n\n"
+
     return context
 
 
@@ -450,7 +564,10 @@ def main() -> None:
             sys.exit(1)
         if args.verbose:
             print(f"Describing single character: {args.single_character}")
-        context = build_character_context(characters, chapter_texts, chapter_files, args.wiki_url_template)
+        context = build_character_context(
+            characters, chapter_texts, chapter_files,
+            chapters_dir=Path(args.chapters_dir), wiki_url_template=args.wiki_url_template
+        )
         description = describe_character(client, args.model, args.single_character, context)
         print(f"\nDescription for '{args.single_character}':")
         print(description)
@@ -537,9 +654,10 @@ def describe_characters_shared(
         if verbose:
             print(f"[{idx}/{total_chars}] Describing character: {character}")
 
-        # Build context for this character
+        # Build context for this character using chapters_dir for dialogue extraction
         context = build_character_context(
-            [character], chapter_texts, chapter_files, wiki_url_template
+            [character], chapter_texts, chapter_files,
+            chapters_dir=Path(output_dir), wiki_url_template=wiki_url_template
         )
 
         # Call describe_character for this single character

@@ -43,7 +43,7 @@ def load_character_descriptions(descriptions_file):
         return json.load(f)
 
 
-def generate_voice_sample(tts_model, character_name, description, output_dir, max_new_tokens=None):
+def generate_voice_sample(tts_model, character_name, description, output_dir, max_new_tokens=None, verbose=False):
     """
     Generate a short voice sample for a character using VoiceDesign model.
 
@@ -53,8 +53,17 @@ def generate_voice_sample(tts_model, character_name, description, output_dir, ma
     if max_new_tokens is None:
         max_new_tokens = DEFAULTS["max_new_tokens"]
     sample_text = DEFAULTS["qwen3_ref_text"]
+
+    # Validate description
+    if not description or not description.strip():
+        if verbose:
+            print(f"    ERROR: Skipping '{character_name}' due to empty description")
+            return False, None, 0
     instruct = f"Voice design for {character_name}: {description[:DEFAULTS['description_length']]}"
 
+    # Debug print the instruct prompt being sent to TTS
+    if verbose:
+        print(f"    TTS instruct: {instruct[:200]}...")
     try:
         wavs, sr = tts_model.generate_voice_design(
             text=sample_text,
@@ -261,6 +270,19 @@ def generate_voice_samples(
         failed = []
         total_chars = len(descriptions)
 
+        # Validate and print descriptions summary
+        if verbose:
+            print("\n" + "=" * 60)
+            print("Character Descriptions Summary:")
+            print("=" * 60)
+            for char_name, char_desc in descriptions.items():
+                desc_preview = char_desc.strip()[:100].replace("\n", " ")
+                print(f"  {char_name}:")
+                print(f"    Description: {desc_preview}...")
+                if not char_desc or not char_desc.strip():
+                    print(f"    WARNING: Empty or whitespace-only description!")
+            print("=" * 60 + "\n")
+
         try:
             for i, (char_name, char_desc) in enumerate(descriptions.items()):
                 if verbose:
@@ -271,7 +293,7 @@ def generate_voice_samples(
                     progress((i + 1) / total_chars, desc=f"Generating voice for '{char_name}'...")
 
                 success, output_file, duration = generate_voice_sample(
-                    tts_model, char_name, char_desc, output_dir, max_new_tokens=max_tokens
+                    tts_model, char_name, char_desc, output_dir, max_new_tokens=max_tokens, verbose=verbose
                 )
 
                 if success:

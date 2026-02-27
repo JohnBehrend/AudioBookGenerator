@@ -351,6 +351,56 @@ def normalize_character_name(name: str) -> str:
     return name.lower().strip().replace("_", " ").replace("'", " ")
 
 
+def distill_string(input_str: str) -> str:
+    """Remove punctuation and convert to lowercase for string comparison.
+
+    Args:
+        input_str: Input string to distill
+
+    Returns:
+        Lowercase string with punctuation removed (?, ., -, ;, ,, !)
+    """
+    return (input_str.lower()
+            .replace("?", "")
+            .replace(".", "")
+            .replace("-", "")
+            .replace(";", "")
+            .replace(",", "")
+            .replace("!", ""))
+
+
+def transcribe_audio_with_whisper(validation_model, audio_path: str) -> Tuple[str, list, list]:
+    """Transcribe audio using Whisper with word-level timestamps.
+
+    This function reuses the transcription logic from audiobook_generator.py
+    to avoid code duplication.
+
+    Args:
+        validation_model: The WhisperModel instance
+        audio_path: Path to the audio file (.wav)
+
+    Returns:
+        Tuple of (detected_string, start_times, end_times)
+        - detected_string: The transcribed text (distilled)
+        - start_times: List of start times for each word
+        - end_times: List of end times for each word
+    """
+    segments_list, info = validation_model.transcribe(audio_path, beam_size=5, word_timestamps=True)
+
+    # Collect segments (words) and timestamps
+    segments = []
+    start_times = []
+    end_times = []
+    for segment in segments_list:
+        for word in segment.words:
+            segments.append(distill_string(word.word.strip()))
+            start_times.append(word.start)
+            end_times.append(word.end)
+
+    detected_string = distill_string(" ".join(segments))
+    return detected_string, start_times, end_times
+
+
 # ============================================================================
 # MAP FILE PARSING
 # ============================================================================

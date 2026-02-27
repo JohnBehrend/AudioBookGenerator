@@ -77,6 +77,8 @@ from utils import (
     get_chapter_map_files,
     parse_map_file,
     count_lines_per_character,
+    transcribe_audio_with_whisper,
+    distill_string,
 )
 
 
@@ -121,10 +123,6 @@ def color_word(word, score):
 
     color_code = f"\033[38;2;{red};{green};{blue}m"
     return f"{color_code}{word}{reset_code}"
-
-
-def distill_string(input_str):
-    return input_str.lower().replace("?", "").replace(".", "").replace("-", "").replace(";", "").replace(",", "").replace("!", "")
 
 
 def score_strings_pop(i_str, d_str, lookahead=5, postfix="and also with you"):
@@ -317,7 +315,15 @@ def setup_validation_model(device: str = "cuda"):
     return WhisperModel(validation_model_name, device=device, compute_type="float16")
 
 
-def build_qwen3_voice_clone_prompt(base_model, voice_path: str, ref_text: str, device: str):
+def build_qwen3_voice_clone_prompt(
+    base_model,
+    voice_path: str,
+    ref_text: str,
+    device: str,
+    validation_model = None,
+    auto_transcribe: bool = False,
+    verbose: bool = False
+):
     """Build a voice_clone_prompt for Qwen3 using the Base model.
 
     This follows the recommended workflow from the Qwen3 documentation:
@@ -327,13 +333,26 @@ def build_qwen3_voice_clone_prompt(base_model, voice_path: str, ref_text: str, d
     Args:
         base_model: The Qwen3TTSModel loaded with Base weights
         voice_path: Path to the voice sample file to use as reference
-        ref_text: The reference text to use for voice cloning
+        ref_text: The reference text to use for voice cloning (may be overridden if auto_transcribe=True)
         device: Device to run on
+        validation_model: Optional WhisperModel for auto-transcription
+        auto_transcribe: If True, transcribe the audio to get actual ref_text
+        verbose: Print verbose output
 
     Returns:
         A voice_clone_prompt that can be reused for multiple generate_voice_clone calls
     """
     import soundfile as sf
+
+    # Auto-transcribe if requested and validation_model is available
+    if auto_transcribe and validation_model is not None:
+        actual_ref_text, _, _ = transcribe_audio_with_whisper(validation_model, voice_path)
+        if verbose:
+            print(f"  Transcribed ref_text: {actual_ref_text}")
+        ref_text = actual_ref_text
+    elif auto_transcribe and validation_model is None:
+        if verbose:
+            print(f"  Warning: auto_transcribe=True but no validation_model, using provided ref_text")
 
     # Load the voice sample
     voice_audio, sr = sf.read(voice_path)
@@ -591,7 +610,8 @@ def generate_audiobook_from_chapters(
     verbose: bool = False,
     turbo: bool = False,
     progress: Optional[callable] = None,
-    duplicate_replacement_map: Dict[str, str] = None
+    duplicate_replacement_map: Dict[str, str] = None,
+    seed_voice_map: str = None
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -611,6 +631,7 @@ def generate_audiobook_from_chapters(
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         progress: Optional progress callback (gr.Progress() for Gradio, None for CLI)
         duplicate_replacement_map: Dict mapping duplicate character names to canonical names
+        seed_voice_map: Path to existing voices_map.json (if provided, auto-transcribe seed voices for Qwen3)
 
     Returns:
         Tuple of (status_message, chapters_processed)
@@ -636,13 +657,18 @@ def generate_audiobook_from_chapters(
                 voice_design_model, _, _, base_model = setup_tts_engine(device, tts_engine, turbo)
                 tts_model_read_chapters = base_model  # Use base_model for generation
                 processor = None
+                # Auto-transcribe ref_text for seed voices when using seed_voice_map
+                use_auto_transcribe = seed_voice_map is not None
                 for voice, relative_path in voices_map.items():
                     voice_path = os.path.join(output_dir, relative_path)
                     voice_clone_prompts[voice] = build_qwen3_voice_clone_prompt(
                         base_model,
                         voice_path,
-                        DEFAULTS["qwen3_ref_text"],
-                        device
+                        DEFAULTS["qwen3_ref_text"],  # Default fallback
+                        device,
+                        validation_model=validation_model,
+                        auto_transcribe=use_auto_transcribe,
+                        verbose=verbose
                     )
             else:
                 voice_design_model = None
@@ -1086,7 +1112,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             turbo=turbo,
             verbose=verbose,
             progress=None,
-            duplicate_replacement_map=duplicate_replacement_map)
+            duplicate_replacement_map=duplicate_replacement_map,
+            seed_voice_map=seed_voice_map)
 
         if verbose:
             print(f"  {status}")

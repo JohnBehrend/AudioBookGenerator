@@ -587,7 +587,8 @@ def generate_tts_audio(
             max_chapters=max_chapters,
             turbo=turbo,
             verbose=verbose,
-            progress=progress
+            progress=progress,
+            seed_voice_map=seed_voice_map
         )
 
         log_output += f"\n{status}"

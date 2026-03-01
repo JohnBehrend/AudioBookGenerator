@@ -1056,7 +1056,7 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true", help="Print verbose output")
     parser.add_argument("-api_key", help="LLM API key for speaker labeling")
     parser.add_argument("-llm_port", default="1234", help="LLM endpoint port (for LM Studio)")
-    parser.add_argument("-tts_engine", default="kugelaudio", choices=["kugelaudio", "vibevoice", "qwen3"],
+    parser.add_argument("-tts_engine", default="kugelaudio", choices=["kugelaudio", "vibevoice", "qwen3", "moss"],
                         help="TTS engine to use")
     parser.add_argument("--turbo", action="store_true", help="Use KugelAudio turbo model (kugel-1-turbo)")
     parser.add_argument("-device", default="cuda", help="CUDA device to use")

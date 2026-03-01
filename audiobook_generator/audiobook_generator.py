@@ -71,7 +71,7 @@ from utils import (
     cleanup_temp_dir,
     ProgressHandler,
     copy_mp3_files_to_chapters,
-    load_json_file,
+    load_json_file as load_json,
     get_character_wav_file,
     load_seed_characters,
     get_chapter_map_files,
@@ -117,14 +117,6 @@ def get_non_silent_audio_from_wavs(wav_filepath_list, min_silence_len=1250, sile
         else:
             all_audio_segments = all_audio_segments + this_audio_segment
     return all_audio_segments
-
-
-def load_json(filename):
-    if os.path.exists(filename):
-        with open(filename, "r", encoding="utf-8") as f:
-            return json.load(f)
-    else:
-        return None
 
 
 def color_word(word, score):
@@ -733,22 +725,8 @@ class PipelineState:
 
     def get_characters(self) -> List[str]:
         """Extract unique character names from map files."""
-        characters = set()
-        map_files = self.chapters_dir.glob("*.map.json")
-
-        for map_file in map_files:
-            try:
-                with open(map_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                character_map = data[0] if isinstance(data, list) and len(data) > 0 else {}
-                if isinstance(character_map, dict):
-                    for char_name in character_map.values():
-                        if isinstance(char_name, str):
-                            characters.add(char_name)
-            except Exception:
-                pass
-
-        self.characters = sorted(list(characters))
+        from utils import get_characters_from_map_files
+        self.characters = get_characters_from_map_files(self.chapters_dir)
         return self.characters
 
     def load_character_descriptions(self):

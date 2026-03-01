@@ -113,10 +113,10 @@ def validate() -> list[str]:
         warnings.append(f"Voice samples directory not found: {VOICE_SAMPLES_DIR}")
 
     # Check TTS engine is valid
-    if AUDIO_SETTINGS["default_tts_engine"] not in ["kugelaudio", "vibevoice", "qwen3"]:
+    if AUDIO_SETTINGS["default_tts_engine"] not in ["kugelaudio", "vibevoice", "qwen3", "moss"]:
         warnings.append(
             f"Unknown TTS engine: {AUDIO_SETTINGS['default_tts_engine']}. "
-            "Using 'kugelaudio', 'vibevoice', or 'qwen3' is recommended."
+            "Using 'kugelaudio', 'vibevoice', 'qwen3', or 'moss' is recommended."
         )
 
     return warnings

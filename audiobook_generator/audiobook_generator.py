@@ -261,6 +261,14 @@ def generate_tts_for_line(
                 return_tensors="pt",
                 return_attention_mask=True,
             )
+        elif tts_engine == 'moss':
+            # MOSS-TTS uses reference audio for zero-shot cloning
+            if voice_path is None:
+                voice_path = voice_mapper.get_voice_path(voice_name)
+            if voice_path is None:
+                raise Exception(f"No voice path found for '{voice_name}'")
+            # MOSS-TTS will be handled in the generation block below
+            pass
 
         output_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.tmp.wav")
 
@@ -287,6 +295,41 @@ def generate_tts_for_line(
 
             else:
                 raise Exception("Empty Qwen3 tts speak for chapter text")
+
+        elif tts_engine == 'moss':
+            # MOSS-TTS zero-shot voice cloning
+            import torchaudio
+
+            if voice_path is None:
+                voice_path = voice_mapper.get_voice_path(voice_name)
+            if voice_path is None:
+                raise Exception(f"No voice path found for '{voice_name}'")
+
+            # Build conversation with reference audio
+            conversations = [
+                processor.build_user_message(text=full_script, reference=[voice_path])
+            ]
+
+            # Prepare batch for generation
+            with torch.no_grad():
+                batch = processor(conversations, mode="generation")
+                outputs = tts_model.generate(
+                    input_ids=batch["input_ids"].to(device),
+                    attention_mask=batch["attention_mask"].to(device),
+                    max_new_tokens=DEFAULTS["max_new_tokens"],
+                )
+
+                # Decode output
+                message = processor.decode(outputs)[0]
+                audio = message.audio_codes_list[0]
+                sr = processor.model_config.sampling_rate
+
+            # Save audio
+            if audio is not None and audio.numel() > 0:
+                torchaudio.save(output_path, audio.unsqueeze(0), sr)
+            else:
+                raise Exception("Empty MOSS-TTS generation for chapter text")
+
         else:
             # KugelAudio and VibeVoice use processor inputs
             for k, v in inputs.items():

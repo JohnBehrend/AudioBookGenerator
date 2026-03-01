@@ -240,6 +240,26 @@ class VoiceMapper:
             self.tts_models[engine_key] = result
             return result
 
+        elif self.tts_engine == "moss":
+            from transformers import AutoModel, AutoProcessor
+
+            model_path = "OpenMOSS-Team/MOSS-TTS"
+
+            # Initialize processor
+            processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+            processor.audio_tokenizer = processor.audio_tokenizer.to(self.device)
+
+            # Initialize model
+            tts_model = AutoModel.from_pretrained(
+                model_path,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+            ).to(self.device).eval()
+
+            result = (tts_model, processor, model_path, None)
+            self.tts_models[engine_key] = result
+            return result
+
         else:
             raise ValueError(f"Unknown TTS engine: {self.tts_engine}")
 
@@ -261,6 +281,35 @@ class VoiceMapper:
     # =========================================================================
 
     def generate_voice_sample(
+        self,
+        character_name: str,
+        description: str,
+        output_dir: str = None,
+        max_new_tokens: int = None,
+        verbose: bool = False
+    ) -> Tuple[bool, Optional[str], float]:
+        """Generate a voice sample for a character using the configured TTS engine.
+
+        Args:
+            character_name: Name of the character
+            description: Voice description from LLM
+            output_dir: Output directory (defaults to self.output_dir)
+            max_new_tokens: Max tokens for generation
+            verbose: Print verbose output
+
+        Returns:
+            Tuple of (success, output_file_path, duration_seconds)
+        """
+        if self.tts_engine == "moss":
+            return self._generate_voice_sample_moss(
+                character_name, description, output_dir, max_new_tokens, verbose
+            )
+        else:
+            return self._generate_voice_sample_qwen3(
+                character_name, description, output_dir, max_new_tokens, verbose
+            )
+
+    def _generate_voice_sample_qwen3(
         self,
         character_name: str,
         description: str,
@@ -331,6 +380,141 @@ class VoiceMapper:
         except Exception as e:
             print(f"    Error generating voice: {e}")
             return False, None, 0
+
+    def _generate_voice_sample_moss(
+        self,
+        character_name: str,
+        description: str,
+        output_dir: str = None,
+        max_new_tokens: int = None,
+        verbose: bool = False
+    ) -> Tuple[bool, Optional[str], float]:
+        """Generate a voice sample for a character using MOSS-TTS.
+
+        MOSS-TTS uses zero-shot voice cloning with a reference audio.
+        For initial voice generation, we need a reference audio file.
+
+        Args:
+            character_name: Name of the character
+            description: Voice description from LLM (used for reference audio lookup)
+            output_dir: Output directory (defaults to self.output_dir)
+            max_new_tokens: Max tokens for generation
+            verbose: Print verbose output
+
+        Returns:
+            Tuple of (success, output_file_path, duration_seconds)
+        """
+        if output_dir is None:
+            output_dir = self.output_dir
+        if max_new_tokens is None:
+            max_new_tokens = DEFAULTS["max_new_tokens"]
+
+        sample_text = DEFAULTS.get("moss_ref_text", DEFAULTS["qwen3_ref_text"])
+
+        # Validate description
+        if not description or not description.strip():
+            if verbose:
+                print(f"  ERROR: Skipping '{character_name}' due to empty description")
+            return False, None, 0
+
+        # For MOSS-TTS, we need a reference audio for zero-shot cloning
+        # The description should contain a reference audio path or we look for one
+        ref_audio_path = self._get_moss_reference_audio(character_name, description)
+        if ref_audio_path is None:
+            if verbose:
+                print(f"  ERROR: No reference audio found for '{character_name}'")
+            return False, None, 0
+
+        if verbose:
+            print(f"    Using reference audio: {ref_audio_path}")
+
+        # Get MOSS model and processor
+        model, processor, _, _ = self.setup_tts_engine()
+
+        try:
+            # Build conversation with reference audio
+            conversations = [
+                processor.build_user_message(text=sample_text, reference=[ref_audio_path])
+            ]
+
+            # Prepare batch for generation
+            with torch.no_grad():
+                batch = processor(conversations, mode="generation")
+                outputs = model.generate(
+                    input_ids=batch["input_ids"].to(self.device),
+                    attention_mask=batch["attention_mask"].to(self.device),
+                    max_new_tokens=max_new_tokens,
+                )
+
+                # Decode output
+                message = processor.decode(outputs)[0]
+                audio = message.audio_codes_list[0]
+                sr = processor.model_config.sampling_rate
+
+            if audio is None or audio.numel() == 0:
+                return False, None, 0
+
+            os.makedirs(output_dir, exist_ok=True)
+            output_file = os.path.join(output_dir, f"{character_name}.wav")
+
+            # Save audio
+            import torchaudio
+            torchaudio.save(output_file, audio.unsqueeze(0), sr)
+
+            duration = len(audio) / sr
+            self.add_voice_path(character_name, output_file)
+
+            if verbose:
+                print(f"    Generated: {duration:.2f}s -> {output_file}")
+
+            return True, output_file, duration
+
+        except Exception as e:
+            print(f"    Error generating voice with MOSS-TTS: {e}")
+            return False, None, 0
+
+    def _get_moss_reference_audio(
+        self,
+        character_name: str,
+        description: str
+    ) -> Optional[str]:
+        """Get reference audio path for MOSS-TTS zero-shot cloning.
+
+        Looks for reference audio in several ways:
+        1. In the description (if it contains a path)
+        2. As an existing voice sample for the character
+        3. In a reference_audio subdirectory
+
+        Args:
+            character_name: Name of the character
+            description: Voice description (may contain reference path)
+
+        Returns:
+            Path to reference audio file, or None if not found
+        """
+        import re
+
+        # Try to extract a file path from the description
+        path_match = re.search(r'([^\s"\']+\.wav|[^"\s]+\.mp3|[^"\s]+\.flac)', description, re.IGNORECASE)
+        if path_match:
+            potential_path = path_match.group(0)
+            if os.path.exists(potential_path):
+                return potential_path
+
+        # Look for existing voice sample
+        voice_path = self.get_voice_path(character_name)
+        if voice_path:
+            return voice_path
+
+        # Look in reference_audio directory
+        ref_audio_dir = self.output_dir / "reference_audio"
+        if ref_audio_dir.exists():
+            for ext in [".wav", ".mp3", ".flac"]:
+                ref_path = ref_audio_dir / f"{character_name}{ext}"
+                if ref_path.exists():
+                    return str(ref_path)
+
+        return None
 
     def build_voice_clone_prompt(
         self,

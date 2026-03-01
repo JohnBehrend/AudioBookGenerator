@@ -65,7 +65,6 @@ from audiobook_generator import (
     generate_audiobook_from_chapters,
     get_non_silent_audio_from_wavs,
     VoiceMapper,
-    setup_tts_engine,
 )
 from config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS, DEFAULT_EPUB_FILE
 

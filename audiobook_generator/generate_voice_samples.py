@@ -13,28 +13,13 @@ import json
 import os
 import sys
 import shutil
-import torch
 from typing import Optional
 
 # Import config for default values
 from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
 
-# Helper to check if flash-attn is available
-def _get_attn_implementation() -> Optional[str]:
-    """Return flash_attention_2 if available, otherwise None."""
-    try:
-        import flash_attn
-        return "flash_attention_2"
-    except ImportError:
-        return None
-
-
-try:
-    from qwen_tts import Qwen3TTSModel
-except ImportError:
-    print("Error: qwen_tts package not found. Make sure it's installed.", file=sys.stderr)
-    print("Try: python -m pip install qwen-tts", file=sys.stderr)
-    sys.exit(1)
+# Import VoiceMapper for centralized TTS management
+from voice_mapper import VoiceMapper
 
 
 def load_character_descriptions(descriptions_file):
@@ -43,47 +28,51 @@ def load_character_descriptions(descriptions_file):
         return json.load(f)
 
 
-def generate_voice_sample(tts_model, character_name, description, output_dir, max_new_tokens=None, verbose=False):
-    """
-    Generate a short voice sample for a character using VoiceDesign model.
+def generate_voice_sample(character_name: str, description: str, output_dir: str,
+                          device: str = None, max_new_tokens: int = None, verbose: bool = False) -> tuple:
+    """Generate a short voice sample for a character using VoiceDesign model via VoiceMapper.
 
     Uses voice design with an instruct prompt to generate speech
     in the designed voice style.
+
+    Args:
+        character_name: Name of the character
+        description: Voice description from LLM
+        output_dir: Directory to save voice samples
+        device: CUDA device (uses config default if not specified)
+        max_new_tokens: Max tokens for generation
+        verbose: Print verbose output
+
+    Returns:
+        Tuple of (success, output_file_path, duration_seconds)
     """
     if max_new_tokens is None:
         max_new_tokens = DEFAULTS["max_new_tokens"]
-    sample_text = DEFAULTS["qwen3_ref_text"]
+    if device is None:
+        device = AUDIO_SETTINGS["default_device"]
 
     # Validate description
     if not description or not description.strip():
         if verbose:
             print(f"    ERROR: Skipping '{character_name}' due to empty description")
-            return False, None, 0
-    instruct = f"Voice design for {character_name}: {description[:DEFAULTS['description_length']]}"
+        return False, None, 0
 
-    # Debug print the instruct prompt being sent to TTS
-    if verbose:
-        print(f"    TTS instruct: {instruct[:200]}...")
+    # Create VoiceMapper and generate voice sample
+    voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine="qwen3")
+
     try:
-        wavs, sr = tts_model.generate_voice_design(
-            text=sample_text,
-            language="Auto",
-            instruct=instruct,
+        success, output_file, duration = voice_mapper.generate_voice_sample(
+            character_name=character_name,
+            description=description,
+            output_dir=output_dir,
             max_new_tokens=max_new_tokens,
+            verbose=verbose
         )
 
-        if not wavs or len(wavs) == 0:
-            return False, None, 0
+        # Cleanup model from GPU memory
+        voice_mapper.cleanup_tts_models()
 
-        os.makedirs(output_dir, exist_ok=True)
-        output_file = os.path.join(output_dir, f"{character_name}.wav")
-
-        # Save using soundfile (already available in venv)
-        import soundfile as sf
-        sf.write(output_file, wavs[0], sr)
-
-        duration = len(wavs[0]) / sr
-        return True, output_file, duration
+        return success, output_file, duration
 
     except Exception as e:
         print(f"    Error: {e}", file=sys.stderr)
@@ -103,11 +92,6 @@ def main():
         "--output-dir",
         default=VOICE_SAMPLES_DIR,
         help="Directory to save voice samples"
-    )
-    parser.add_argument(
-        "--model-path",
-        default="Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-        help="HuggingFace model ID"
     )
     parser.add_argument(
         "--device",
@@ -158,7 +142,6 @@ def main():
     status, generated = generate_voice_samples(
         descriptions=descriptions,
         output_dir=args.output_dir,
-        model_path=args.model_path,
         device=args.device,
         max_tokens=args.max_tokens,
         single_character=args.single_character,
@@ -182,7 +165,6 @@ from typing import Dict, Tuple
 def generate_voice_samples(
     descriptions: Dict[str, str],
     output_dir: str,
-    model_path: str = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
     device: str = "cuda:0",
     max_tokens: int = DEFAULTS["max_new_tokens"],
     single_character: Optional[str] = None,
@@ -190,7 +172,7 @@ def generate_voice_samples(
     progress=None,
     seed_characters: Dict[str, str] = None
 ) -> Tuple[str, Dict[str, str]]:
-    """Generate voice samples for characters using Qwen3-TTS.
+    """Generate voice samples for characters using Qwen3-TTS via VoiceMapper.
 
     This is a simplified interface for calling voice sample generation directly
     from the Gradio UI without subprocess.
@@ -198,7 +180,6 @@ def generate_voice_samples(
     Args:
         descriptions: Dict mapping character names to their descriptions
         output_dir: Directory to save voice samples
-        model_path: HuggingFace model ID
         device: CUDA device (e.g., cuda:0, cpu)
         max_tokens: Max tokens for generation
         single_character: Generate only one character
@@ -210,9 +191,6 @@ def generate_voice_samples(
         Tuple of (status_message, character_voice_paths)
     """
     try:
-        import time
-        import soundfile as sf
-
         if single_character:
             if single_character not in descriptions:
                 return f"Character '{single_character}' not found in descriptions.", {}
@@ -243,27 +221,6 @@ def generate_voice_samples(
                     if verbose:
                         print(f"  Warning: Seed voice file not found: {voice_path}")
 
-        if verbose:
-            print(f"\nLoading model: {model_path}")
-            print("  (First run downloads weights from HuggingFace)")
-        start_load = time.time()
-
-        try:
-            attn_impl = _get_attn_implementation()
-            attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
-            tts_model = Qwen3TTSModel.from_pretrained(
-                model_path,
-                device_map=device,
-                dtype=torch.bfloat16,
-                **attn_kwargs
-            )
-        except Exception as e:
-            return f"Error loading model: {e}", {}
-
-        load_time = time.time() - start_load
-        if verbose:
-            print(f"Model loaded in {load_time:.1f}s")
-
         os.makedirs(output_dir, exist_ok=True)
 
         generated = {}
@@ -293,7 +250,12 @@ def generate_voice_samples(
                     progress((i + 1) / total_chars, desc=f"Generating voice for '{char_name}'...")
 
                 success, output_file, duration = generate_voice_sample(
-                    tts_model, char_name, char_desc, output_dir, max_new_tokens=max_tokens, verbose=verbose
+                    character_name=char_name,
+                    description=char_desc,
+                    output_dir=output_dir,
+                    device=device,
+                    max_new_tokens=max_tokens,
+                    verbose=verbose
                 )
 
                 if success:
@@ -304,49 +266,18 @@ def generate_voice_samples(
                     failed.append(char_name)
                     if verbose:
                         print(f"    Failed")
-        finally:
-            # Clean up model from GPU memory after generation
-            del tts_model
-            import gc
-            gc.collect()
-            torch.cuda.synchronize()  # Wait for pending GPU operations to complete
-            torch.cuda.empty_cache()  # Release cached memory
+        except Exception as e:
+            import traceback
+            return f"Error generating voices: {str(e)}\n{traceback.format_exc()}", {}
 
         if verbose:
             print("\n" + "=" * 60)
             print(f"Summary: {len(generated)} generated, {len(failed)} failed")
             print("=" * 60)
 
-        # Build final voices_map
+        # VoiceMapper automatically saves voices_map.json when voice paths are added
         if verbose:
-            print("\n" + "=" * 60)
-            print(f"Summary: {len(generated)} generated, {len(failed)} failed")
-            print("=" * 60)
-
-        if generated or seed_characters:
-            # Generate voices_map.json for use in audiobook generation
-            voices_map = {}
-            voices_map["narrator"] = "narrator.wav"
-
-            # Start with seed characters (from voices_map.json)
-            if seed_characters:
-                for char_name, voice_path in seed_characters.items():
-                    # Extract just the filename if full path provided
-                    voice_file = os.path.basename(voice_path)
-                    voices_map[char_name] = voice_file
-                if verbose:
-                    print(f"Added {len(seed_characters)} seeded characters to voices_map")
-
-            # Add newly generated voices
-            for char_name, path in generated.items():
-                voice_file = os.path.basename(path)
-                voices_map[char_name] = voice_file
-
-            voices_map_path = os.path.join(output_dir, "voices_map.json")
-            with open(voices_map_path, "w", encoding="utf-8") as f:
-                json.dump(voices_map, f, indent=2)
-            if verbose:
-                print(f"\nGenerated voices_map.json: {voices_map_path}")
+            print(f"\nGenerated voices_map.json automatically by VoiceMapper")
 
         return f"Successfully generated {len(generated)} voice sample(s).", generated
 

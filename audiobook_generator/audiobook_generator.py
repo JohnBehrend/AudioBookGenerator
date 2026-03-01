@@ -90,6 +90,19 @@ from voice_mapper import VoiceMapper
 # ============================================================================
 
 
+def setup_validation_model(device: str) -> WhisperModel:
+    """Setup the Whisper validation model for audio transcription.
+
+    Args:
+        device: Device to run the model on (e.g., 'cuda', 'cuda:0', 'cpu')
+
+    Returns:
+        WhisperModel instance for audio validation
+    """
+    model_name = DEFAULTS["validation_model_name"]
+    return WhisperModel(model_name, device=device, compute_type="float16")
+
+
 def get_non_silent_audio_from_wavs(wav_filepath_list, min_silence_len=1250, silence_thresh=-60):
     """Remove silent audio from list of wave filepaths of wavs together. Return AudioSegment."""
     all_audio_segments = None

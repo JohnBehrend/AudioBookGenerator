@@ -3,9 +3,7 @@
 Voice Sample Generator for Audiobook Characters
 
 Generates short voice sample .wav files for each character based on their
-description. Uses Qwen3-TTS with a generic interface.
-
-Minimal imports - only uses qwen_tts package.
+description. Uses TTS engine from AUDIO_SETTINGS (default: kugelaudio).
 """
 
 import argparse
@@ -58,7 +56,7 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
         return False, None, 0
 
     # Create VoiceMapper and generate voice sample
-    voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine="qwen3")
+    voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=AUDIO_SETTINGS.get("default_tts_engine", "kugelaudio"))
 
     try:
         success, output_file, duration = voice_mapper.generate_voice_sample(
@@ -81,7 +79,7 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate voice samples for audiobook characters using Qwen3-TTS"
+        description="Generate voice samples for audiobook characters"
     )
     parser.add_argument(
         "--descriptions",
@@ -172,7 +170,7 @@ def generate_voice_samples(
     progress=None,
     seed_characters: Dict[str, str] = None
 ) -> Tuple[str, Dict[str, str]]:
-    """Generate voice samples for characters using Qwen3-TTS via VoiceMapper.
+    """Generate voice samples for characters via VoiceMapper.
 
     This is a simplified interface for calling voice sample generation directly
     from the Gradio UI without subprocess.

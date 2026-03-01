@@ -197,7 +197,6 @@ def generate_tts_for_line(
     validation_model = None,
     verbose: bool = False,
     voice_path: str = None,
-    voice_clone_prompts: dict = None,
 ):
     """Generate TTS audio for a single line.
 
@@ -210,16 +209,14 @@ def generate_tts_for_line(
         processor: TTS processor
         voice_mapper: VoiceMapper instance
         device: Device to run on
-        tts_engine: 'kugelaudio', 'vibevoice', or 'qwen3'
+        tts_engine: 'kugelaudio', 'vibevoice', or 'moss'
         voice_path: Optional path to voice sample file. If not provided, uses voice_mapper.
         cfg_scale: CFG scale value
         output_dir: Output directory for audio files
         short_text_postfix: Postfix for validation
         validation_model: Faster-whisper model for validation
         verbose: Print verbose output
-        voice_clone_prompts: For Qwen3, dict mapping voice_name to voice_clone_prompt
-
-    Returns:
+        Returns:
         Tuple of (success: bool, ratio: float)
     """
     end_characters = ["?", ".", "-", ";", ",", "!"]
@@ -277,31 +274,7 @@ def generate_tts_for_line(
 
         output_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.tmp.wav")
 
-        if tts_engine == 'qwen3':
-            # Use voice_clone_prompt if available (preferred workflow)
-            # Otherwise, fall back to direct clone with ref_audio
-            import soundfile as sf
-
-            if voice_clone_prompts and voice_name in voice_clone_prompts:
-                # Use the pre-built voice_clone_prompt (more efficient, consistent voice)
-                voice_clone_prompt = voice_clone_prompts[voice_name]
-                wavs, out_sr = tts_model.generate_voice_clone(
-                    text=full_script,
-                    language="English",
-                    voice_clone_prompt=voice_clone_prompt,
-                )
-
-            else:
-                raise Exception("Invalid voice_clone_prompt.")
-
-            # Save audio using soundfile
-            if wavs and len(wavs) > 0:
-                sf.write(output_path, wavs[0], out_sr)
-
-            else:
-                raise Exception("Empty Qwen3 tts speak for chapter text")
-
-        elif tts_engine == 'moss':
+        if tts_engine == 'moss':
             # MOSS-TTS zero-shot voice cloning
             import torchaudio
 
@@ -481,14 +454,14 @@ def generate_audiobook_from_chapters(
         voices_map: Dict mapping character names to voice file paths (wav)
         output_dir: Output directory for audio files
         device: Device to run on
-        tts_engine: 'kugelaudio', 'vibevoice', or 'qwen3'
+        tts_engine: 'kugelaudio', 'vibevoice', or 'moss'
         cfg_scale: CFG scale value
         max_chapters: Maximum number of chapters to process
         verbose: Print verbose output
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         progress: Optional progress callback (gr.Progress() for Gradio, None for CLI)
         duplicate_replacement_map: Dict mapping duplicate character names to canonical names
-        seed_voice_map: Path to existing voices_map.json (if provided, auto-transcribe seed voices for Qwen3)
+        seed_voice_map: Path to existing voices_map.json (if provided)
 
     Returns:
         Tuple of (status_message, chapters_processed)
@@ -507,32 +480,11 @@ def generate_audiobook_from_chapters(
             # This avoids crashes from faster-whisper dependencies if validation_model is None
             # Initialize VoiceMapper with output_dir so it looks in the correct location
             voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=tts_engine)
-            # Setup models via VoiceMapper
-            voice_clone_prompts = {}
-            if tts_engine == 'qwen3':
-                # Qwen3 uses two models: VoiceDesign for building prompts, Base for generation
-                voice_design_model, _, _, base_model = voice_mapper.setup_tts_engine(turbo=turbo)
-                tts_model_read_chapters = base_model  # Use base_model for generation
-                processor = None
-                # Auto-transcribe ref_text for seed voices when using seed_voice_map
-                use_auto_transcribe = seed_voice_map is not None
-                for voice, relative_path in voices_map.items():
-                    voice_path = os.path.join(output_dir, relative_path)
-                    voice_clone_prompts[voice] = voice_mapper.build_voice_clone_prompt(
-                        voice_path,
-                        ref_text=DEFAULTS["qwen3_ref_text"],  # Default fallback
-                        validation_model=validation_model,
-                        auto_transcribe=use_auto_transcribe,
-                        verbose=verbose
-                    )
-            else:
-                voice_design_model = None
-                base_model = None
-                tts_model_read_chapters, processor, _ = voice_mapper.setup_tts_engine(turbo=turbo)
-                for voice, relative_path in voices_map.items():
-                    voice_path = os.path.join(output_dir, relative_path)
-                    # Cache voice path in VoiceMapper
-                    voice_mapper.add_voice_path(voice, voice_path)
+            tts_model_read_chapters, processor, _ = voice_mapper.setup_tts_engine(turbo=turbo)
+            for voice, relative_path in voices_map.items():
+                voice_path = os.path.join(output_dir, relative_path)
+                # Cache voice path in VoiceMapper
+                voice_mapper.add_voice_path(voice, voice_path)
             short_text_postfix = DEFAULTS["short_text_postfix"]
 
             processed = 0
@@ -627,8 +579,7 @@ def generate_audiobook_from_chapters(
                             short_text_postfix=(short_text_postfix if (validation_model is not None) else None),
                             validation_model=validation_model,
                             verbose=verbose,
-                            voice_path=voice_path,
-                            voice_clone_prompts=voice_clone_prompts
+                            voice_path=voice_path
                         )
                         progress_handler.update((j + 1)/len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j} Ratio {int(ratio * 100)}")
                         if verbose:
@@ -1047,7 +998,7 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true", help="Print verbose output")
     parser.add_argument("-api_key", help="LLM API key for speaker labeling")
     parser.add_argument("-llm_port", default="1234", help="LLM endpoint port (for LM Studio)")
-    parser.add_argument("-tts_engine", default="kugelaudio", choices=["kugelaudio", "vibevoice", "qwen3", "moss"],
+    parser.add_argument("-tts_engine", default="kugelaudio", choices=["kugelaudio", "vibevoice", "moss"],
                         help="TTS engine to use")
     parser.add_argument("--turbo", action="store_true", help="Use KugelAudio turbo model (kugel-1-turbo)")
     parser.add_argument("-device", default="cuda", help="CUDA device to use")

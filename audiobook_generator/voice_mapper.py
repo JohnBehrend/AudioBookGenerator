@@ -48,7 +48,7 @@ class VoiceMapper:
         Args:
             output_dir: Directory to save/load voice samples and maps
             device: Device to run TTS models ('cuda:0', 'cuda:1', etc.)
-            tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'qwen3')
+            tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss')
                        Defaults to AUDIO_SETTINGS['default_tts_engine']
         """
         self.output_dir = Path(output_dir)
@@ -59,7 +59,7 @@ class VoiceMapper:
         # State containers
         self.tts_models: Dict[str, Any] = {}  # Cached TTS models
         self.voice_paths: Dict[str, str] = {}  # Cached voice file paths
-        self.voice_clone_prompts: Dict[str, Any] = {}  # Pre-built prompts for Qwen3
+        self.voice_clone_prompts: Dict[str, Any] = {}  # Pre-built prompts for voice cloning
 
         # Create output directory if needed
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -173,7 +173,7 @@ class VoiceMapper:
 
         Returns:
             For kugelaudio/vibevoice: (model, processor, model_path, None)
-            For qwen3: (voice_design_model, None, model_path, base_model)
+            For moss: (model, processor, model_path, None)
         """
         engine_key = f"{self.tts_engine}_turbo_{turbo}"
 
@@ -214,29 +214,6 @@ class VoiceMapper:
             tts_model.eval()
             processor = VibeVoiceProcessor.from_pretrained(model_path)
             result = (tts_model, processor, model_path, None)
-            self.tts_models[engine_key] = result
-            return result
-
-        elif self.tts_engine == "qwen3":
-            from qwen_tts import Qwen3TTSModel
-
-            # Qwen3 needs TWO models:
-            voice_design_model_path = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
-            base_model_path = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-
-            voice_design_model = Qwen3TTSModel.from_pretrained(
-                voice_design_model_path,
-                device_map=self.device,
-                dtype=torch.bfloat16,
-                **attn_kwargs
-            )
-            base_model = Qwen3TTSModel.from_pretrained(
-                base_model_path,
-                device_map=self.device,
-                dtype=torch.bfloat16,
-                **attn_kwargs
-            )
-            result = (voice_design_model, None, voice_design_model_path, base_model)
             self.tts_models[engine_key] = result
             return result
 
@@ -305,11 +282,12 @@ class VoiceMapper:
                 character_name, description, output_dir, max_new_tokens, verbose
             )
         else:
-            return self._generate_voice_sample_qwen3(
+            # For kugelaudio and vibevoice, generate from a reference text
+            return self._generate_voice_sample_generic(
                 character_name, description, output_dir, max_new_tokens, verbose
             )
 
-    def _generate_voice_sample_qwen3(
+    def _generate_voice_sample_generic(
         self,
         character_name: str,
         description: str,
@@ -317,7 +295,10 @@ class VoiceMapper:
         max_new_tokens: int = None,
         verbose: bool = False
     ) -> Tuple[bool, Optional[str], float]:
-        """Generate a voice sample for a character using Qwen3 VoiceDesign.
+        """Generate a voice sample for a character using kugelaudio or vibevoice.
+
+        For these engines, we generate from a reference text directly without
+        voice cloning (since we don't have an existing voice to clone yet).
 
         Args:
             character_name: Name of the character
@@ -334,7 +315,8 @@ class VoiceMapper:
         if max_new_tokens is None:
             max_new_tokens = DEFAULTS["max_new_tokens"]
 
-        sample_text = DEFAULTS["qwen3_ref_text"]
+        # Reference text for voice generation
+        sample_text = "The quick brown fox jumps over the lazy dog."
 
         # Validate description
         if not description or not description.strip():
@@ -342,23 +324,44 @@ class VoiceMapper:
                 print(f"  ERROR: Skipping '{character_name}' due to empty description")
             return False, None, 0
 
-        instruct = f"Voice design for {character_name}: {description[:DEFAULTS['description_length']]}"
-
-        if verbose:
-            print(f"    TTS instruct: {instruct[:200]}...")
-
-        # Get VoiceDesign model (Qwen3 only for voice generation)
-        voice_design_model, _, _, _ = self.setup_tts_engine()
-        # Note: setup_tts_engine returns (voice_design, None, path, base)
-        # For voice generation, we use the first model
+        # Get the TTS model and processor
+        tts_model, processor, model_path, _ = self.setup_tts_engine()
 
         try:
-            wavs, sr = voice_design_model.generate_voice_design(
-                text=sample_text,
-                language="Auto",
-                instruct=instruct,
-                max_new_tokens=max_new_tokens,
-            )
+            if self.tts_engine == "kugelaudio":
+                # KugelAudio: generate from text with voice prompt (using a generic reference)
+                # For initial voice sample, we generate from text directly
+                inputs = processor(
+                    text=sample_text,
+                    padding=True,
+                    return_tensors="pt",
+                )
+                with torch.no_grad():
+                    speech_outputs = tts_model.generate(
+                        input_ids=inputs["input_ids"].to(self.device),
+                        attention_mask=inputs["attention_mask"].to(self.device),
+                        max_new_tokens=max_new_tokens,
+                    )
+                wavs = speech_outputs.float().cpu().numpy()
+                sr = tts_model.config.sample_rate
+            elif self.tts_engine == "vibevoice":
+                # VibeVoice: generate from text
+                inputs = processor(
+                    text=[sample_text],
+                    padding=True,
+                    return_tensors="pt",
+                    return_attention_mask=True,
+                )
+                with torch.no_grad():
+                    outputs = tts_model.generate(
+                        input_ids=inputs["input_ids"].to(self.device),
+                        attention_mask=inputs["attention_mask"].to(self.device),
+                        max_new_tokens=max_new_tokens,
+                    )
+                wavs = outputs.cpu().numpy()
+                sr = tts_model.config.sampling_rate
+            else:
+                return False, None, 0
 
             if not wavs or len(wavs) == 0:
                 return False, None, 0
@@ -409,7 +412,7 @@ class VoiceMapper:
         if max_new_tokens is None:
             max_new_tokens = DEFAULTS["max_new_tokens"]
 
-        sample_text = DEFAULTS.get("moss_ref_text", DEFAULTS["qwen3_ref_text"])
+        sample_text = DEFAULTS.get("moss_ref_text", "The quick brown fox jumps over the lazy dog.")
 
         # Validate description
         if not description or not description.strip():
@@ -524,7 +527,7 @@ class VoiceMapper:
         auto_transcribe: bool = False,
         verbose: bool = False
     ) -> Any:
-        """Build a voice_clone_prompt for Qwen3 using the Base model.
+        """Build a voice_clone_prompt for voice cloning.
 
         Prompts are cached to avoid rebuilding for each line.
 
@@ -539,7 +542,7 @@ class VoiceMapper:
             A voice_clone_prompt that can be reused for generate_voice_clone calls
         """
         if ref_text is None:
-            ref_text = DEFAULTS.get("qwen3_ref_text", "")
+            ref_text = ""
 
         # Auto-transcribe if requested and validation_model is available
         if auto_transcribe and validation_model is not None:

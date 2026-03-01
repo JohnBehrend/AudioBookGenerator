@@ -21,7 +21,7 @@ import re
 # ============================================================================
 # The sox package prints a warning to stderr when the sox binary is not found.
 # We suppress this by temporarily redirecting stderr during the sox import.
-# This must run BEFORE any imports that might trigger qwen-tts -> sox.
+# This must run BEFORE any imports that might trigger sox-related dependencies.
 
 original_stderr = sys.stderr
 sys.stderr = io.StringIO()

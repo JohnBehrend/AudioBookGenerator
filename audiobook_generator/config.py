@@ -73,8 +73,7 @@ DEFAULTS = {
     "validation_model_name": "large-v2",
     "min_silence_len": 1250,
     "silence_thresh": -60,
-    # Qwen3 voice cloning reference text
-    "qwen3_ref_text": "Okay. Yeah. I resent you. I love you. I respect you. But you know what? You blew it! And thanks to you.",
+    # Reference text for TTS voice cloning
 }
 
 
@@ -113,10 +112,10 @@ def validate() -> list[str]:
         warnings.append(f"Voice samples directory not found: {VOICE_SAMPLES_DIR}")
 
     # Check TTS engine is valid
-    if AUDIO_SETTINGS["default_tts_engine"] not in ["kugelaudio", "vibevoice", "qwen3", "moss"]:
+    if AUDIO_SETTINGS["default_tts_engine"] not in ["kugelaudio", "vibevoice", "moss"]:
         warnings.append(
             f"Unknown TTS engine: {AUDIO_SETTINGS['default_tts_engine']}. "
-            "Using 'kugelaudio', 'vibevoice', 'qwen3', or 'moss' is recommended."
+            "Using 'kugelaudio', 'vibevoice', or 'moss' is recommended."
         )
 
     return warnings

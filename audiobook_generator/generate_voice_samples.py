@@ -27,7 +27,8 @@ def load_character_descriptions(descriptions_file):
 
 
 def generate_voice_sample(character_name: str, description: str, output_dir: str,
-                          device: str = None, max_new_tokens: int = None, verbose: bool = False) -> tuple:
+                          device: str = None, max_new_tokens: int = None, verbose: bool = False,
+                          tts_engine: str = None) -> tuple:
     """Generate a short voice sample for a character using VoiceDesign model via VoiceMapper.
 
     Uses voice design with an instruct prompt to generate speech
@@ -56,7 +57,8 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
         return False, None, 0
 
     # Create VoiceMapper and generate voice sample
-    voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=AUDIO_SETTINGS.get("default_tts_engine", "kugelaudio"))
+    engine = tts_engine or AUDIO_SETTINGS.get("default_tts_engine", "kugelaudio")
+    voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=engine)
 
     try:
         success, output_file, duration = voice_mapper.generate_voice_sample(
@@ -73,7 +75,10 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
         return success, output_file, duration
 
     except Exception as e:
+        import traceback
         print(f"    Error: {e}", file=sys.stderr)
+        print(f"    Exception type: {type(e).__name__}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return False, None, 0
 
 
@@ -115,6 +120,11 @@ def main():
         action="store_true",
         help="Enable verbose printing for debug."
     )
+    parser.add_argument(
+        "--tts-engine",
+        default=AUDIO_SETTINGS.get("default_tts_engine", "kugelaudio"),
+        help="TTS engine to use ('kugelaudio', 'vibevoice', 'moss')"
+    )
 
     args = parser.parse_args()
 
@@ -144,7 +154,8 @@ def main():
         max_tokens=args.max_tokens,
         single_character=args.single_character,
         verbose=args.verbose,
-        seed_characters=seed_characters
+        seed_characters=seed_characters,
+        tts_engine=args.tts_engine
     )
 
     print(status)
@@ -168,7 +179,8 @@ def generate_voice_samples(
     single_character: Optional[str] = None,
     verbose: bool = False,
     progress=None,
-    seed_characters: Dict[str, str] = None
+    seed_characters: Dict[str, str] = None,
+    tts_engine: str = None
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters via VoiceMapper.
 
@@ -184,6 +196,7 @@ def generate_voice_samples(
         verbose: Print verbose output
         progress: Gradio progress bar to update during generation
         seed_characters: Dict mapping character names to existing voice paths from seed voices_map
+        tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss')
 
     Returns:
         Tuple of (status_message, character_voice_paths)
@@ -253,7 +266,8 @@ def generate_voice_samples(
                     output_dir=output_dir,
                     device=device,
                     max_new_tokens=max_tokens,
-                    verbose=verbose
+                    verbose=verbose,
+                    tts_engine=tts_engine
                 )
 
                 if success:

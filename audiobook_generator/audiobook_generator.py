@@ -480,7 +480,7 @@ def generate_audiobook_from_chapters(
             # This avoids crashes from faster-whisper dependencies if validation_model is None
             # Initialize VoiceMapper with output_dir so it looks in the correct location
             voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=tts_engine)
-            tts_model_read_chapters, processor, _ = voice_mapper.setup_tts_engine(turbo=turbo)
+            tts_model_read_chapters, processor, _, _ = voice_mapper.setup_tts_engine(turbo=turbo)
             for voice, relative_path in voices_map.items():
                 voice_path = os.path.join(output_dir, relative_path)
                 # Cache voice path in VoiceMapper
@@ -868,9 +868,11 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         result_msg, generated_voices = gen_voice_samples(
             descriptions=state.character_descriptions,
             output_dir=str(state.output_dir),
+            device=device,
             verbose=verbose,
             progress=None,  # CLI mode, no gr.Progress
-            seed_characters=seed_characters
+            seed_characters=seed_characters,
+            tts_engine=tts_engine
         )
 
         if verbose:

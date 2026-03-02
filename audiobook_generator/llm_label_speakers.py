@@ -33,7 +33,7 @@ def add_quotes_around_keys(json_body):
     revised_json_body = "{"+", ".join(entries)+"}"
     return revised_json_body
 
-def interpret_new_result(result, attempt_num):
+def interpret_new_result(result, attempt_num, seed_characters=None):
     """Process result of new LLM query of the following format:
     {
   "speaker_map": {
@@ -50,6 +50,12 @@ def interpret_new_result(result, attempt_num):
   }
   -----
       return character_map, line_map
+
+    Args:
+        result: List of lines from LLM output
+        attempt_num: Current attempt number for error reporting
+        seed_characters: Dict of character names -> voice paths from seed voices_map
+                       Used to prefer existing voice names when matching
     """
     line_map = {}
     char_map = {}
@@ -88,7 +94,7 @@ def interpret_new_result(result, attempt_num):
         end_pos = brace_positions[0] + 1
         result_text = result_text[first_brace:end_pos]
 
-    json_result = json.loads(result_text)                
+    json_result = json.loads(result_text)
     # convert keys to int
     char_map = {int(k): v.lower().strip().replace("_"," ").replace("'","").split("/")[0].split(" (")[0] for k,v in json_result["speaker_map"].items()}
     # remove line_map entries that are invalid.
@@ -112,6 +118,32 @@ def interpret_new_result(result, attempt_num):
     # remove unused characters
     used_char_indexes = [1]+list(set(line_map.values())) # 1 added for narrator
     char_map = {k:v for k,v in char_map.items() if k in used_char_indexes}
+
+    # If seed_characters provided, prefer seed character names when matching
+    if seed_characters:
+        # Build a mapping from normalized seed names to original seed names
+        seed_name_map = {}
+        for seed_name in seed_characters.keys():
+            seed_name_lower = seed_name.lower().strip()
+            if seed_name_lower not in seed_name_map:
+                seed_name_map[seed_name_lower] = seed_name.lower().strip()
+
+        # Map normalized char_map names to seed names if they match
+        char_to_seed = {}
+        for idx, char in char_map.items():
+            char_lower = char.lower().strip()
+            # Check if this character matches any seed character (substring matching)
+            for seed_lower, seed_original in seed_name_map.items():
+                if char_lower == seed_lower or (len(char_lower) > len(seed_lower) and char_lower.startswith(seed_lower)):
+                    char_to_seed[idx] = seed_lower
+                    break
+
+        # Update char_map to use seed names where matches found
+        for idx, seed_name in char_to_seed.items():
+            if idx in char_map:
+                char_map[idx] = seed_name
+                print(f"Using seed voice name '{seed_name}' for matched character at key {idx}")
+
     return char_map, line_map 
 
 def interpret_result(result, attempt_num):
@@ -599,7 +631,7 @@ def label_speakers(
             if old_format:
                 character_map, line_map = interpret_result(result, a)
             else:
-                character_map, line_map = interpret_new_result(result, a)
+                character_map, line_map = interpret_new_result(result, a, seed_characters)
                 if verbose:
                     print(character_map)
         except Exception as e:
@@ -651,7 +683,26 @@ def label_speakers(
                                     if verbose:
                                         print(f"Matched alt_char with different key: [{key}->{m_key}] {character}->{m_character}")
                 if not existing_character:
-                    character_is_used = key in line_map.values()
+                    # Check if character matches any seed character name
+                    if seed_characters:
+                        char_lower = character.lower().strip()
+                        for seed_name, seed_voice in seed_characters.items():
+                            seed_lower = seed_name.lower().strip()
+                            # Check for substring match (e.g., "lews therin" matches "lews therin telamon")
+                            if char_lower == seed_lower or (len(char_lower) > len(seed_lower) and char_lower.startswith(seed_lower)):
+                                # Found a seed character match - find the key for this seed character
+                                for m_key, m_character in merged_character_map.items():
+                                    m_char_lower = m_character.lower().strip()
+                                    if m_char_lower == seed_lower:
+                                        existing_character = True
+                                        key_remap[key] = m_key
+                                        if verbose:
+                                            print(f"Matched seed character [{key}->{m_key}] '{character}'->'{m_character}' (seed: '{seed_name}')")
+                                        break
+                                if existing_character:
+                                    break
+                    if not existing_character:
+                        character_is_used = key in line_map.values()
                     if character_is_used:
                         # check to see if we align to an existing character in prior run based on the lines spoken.
                         found_match, m_key = is_same_character_by_line_mapping(key, character, line_map, merged_character_map, merge_line_maps(line_maps, verbose))

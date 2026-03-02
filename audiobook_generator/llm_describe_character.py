@@ -30,18 +30,24 @@ You are an expert voice actor and audiobook narrator. Your task is to create sho
 Focus on the most distinctive, memorable traits that would help a professional voice actor embody the character.
 
 Provide the following information in the description:
-gender and age.
-speed, volume,  clarity, and tone of voice.
+gender.
+age.
+speed.
+volume.
+clarity.
+tone.
 
-#Example format for a male character:
-30 year old Man.
+Example 1:
+Man.
+40 years old.
 Fast-paced delivery with deliberate pauses for dramatic effect.
 Loud and projecting, increasing notably during moments of praise and announcements.
 Highly articulate and distinct pronunciation.
 Upbeat, authoritative, and performative.
 
-#Example format for a female character:
-30 year old Woman.
+Example 2:
+Woman.
+200 years old.
 Starts measured, then accelerates rapidly during emotional outburst.
 Begins conversational, escalates quickly to loud and forceful.
 Slightly slurred pronunciation.

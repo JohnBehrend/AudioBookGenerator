@@ -29,26 +29,23 @@ You are an expert voice actor and audiobook narrator. Your task is to create sho
 
 Focus on the most distinctive, memorable traits that would help a professional voice actor embody the character.
 
-FOLLOW THE EXACT FORMAT shown in the examples below - use key-value pairs with colons, covering all voice characteristics:
-- gender, age, speed, volume,  clarity, tone
+Provide the following information in the description:
+gender and age.
+speed, volume,  clarity, and tone of voice.
 
-Example format for a male character:
-gender: Male.
-age: 30.
-speed: Fast-paced delivery with deliberate pauses for dramatic effect.
-volume: Loud and projecting, increasing notably during moments of praise and announcements.
-clarity: Highly articulate and distinct pronunciation.
-tone: Upbeat, authoritative, and performative.
+#Example format for a male character:
+30 year old Man.
+Fast-paced delivery with deliberate pauses for dramatic effect.
+Loud and projecting, increasing notably during moments of praise and announcements.
+Highly articulate and distinct pronunciation.
+Upbeat, authoritative, and performative.
 
-Example format for a female character:
-gender: Female.
-age: 30.
-speed: Starts measured, then accelerates rapidly during emotional outburst.
-volume: Begins conversational, escalates quickly to loud and forceful.
-clarity: Slightly slurred pronunciation.
-tone: Initially accepting, becomes sharply accusatory and confrontational.
-
-For multiple characters, return a JSON object where keys are character names and values are the voice descriptions in the exact format above (just the description text with key-value pairs, NOT including the character name in the value).
+#Example format for a female character:
+30 year old Woman.
+Starts measured, then accelerates rapidly during emotional outburst.
+Begins conversational, escalates quickly to loud and forceful.
+Slightly slurred pronunciation.
+Initially accepting, becomes sharply accusatory and confrontational.
 """
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)
@@ -347,18 +344,18 @@ def build_character_context(characters: list, chapter_texts: list, chapter_files
     """
     context = "Characters to describe:\n"
     for char in characters:
-        context += f"- {char}\n"
+        context += f"{char}\n"
 
-    # Add wiki lookup context if enabled
-    if wiki_url_template:
-        context += "\n\nAdditional context from wiki:\n"
-        for char in characters:
-            wiki_info = lookup_character_on_wiki(char, wiki_url_template)
-            if wiki_info:
-                context += f"--- {char} ---\n{wiki_info}\n\n"
+    # # Add wiki lookup context if enabled
+    # if wiki_url_template:
+    #     context += "\n\nAdditional context from wiki:\n"
+    #     for char in characters:
+    #         wiki_info = lookup_character_on_wiki(char, wiki_url_template)
+    #         if wiki_info:
+    #             context += f"--- {char} ---\n{wiki_info}\n\n"
 
     # Build character-specific context using actual dialogue from map files
-    context += "\n\nCharacter dialogue examples from the book:\n"
+    context = "Character dialogue examples from the book:\n"
 
     if chapters_dir and chapters_dir.is_dir():
         for char in characters:
@@ -376,10 +373,10 @@ def build_character_context(characters: list, chapter_texts: list, chapter_files
         for char in characters:
             relevant_chapters = find_chapters_with_character(chapter_texts, chapter_files, char)
             if relevant_chapters:
-                context += f"\n--- {char} Context ---\n"
+                # context += f"\n--- {char} Context ---\n"
                 for filepath, text in relevant_chapters[:2]:
-                    context += f"[From {filepath.name}]\n"
-                    context += text[:800] + "\n\n"
+                    # context += f"[From {filepath.name}]\n"
+                    context += text[:800] + "\n"
     else:
         # Fallback to first 3 chapters for all characters
         for i, text in enumerate(chapter_texts[:3]):
@@ -393,7 +390,7 @@ def describe_character(client: OpenAI, model: str, character: str, context: str)
     """Ask the LLM to describe a single character."""
     messages = [
         {"role": "system", "content": CHARACTER_DESCRIPTION_PROMPT},
-        {"role": "user", "content": f"Describe this character in detail:\n\nCharacter name: {character}\n\nContext:\n{context}"}
+        {"role": "user", "content": f"Describe this character in detail: {character} \nContext: {context}"}
     ]
 
     try:

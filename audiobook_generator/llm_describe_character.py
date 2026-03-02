@@ -47,7 +47,7 @@ He is upbeat, authoritative, and performative.
 
 Example 2:
 Woman.
-She is 200 years old.
+She is 20 years old.
 She starts measured, then accelerates rapidly during emotional outburst.
 She begins conversational, escalates quickly to loud and forceful.
 She has lightly slurred pronunciation.

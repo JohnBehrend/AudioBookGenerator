@@ -74,6 +74,11 @@ DEFAULTS = {
     "min_silence_len": 1250,
     "silence_thresh": -60,
     # Reference text for TTS voice cloning
+    # MOSS-TTS hyperparameters
+    "moss_audio_temperature": 1.5,
+    "moss_audio_top_p": 0.6,
+    "moss_audio_top_k": 50,
+    "moss_audio_repetition_penalty": 1.1,
 }
 
 

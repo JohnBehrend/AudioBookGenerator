@@ -385,14 +385,18 @@ def generate_voice_samples(
         num_characters = len(descriptions)
         log_output += f"\nFound {num_characters} characters to process. (temp: {chapters_dir.parent})"
 
+        # Get TTS engine from environment variable or config default
+        tts_engine = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
+
         # Call generate_voice_samples from package
-        progress(0, desc=f"Generating voice samples for {num_characters} characters with TTS engine... (temp: {chapters_dir.parent})")
+        progress(0, desc=f"Generating voice samples for {num_characters} characters with TTS engine '{tts_engine}'... (temp: {chapters_dir.parent})")
         result_msg, generated_voices = gen_voice_samples(
             descriptions=descriptions,
             output_dir=str(chapters_dir),
             verbose=False,
             progress=progress,
-            seed_characters=load_seed_characters(seed_voice_map)
+            seed_characters=load_seed_characters(seed_voice_map),
+            tts_engine=tts_engine
         )
 
         log_output += f"\n{result_msg}"
@@ -441,14 +445,18 @@ def regenerate_voice_sample(
 
         char_description = descriptions[character_name]
 
+        # Get TTS engine from environment variable or config default
+        tts_engine = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
+
         # Call generate_voice_samples from package
-        progress(0, desc=f"Regenerating voice sample for {character_name} with TTS engine...")
+        progress(0, desc=f"Regenerating voice sample for {character_name} with TTS engine '{tts_engine}'...")
         result_msg, generated_voices = gen_voice_samples(
             descriptions={character_name: char_description},
             output_dir=str(chapters_dir),
             single_character=character_name,
             verbose=False,
-            progress=progress
+            progress=progress,
+            tts_engine=tts_engine
         )
 
         log_output += f"\n{result_msg}"

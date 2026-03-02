@@ -253,13 +253,13 @@ def load_chapter_lines(chapter_file: str) -> list:
     return cleaned_lines
 
 
-def extract_character_dialogue(chapters_dir: Path, character_name: str, max_examples: int = 5) -> list:
+def extract_character_dialogue(chapters_dir: Path, character_name: str, max_examples: int = None) -> list:
     """Extract actual dialogue lines spoken by a character from map files.
 
     Args:
         chapters_dir: Path to the chapters directory
         character_name: The character name to extract dialogue for
-        max_examples: Maximum number of dialogue examples to return
+        max_examples: Maximum number of dialogue examples to return (None = all lines)
 
     Returns:
         List of (chapter_name, dialogue_line) tuples
@@ -272,9 +272,6 @@ def extract_character_dialogue(chapters_dir: Path, character_name: str, max_exam
                        if re.match(r"^chapter_\d+\.map\.json$", f.name)])
 
     for map_file in map_files:
-        if len(dialogue_examples) >= max_examples:
-            break
-
         try:
             with open(map_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -320,16 +317,16 @@ def extract_character_dialogue(chapters_dir: Path, character_name: str, max_exam
                         # Only include lines that look like dialogue (start with quote)
                         if line_text.strip().startswith('"'):
                             dialogue_examples.append((map_file.stem, line_text.strip()))
-                            if len(dialogue_examples) >= max_examples:
+                            if max_examples is not None and len(dialogue_examples) >= max_examples:
                                 break
         except Exception:
             continue
 
-    return dialogue_examples[:max_examples]
+    return dialogue_examples
 
 
 def build_character_context(characters: list, chapter_texts: list, chapter_files: list = [],
-                           chapters_dir: Path = None, wiki_url_template: str = "") -> str:
+                           chapters_dir: Path = None, wiki_url_template: str = "") -> Tuple[str, list]:
     """Build context string with character names and their actual dialogue.
 
     Args:
@@ -340,7 +337,7 @@ def build_character_context(characters: list, chapter_texts: list, chapter_files
         wiki_url_template: Optional URL template for wiki lookup (with {name} placeholder)
 
     Returns:
-        Context string for the LLM prompt
+        Tuple of (context string, list of chapter-based dialogue messages)
     """
     context = "Characters to describe:\n"
     for char in characters:
@@ -356,16 +353,19 @@ def build_character_context(characters: list, chapter_texts: list, chapter_files
 
     # Build character-specific context using actual dialogue from map files
     context = "Character dialogue examples from the book:\n"
+    chapter_messages = []
 
     if chapters_dir and chapters_dir.is_dir():
         for char in characters:
             if char == "narrator":
                 continue
-            dialogue_examples = extract_character_dialogue(chapters_dir, char, max_examples=5)
+            dialogue_examples = extract_character_dialogue(chapters_dir, char, max_examples=None)
             if dialogue_examples:
                 context += f"\n--- {char} ---\n"
+                chapter_messages.append(f"Here is all the dialogue spoken by {char} from each chapter:\n")
                 for chapter_name, dialogue_line in dialogue_examples:
                     context += f"{dialogue_line}\n"
+                    chapter_messages.append(f"From {chapter_name}:\n{dialogue_line}")
             else:
                 context += f"\n--- {char} ---\n(No direct dialogue found)\n"
     elif chapter_files and len(chapter_files) == len(chapter_texts):
@@ -383,15 +383,31 @@ def build_character_context(characters: list, chapter_texts: list, chapter_files
             context += f"--- Chapter {i+1} Excerpt ---\n"
             context += text[:1000] + "\n\n"
 
-    return context
+    return context, chapter_messages
 
 
-def describe_character(client: OpenAI, model: str, character: str, context: str) -> str:
-    """Ask the LLM to describe a single character."""
+def describe_character(client: OpenAI, model: str, character: str, context: str, chapter_messages: list = None) -> str:
+    """Ask the LLM to describe a single character.
+
+    Args:
+        client: OpenAI client instance
+        model: Model name to use for inference
+        character: Character name to describe
+        context: Character description context string
+        chapter_messages: Optional list of chapter-based dialogue messages
+    """
+    # System prompt first
     messages = [
         {"role": "system", "content": CHARACTER_DESCRIPTION_PROMPT},
-        {"role": "user", "content": f"Describe this character in detail: {character} \nContext: {context}"}
     ]
+
+    # Add chapter messages as separate user messages if provided
+    if chapter_messages:
+        for chapter_msg in chapter_messages:
+            messages.append({"role": "user", "content": chapter_msg})
+
+    # Final user message with the character to describe and summary context
+    messages.append({"role": "user", "content": f"Describe this character in detail: {character} \n\nContext:\n{context}"})
 
     try:
         response = client.chat.completions.create(
@@ -561,11 +577,13 @@ def main() -> None:
             sys.exit(1)
         if args.verbose:
             print(f"Describing single character: {args.single_character}")
-        context = build_character_context(
+        context_result = build_character_context(
             characters, chapter_texts, chapter_files,
             chapters_dir=Path(args.chapters_dir), wiki_url_template=args.wiki_url_template
         )
-        description = describe_character(client, args.model, args.single_character, context)
+        context = context_result[0]
+        chapter_messages = context_result[1] if len(context_result) > 1 else []
+        description = describe_character(client, args.model, args.single_character, context, chapter_messages)
         print(f"\nDescription for '{args.single_character}':")
         print(description)
     else:
@@ -652,13 +670,16 @@ def describe_characters_shared(
             print(f"[{idx}/{total_chars}] Describing character: {character}")
 
         # Build context for this character using chapters_dir for dialogue extraction
-        context = build_character_context(
+        # Returns tuple of (context_string, chapter_messages_list)
+        context_result = build_character_context(
             [character], chapter_texts, chapter_files,
             chapters_dir=Path(output_dir), wiki_url_template=wiki_url_template
         )
+        context = context_result[0]
+        chapter_messages = context_result[1] if len(context_result) > 1 else []
 
         # Call describe_character for this single character
-        description = describe_character(client, model, character, context)
+        description = describe_character(client, model, character, context, chapter_messages)
         descriptions[character] = description
 
         # Save debug output for this character

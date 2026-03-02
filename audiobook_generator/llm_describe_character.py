@@ -52,6 +52,8 @@ She starts measured, then accelerates rapidly during emotional outburst.
 She begins conversational, escalates quickly to loud and forceful.
 She has lightly slurred pronunciation.
 Her voice is initially accepting, and becomes sharply accusatory and confrontational.
+
+Keep the format simple without any markdown.
 """
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)

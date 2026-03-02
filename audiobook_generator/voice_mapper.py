@@ -429,7 +429,7 @@ class VoiceMapper:
         try:
             # Build conversation with text only - MOSS-TTS generates directly from text
             conversations = [
-                processor.build_user_message(text=sample_text)
+                processor.build_user_message(text=sample_text, instruction=description)
             ]
 
             # Prepare batch for generation

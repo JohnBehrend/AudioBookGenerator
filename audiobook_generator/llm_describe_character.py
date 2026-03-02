@@ -39,19 +39,19 @@ tone.
 
 Example 1:
 Man.
-40 years old.
-Fast-paced delivery with deliberate pauses for dramatic effect.
-Loud and projecting, increasing notably during moments of praise and announcements.
-Highly articulate and distinct pronunciation.
-Upbeat, authoritative, and performative.
+He is 40 years old.
+He has fast-paced delivery with deliberate pauses for dramatic effect.
+His voice is loud and projecting, increasing notably during moments of praise and announcements.
+He is highly articulate and distinct in his pronunciation.
+He is upbeat, authoritative, and performative.
 
 Example 2:
 Woman.
-200 years old.
-Starts measured, then accelerates rapidly during emotional outburst.
-Begins conversational, escalates quickly to loud and forceful.
-Slightly slurred pronunciation.
-Initially accepting, becomes sharply accusatory and confrontational.
+She is 200 years old.
+She starts measured, then accelerates rapidly during emotional outburst.
+She begins conversational, escalates quickly to loud and forceful.
+She has lightly slurred pronunciation.
+Her voice is nitially accepting, and becomes sharply accusatory and confrontational.
 """
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)

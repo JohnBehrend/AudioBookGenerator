@@ -23,6 +23,16 @@ from utils import get_llm_client, compare_characters, get_characters_from_map_fi
 _chapter_text_cache: Dict[str, Dict[Path, str]] = {}
 
 
+def reset_chapter_cache() -> None:
+    """Clear the chapter text cache (for testing).
+
+    This resets the module-level cache to allow fresh chapter loading
+    in tests.
+    """
+    global _chapter_text_cache
+    _chapter_text_cache.clear()
+
+
 # Default prompt for character description
 CHARACTER_DESCRIPTION_PROMPT = """
 You are an expert voice actor and audiobook narrator. Your task is to create short, distinctive voice profiles for characters.

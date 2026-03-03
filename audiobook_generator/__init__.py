@@ -26,7 +26,7 @@ from .audiobook_generator import (
 from .gradio_ui import (
     create_interface,
     update_character_table,
-    update_button_visibility,
+    update_button_visibility_from_state,
     cleanup_temp_dir,
 )
 
@@ -48,6 +48,6 @@ __all__ = [
     "main",
     "create_interface",
     "update_character_table",
-    "update_button_visibility",
+    "update_button_visibility_from_state",
     "cleanup_temp_dir",
 ]

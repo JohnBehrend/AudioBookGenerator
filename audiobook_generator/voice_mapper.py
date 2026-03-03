@@ -261,6 +261,17 @@ class VoiceMapper:
         gc.collect()
         torch.cuda.empty_cache()
 
+    def reset(self) -> None:
+        """Reset all internal state (for testing).
+
+        This clears all cached models, voice paths, and prompts to allow
+        fresh state in tests.
+        """
+        self.cleanup_tts_models()
+        self.voice_paths.clear()
+        self.voice_clone_prompts.clear()
+        self._voice_map.clear()
+
     # =========================================================================
     # VOICE GENERATION
     # =========================================================================

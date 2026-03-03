@@ -150,6 +150,24 @@ def cleanup_temp_dir() -> None:
         get_chapters_dir._temp_context = None
 
 
+def reset_chapters_dir() -> None:
+    """Reset the chapters directory cache (for testing).
+
+    This clears all cached state from get_chapters_dir() to allow
+    fresh directory creation in tests.
+    """
+    if hasattr(get_chapters_dir, "_temp_context") and get_chapters_dir._temp_context:
+        try:
+            get_chapters_dir._temp_context.cleanup()
+        except Exception:
+            pass
+
+    # Clear all attributes
+    for attr in ["_temp_dir", "_chapters_dir", "_temp_context"]:
+        if hasattr(get_chapters_dir, attr):
+            delattr(get_chapters_dir, attr)
+
+
 def get_characters_from_map_files(chapters_dir: Path) -> list:
     """Extract unique character names from map.json files.
 

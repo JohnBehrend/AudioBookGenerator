@@ -42,7 +42,7 @@ class VoiceMapper:
     after first load/generation.
     """
 
-    def __init__(self, output_dir: str, device: str = "cuda:0", tts_engine: str = None):
+    def __init__(self, output_dir: str, device: str = "cuda:0", tts_engine: str = None, duplicate_replacement_map: Dict[str, str] = None):
         """Initialize the VoiceMapper.
 
         Args:
@@ -50,11 +50,13 @@ class VoiceMapper:
             device: Device to run TTS models ('cuda:0', 'cuda:1', etc.)
             tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss')
                        Defaults to AUDIO_SETTINGS['default_tts_engine']
+            duplicate_replacement_map: Optional dict mapping duplicate character names to canonical names
         """
         self.output_dir = Path(output_dir)
         self.device = device
         self.tts_engine = tts_engine or AUDIO_SETTINGS.get("default_tts_engine", "kugelaudio")
         self.supported_extensions = AUDIO_SETTINGS.get("supported_audio_extensions", [".wav", ".mp3", ".flac"])
+        self.duplicate_replacement_map = duplicate_replacement_map or {}
 
         # State containers
         self.tts_models: Dict[str, Any] = {}  # Cached TTS models
@@ -108,23 +110,28 @@ class VoiceMapper:
         Returns:
             Path to the voice sample file, or None if not found
         """
-        # Check cached paths first
+        # Apply duplicate replacement map if available to find canonical name
+        canonical_name = self.duplicate_replacement_map.get(character_name, character_name)
+
+        # Check cached paths first (for both original and canonical name)
         if character_name in self.voice_paths:
             return self.voice_paths[character_name]
+        if canonical_name != character_name and canonical_name in self.voice_paths:
+            return self.voice_paths[canonical_name]
 
-        # Look for voice files with supported extensions
+        # Look for voice files with supported extensions (check canonical name first)
         for ext in self.supported_extensions:
-            path = self.output_dir / f"{character_name}{ext}"
+            path = self.output_dir / f"{canonical_name}{ext}"
             if path.exists():
                 self.voice_paths[character_name] = str(path)
                 return str(path)
 
-        # Try partial match (case-insensitive)
-        character_name_lower = character_name.lower()
+        # Try partial match (case-insensitive) on canonical name
+        canonical_name_lower = canonical_name.lower()
         for file_path in self.output_dir.iterdir():
             if file_path.is_file():
                 stem_lower = file_path.stem.lower()
-                if character_name_lower in stem_lower:
+                if canonical_name_lower in stem_lower:
                     self.voice_paths[character_name] = str(file_path)
                     return str(file_path)
 

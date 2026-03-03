@@ -484,7 +484,7 @@ def generate_audiobook_from_chapters(
             validation_model = setup_validation_model(device)
             # This avoids crashes from faster-whisper dependencies if validation_model is None
             # Initialize VoiceMapper with output_dir so it looks in the correct location
-            voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=tts_engine)
+            voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=tts_engine, duplicate_replacement_map=duplicate_replacement_map)
             tts_model_read_chapters, processor, _, _ = voice_mapper.setup_tts_engine(turbo=turbo)
             for voice, relative_path in voices_map.items():
                 voice_path = os.path.join(output_dir, relative_path)

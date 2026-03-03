@@ -94,7 +94,45 @@ def interpret_new_result(result, attempt_num, seed_characters=None):
         end_pos = brace_positions[0] + 1
         result_text = result_text[first_brace:end_pos]
 
-    json_result = json.loads(result_text)
+    # Handle LLM output that's wrapped in escaped quotes (e.g., "{\\"speaker_map\\": ...}")
+    # This can happen when the LLM returns JSON as a stringified JSON
+    def try_parse_json(text):
+        """Try to parse JSON, handling cases where output is wrapped in quotes."""
+        result = None
+
+        # First, try direct parsing
+        try:
+            result = json.loads(text)
+            # If the result is a dict, we're done
+            if isinstance(result, dict):
+                return result
+            # If the result is a string, it might be double-encoded JSON
+            if isinstance(result, str):
+                try:
+                    return json.loads(result)
+                except json.JSONDecodeError:
+                    pass
+        except json.JSONDecodeError:
+            pass
+
+        # If that fails and text is wrapped in quotes, try stripping them
+        if text.startswith('"') and text.endswith('"'):
+            # Strip the outer quotes and try again
+            stripped = text[1:-1]
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                pass
+
+        return result if result is not None else None
+
+    json_result = try_parse_json(result_text)
+    if json_result is None:
+        raise json.JSONDecodeError(
+            "Failed to parse LLM output after multiple attempts",
+            result_text,
+            0
+        )
     # convert keys to int
     char_map = {int(k): v.lower().strip().replace("_"," ").replace("'","").split("/")[0].split(" (")[0] for k,v in json_result["speaker_map"].items()}
     # remove line_map entries that are invalid.

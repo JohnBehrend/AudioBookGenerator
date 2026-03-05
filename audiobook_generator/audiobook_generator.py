@@ -265,8 +265,13 @@ def generate_tts_for_line(
             )
         elif tts_engine == 'moss':
             # MOSS-TTS uses reference audio for zero-shot cloning
+            if verbose and voice_path is None:
+                print(f"  DEBUG MOSS: voice_path is None, calling voice_mapper.get_voice_path('{voice_name}')")
+                print(f"  DEBUG MOSS: voice_mapper.duplicate_replacement_map = {voice_mapper.duplicate_replacement_map}")
             if voice_path is None:
                 voice_path = voice_mapper.get_voice_path(voice_name)
+            if verbose and voice_path is None:
+                print(f"  DEBUG MOSS: voice_mapper.get_voice_path('{voice_name}') returned None")
             if voice_path is None:
                 raise Exception(f"No voice path found for '{voice_name}'")
             # MOSS-TTS will be handled in the generation block below
@@ -278,8 +283,12 @@ def generate_tts_for_line(
             # MOSS-TTS zero-shot voice cloning
             import torchaudio
 
+            if verbose and voice_path is None:
+                print(f"  DEBUG MOSS2: voice_path is None, calling voice_mapper.get_voice_path('{voice_name}')")
             if voice_path is None:
                 voice_path = voice_mapper.get_voice_path(voice_name)
+            if verbose and voice_path is None:
+                print(f"  DEBUG MOSS2: voice_mapper.get_voice_path('{voice_name}') returned None")
             if voice_path is None:
                 raise Exception(f"No voice path found for '{voice_name}'")
 
@@ -556,17 +565,33 @@ def generate_audiobook_from_chapters(
                             continue
 
                         # Get the voice path for this character
-                        # Apply duplicate replacement map if available
+                        # Apply duplicate replacement map if available to get canonical name
                         canonical_voice = voice
+                        if verbose:
+                            print(f"  DEBUG: Processing voice '{voice}'")
+                            print(f"  DEBUG: duplicate_replacement_map = {duplicate_replacement_map}")
                         if duplicate_replacement_map and voice in duplicate_replacement_map:
                             canonical_voice = duplicate_replacement_map[voice]
                             if verbose:
-                                print(f"  Remapping duplicate voice '{voice}' -> '{canonical_voice}'")
+                                print(f"  DEBUG: Remapping duplicate voice '{voice}' -> '{canonical_voice}'")
+                        if verbose:
+                            print(f"  DEBUG: canonical_voice = '{canonical_voice}'")
+                            print(f"  DEBUG: canonical_voice in voices_map = {canonical_voice in voices_map}")
+                            print(f"  DEBUG: voices_map = {voices_map}")
+                        # Use canonical voice for path lookup
                         if canonical_voice in voices_map:
                             # voices_map contains relative paths, prepend output_dir
                             voice_path = os.path.join(output_dir, voices_map[canonical_voice])
+                            if verbose:
+                                print(f"  DEBUG: Found voice_path in voices_map: {voice_path}")
                         else:
+                            # Fall back to VoiceMapper lookup with canonical name
                             voice_path = voice_mapper.get_voice_path(canonical_voice)
+                            if verbose:
+                                print(f"  DEBUG: voice_mapper.get_voice_path('{canonical_voice}') = {voice_path}")
+                        # If still not found, raise error
+                        if voice_path is None:
+                            raise Exception(f"No voice path found for '{voice}' (canonical: '{canonical_voice}')")
 
                         # Generate TTS for this line
                         success, ratio = generate_tts_for_line(

@@ -523,14 +523,27 @@ if __name__ == "__main__":
             lines = f.readlines()
         # Define your chat messages
         if args.old_format:
+            prompt_content = "You are a helpful assistant." + OLD_PROMPT_TXT
             messages = [
-                {"role": "system", "content": "You are a helpful assistant." + OLD_PROMPT_TXT}]
+                {"role": "system", "content": prompt_content}]
         else:
             # Create prompt with context from existing character map
             prompt_content = create_prompt_with_context(PROMPT_TXT, existing_characters, chapter_num)
             messages = [
                 {"role": "system", "content": prompt_content}]
         [messages.append({"role": "user", "content": x}) for x in lines]
+
+        # Save the full prompt text when verbose is enabled
+        if args.verbose:
+            prompt_file = chapter_file_base + ".prompt.txt"
+            with open(prompt_file, "w", encoding='utf-8') as f:
+                # Write system prompt
+                f.write("=== SYSTEM PROMPT ===\n")
+                f.write(prompt_content + "\n\n")
+                # Write chapter content
+                f.write("=== CHAPTER CONTENT ===\n")
+                f.write("".join(lines))
+            print(f"[VERBOSE] Saved prompt to {prompt_file}")
 
         for a, attempt in enumerate(range(args.num_llm_attempts)):
             # Send the chat completion request
@@ -622,14 +635,27 @@ def label_speakers(
 
         # Define chat messages
         if old_format:
+            prompt_content = "You are a helpful assistant." + OLD_PROMPT_TXT
             messages = [
-                {"role": "system", "content": "You are a helpful assistant." + OLD_PROMPT_TXT}]
+                {"role": "system", "content": prompt_content}]
         else:
             # Create prompt with context from existing character map and seed characters
             prompt_content = create_prompt_with_context(PROMPT_TXT, existing_characters, chapter_num, seed_characters)
             messages = [
                 {"role": "system", "content": prompt_content}]
         messages.extend([{"role": "user", "content": x} for x in lines])
+
+        # Save the full prompt text when verbose is enabled
+        if verbose:
+            prompt_file = chapter_file_base + ".prompt.txt"
+            with open(prompt_file, "w", encoding='utf-8') as f:
+                # Write system prompt
+                f.write("=== SYSTEM PROMPT ===\n")
+                f.write(prompt_content + "\n\n")
+                # Write chapter content
+                f.write("=== CHAPTER CONTENT ===\n")
+                f.write("".join(lines))
+            print(f"[VERBOSE] Saved prompt to {prompt_file}")
 
         for a, attempt in enumerate(range(num_attempts)):
             # Send the chat completion request

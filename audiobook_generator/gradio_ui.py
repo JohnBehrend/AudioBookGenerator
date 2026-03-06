@@ -583,6 +583,15 @@ def generate_tts_audio(
         tts_engine = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
         cfg_scale = 1.30
 
+        # Load duplicate replacement map if available (from Stage 3)
+        duplicate_replacement_map = {}
+        dup_map_file = get_duplicate_replacement_map_file()
+        if dup_map_file and dup_map_file.exists():
+            with open(dup_map_file, "r", encoding="utf-8") as f:
+                duplicate_replacement_map = json.load(f)
+            if verbose and duplicate_replacement_map:
+                log_output += f"\n[DUPLICATE MAP] Loaded {len(duplicate_replacement_map)} replacements from duplicate_replacement_map.json"
+
         status, processed = generate_audiobook_from_chapters(
             chapters=chapters,
             chapter_maps=chapter_maps,
@@ -595,6 +604,7 @@ def generate_tts_audio(
             turbo=turbo,
             verbose=verbose,
             progress=progress,
+            duplicate_replacement_map=duplicate_replacement_map,
             seed_voice_map=seed_voice_map
         )
 

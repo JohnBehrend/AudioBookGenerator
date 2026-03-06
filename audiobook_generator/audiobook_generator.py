@@ -798,7 +798,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
     # Load duplicate replacement map if available (from Stage 3)
     duplicate_replacement_map = {}
-    replacement_map_file = os.path.join(output_dir, "chapters", "duplicate_replacement_map.json")
+    replacement_map_file = os.path.join(output_dir, "duplicate_replacement_map.json")
     if os.path.exists(replacement_map_file):
         duplicate_replacement_map = load_json(replacement_map_file)
         if verbose and duplicate_replacement_map:

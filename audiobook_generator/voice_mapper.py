@@ -134,6 +134,10 @@ class VoiceMapper:
                 if canonical_name_lower in stem_lower:
                     self.voice_paths[character_name] = str(file_path)
                     return str(file_path)
+                # Bidirectional check: also check if file stem is a substring of canonical name
+                if stem_lower in canonical_name_lower:
+                    self.voice_paths[character_name] = str(file_path)
+                    return str(file_path)
 
         return None
 

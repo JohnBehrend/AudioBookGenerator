@@ -706,7 +706,7 @@ def label_speakers(
             print("\n--- LLM Output (for debugging) ---", file=sys.stderr)
             print(debug_content, file=sys.stderr)
             print("--- End of LLM Output ---\n", file=sys.stderr)
-            raise e
+            continue
 
         used_characters = set(line_map.values())
         if len(merged_character_map) == 0:

@@ -568,8 +568,9 @@ if __name__ == "__main__":
                 with open(chapter_file_base + f".think.{a}.txt", "w", encoding='utf-8') as f:
                     f.write(thought_process)
             # Save result files
+            result_content = result
             with open(chapter_file_base + f".result.{a}.txt", "w", encoding='utf-8') as f:
-                f.write(result)
+                f.write(result_content)
 
     # Use the public function for processing
     status_msg, character_map, line_map = label_speakers(
@@ -680,10 +681,10 @@ def label_speakers(
                 with open(chapter_file_base + f".think.{a}.txt", "w", encoding='utf-8') as f:
                     f.write(thought_process)
             # Save result files
+            result_content = result
             with open(chapter_file_base + f".result.{a}.txt", "w", encoding='utf-8') as f:
-                f.write(result)
+                f.write(result_content)
 
-    character_maps = []
     line_maps = []
     merged_character_map = {}
     alternate_names = {}
@@ -699,12 +700,9 @@ def label_speakers(
                 if verbose:
                     print(character_map)
         except Exception as e:
-            # Read and show the actual content for debugging
-            with open(chapter_file_base + f".result.{a}.txt", "r", encoding='utf-8') as f:
-                debug_content = f.read()
             print(f"Error parsing {chapter_file_base}.result.{a}.txt: {e}", file=sys.stderr)
             print("\n--- LLM Output (for debugging) ---", file=sys.stderr)
-            print(debug_content, file=sys.stderr)
+            print(result_content, file=sys.stderr)  # Use cached content
             print("--- End of LLM Output ---\n", file=sys.stderr)
             continue
 

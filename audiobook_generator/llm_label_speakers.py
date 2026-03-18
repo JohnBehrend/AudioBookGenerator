@@ -568,9 +568,8 @@ if __name__ == "__main__":
                 with open(chapter_file_base + f".think.{a}.txt", "w", encoding='utf-8') as f:
                     f.write(thought_process)
             # Save result files
-            result_content = result
             with open(chapter_file_base + f".result.{a}.txt", "w", encoding='utf-8') as f:
-                f.write(result_content)
+                f.write(result)
 
     # Use the public function for processing
     status_msg, character_map, line_map = label_speakers(
@@ -681,18 +680,25 @@ def label_speakers(
                 with open(chapter_file_base + f".think.{a}.txt", "w", encoding='utf-8') as f:
                     f.write(thought_process)
             # Save result files
-            result_content = result
             with open(chapter_file_base + f".result.{a}.txt", "w", encoding='utf-8') as f:
-                f.write(result_content)
+                f.write(result)
 
     line_maps = []
     merged_character_map = {}
     alternate_names = {}
 
     for a in range(num_attempts):
+        # Read the result file
         try:
             with open(chapter_file_base + f".result.{a}.txt", "r", encoding='utf-8') as f:
                 result = f.readlines()
+        except Exception as e:
+            print(f"Error reading {chapter_file_base}.result.{a}.txt: {e}", file=sys.stderr)
+            print("Skipping this attempt and continuing...", file=sys.stderr)
+            continue
+
+        # Parse the result
+        try:
             if old_format:
                 character_map, line_map = interpret_result(result, a)
             else:
@@ -701,9 +707,10 @@ def label_speakers(
                     print(character_map)
         except Exception as e:
             print(f"Error parsing {chapter_file_base}.result.{a}.txt: {e}", file=sys.stderr)
-            print("\n--- LLM Output (for debugging) ---", file=sys.stderr)
-            print(result_content, file=sys.stderr)  # Use cached content
-            print("--- End of LLM Output ---\n", file=sys.stderr)
+            print("Raw content:", file=sys.stderr)
+            for line in result:
+                print(line.rstrip(), file=sys.stderr)
+            print("Skipping this attempt and continuing...", file=sys.stderr)
             continue
 
         used_characters = set(line_map.values())

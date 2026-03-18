@@ -14,169 +14,342 @@ from openai import OpenAI
 from config import LLM_SETTINGS, DEFAULTS
 from utils import get_llm_client, merge_line_maps, compare_characters
 
-def add_quotes_around_keys(json_body):
-    """For some json text, we don't have quotes around keys. Example:
-    char_map : {1: "narrator", 2: "char1", 3: "char2", 4: "char3"}
-    ->
-    char_map : {"1": "narrator", "2": "char1", "3": "char2", "4": "char3"}    
+def normalize_key_value_pairs(json_str):
+    """Normalize JSON by ensuring all keys and string values are properly quoted.
+
+    Handles cases like: {1: "narrator", 2: "char1"}
+    Converts to: {"1": "narrator", "2": "char1"}
+
+    Args:
+        json_str: JSON string with potentially unquoted keys
+
+    Returns:
+        JSON string with all keys and values properly quoted
     """
-    entries = []
-    for entry in json_body.replace("{","").replace("}","").split(","):
-        k,v = entry.split(":")
-        k = k.strip()
-        v = v.strip()
-        if '"' not in k:
-            k = '"'+k+'"'
-        if '"' not in v:
-            v = '"'+v+'"'
-        entries.append(k+": "+v)
-    revised_json_body = "{"+", ".join(entries)+"}"
-    return revised_json_body
+    # Remove outer braces for processing
+    json_str = json_str.strip()
+    if json_str.startswith('{'):
+        json_str = json_str[1:]
+    if json_str.endswith('}'):
+        json_str = json_str[:-1]
+
+    # Process entry by entry, being careful about nested structures
+    normalized_entries = []
+    current_entry = ""
+    brace_depth = 0
+    in_string = False
+
+    for char in json_str:
+        if char == '"' and (not current_entry or current_entry[-1] != '\\'):
+            in_string = not in_string
+            current_entry += char
+        elif char == '{' and not in_string:
+            brace_depth += 1
+            current_entry += char
+        elif char == '}' and not in_string:
+            brace_depth -= 1
+            current_entry += char
+        elif char == ',' and not in_string and brace_depth == 0:
+            # End of entry - normalize it
+            if current_entry.strip():
+                normalized_entries.append(_normalize_entry(current_entry.strip()))
+            current_entry = ""
+        else:
+            current_entry += char
+
+    # Don't forget the last entry
+    if current_entry.strip():
+        normalized_entries.append(_normalize_entry(current_entry.strip()))
+
+    return "{" + ", ".join(normalized_entries) + "}"
+
+
+def _normalize_entry(entry):
+    """Normalize a single key-value pair entry."""
+    entry = entry.strip()
+    if ':' not in entry:
+        return entry
+
+    # Split on first colon only (value might contain colons in strings)
+    colon_idx = entry.find(':')
+    key = entry[:colon_idx].strip()
+    value = entry[colon_idx + 1:].strip()
+
+    # Normalize key
+    if not (key.startswith('"') and key.endswith('"')):
+        # Escape any quotes in key
+        key = '"' + key.replace('"', '\\"') + '"'
+
+    # Normalize value if it's a string (starts and ends with quotes after normalization)
+    if value.startswith('"') and value.endswith('"'):
+        # Already a string, just ensure proper escaping
+        value = '"' + value[1:-1].replace('"', '\\"') + '"'
+    elif value.startswith('{') and value.endswith('}'):
+        # Nested object - recurse
+        value = normalize_key_value_pairs(value)
+
+    return f"{key}: {value}"
+
+
+def extract_json_from_text(text):
+    """Extract the first valid JSON object from text.
+
+    Handles:
+    - Direct JSON: {"key": "value"}
+    - Stringified JSON: "{\"key\": \"value\"}"
+    - JSON wrapped in markdown: ```json\n{"key": "value"}\n```
+    - LLM reasoning + JSON: <thinking>...```json\n{"key": "value"}\n```
+
+    Args:
+        text: Text potentially containing JSON
+
+    Returns:
+        Extracted JSON string or None if no JSON found
+    """
+    import re
+
+    # Remove markdown code blocks
+    text = re.sub(r'```(?:json)?\n?([\s\S]*?)\n?```', r'\1', text)
+
+    # Find all brace pairs
+    brace_positions = []
+    brace_count = 0
+    first_brace = text.find('{')
+
+    if first_brace == -1:
+        return None
+
+    for i, char in enumerate(text[first_brace:], start=first_brace):
+        if char == '{':
+            brace_count += 1
+        elif char == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                brace_positions.append(i)
+
+    # If we have brace positions, extract the first complete JSON
+    if brace_positions:
+        end_pos = brace_positions[0] + 1
+        json_str = text[first_brace:end_pos]
+
+        # Handle stringified JSON (wrapped in quotes)
+        if json_str.startswith('"') and json_str.endswith('"'):
+            try:
+                # Unescape and parse the inner JSON
+                unescaped = json_str[1:-1].encode().decode('unicode_escape')
+                return unescaped
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+
+        return json_str
+
+    return None
+
+
+def parse_json_output(text, attempt_num):
+    """Parse LLM output containing JSON with robust error handling.
+
+    This is the unified JSON parsing function that handles both the new format
+    (speaker_map + attributions) and old format (char_map + line numbers).
+
+    Args:
+        text: Raw text from LLM response
+        attempt_num: Current attempt number for error reporting
+
+    Returns:
+        Tuple of (character_map, line_map)
+
+    Raises:
+        ValueError: If JSON cannot be extracted or parsed
+        json.JSONDecodeError: If JSON is malformed
+    """
+    # Extract JSON from text
+    json_str = extract_json_from_text(text)
+    if json_str is None:
+        raise ValueError(
+            f"No valid JSON object found in LLM output for attempt {attempt_num}. "
+            f"Response preview: {text[:200]}..."
+        )
+
+    # Normalize JSON (handle unquoted keys)
+    try:
+        normalized_json = normalize_key_value_pairs(json_str)
+        data = json.loads(normalized_json)
+    except json.JSONDecodeError:
+        # Try parsing the original (might already be valid)
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            raise json.JSONDecodeError(
+                f"Failed to parse JSON after normalization attempt. "
+                f"Normalized: {normalized_json[:200] if 'normalized_json' in locals() else 'N/A'}",
+                json_str,
+                e.pos
+            )
+
+    # Detect format and extract maps
+    # New format: {"speaker_map": {...}, "attributions": {...}}
+    # Old format: {"1": "narrator", "2": "char"} with separate line:speaker lines
+
+    char_map = {}
+    line_map = {}
+
+    if "speaker_map" in data and "attributions" in data:
+        # New format
+        char_map = _normalize_character_map(data["speaker_map"])
+        line_map = _normalize_line_map(data["attributions"])
+    elif "char_map" in data:
+        # Old format with char_map key
+        char_map = _normalize_character_map(data["char_map"])
+        # Line mappings would be in separate entries - handled by parse_old_format_lines
+    else:
+        # Assume all keys are character indices
+        char_map = _normalize_character_map(data)
+
+    return char_map, line_map
+
+
+def _normalize_character_map(speaker_map):
+    """Normalize character/speaker map keys to int and values to lowercase."""
+    result = {}
+    for k, v in speaker_map.items():
+        try:
+            key = int(k)
+            value = str(v).lower().strip().replace("_", " ").replace("'", "").split("/")[0].split(" (")[0]
+            result[key] = value
+        except (ValueError, TypeError):
+            continue
+    return result
+
+
+def _normalize_line_map(attributions):
+    """Normalize line attribution map keys and values to int."""
+    line_map = {}
+    for line_num_str, char_num in attributions.items():
+        try:
+            char_num_int = int(char_num)
+            if "-" in str(line_num_str):
+                # Handle line ranges like "7-10"
+                start, end = str(line_num_str).split("-")
+                for line in range(int(start), int(end) + 1):
+                    line_map[line] = char_num_int
+            else:
+                line_map[int(line_num_str)] = char_num_int
+        except (ValueError, TypeError):
+            continue
+    return line_map
+
+
+def parse_old_format_lines(result_lines, char_map):
+    """Parse old format line:speaker mappings from result lines.
+
+    Handles format like:
+    -----
+    7:2
+    9:2
+    11:2
+    -----
+
+    Args:
+        result_lines: List of lines from LLM output
+        char_map: Character map for validation
+
+    Returns:
+        Line map dict mapping line numbers to speaker keys
+    """
+    line_map = {}
+    for line in result_lines:
+        if not line.strip() or line.startswith("#") or line.startswith("`") or line.startswith("*"):
+            continue
+
+        if ":" in line:
+            try:
+                parts = line.split(":", 1)
+                if len(parts) != 2:
+                    continue
+
+                line_num_str = parts[0].strip()
+                speaker_num = parts[1].strip()
+
+                # Clean up line number
+                line_num_str = line_num_str.replace("Line ", "").replace("Lines ", "").replace("- ", "")
+
+                if "-" in line_num_str:
+                    # Handle line ranges
+                    start, end = line_num_str.split("-")
+                    for x in range(int(start), int(end) + 1):
+                        line_map[int(x)] = int(speaker_num)
+                else:
+                    line_map[int(line_num_str)] = int(speaker_num)
+            except (ValueError, IndexError):
+                continue
+
+    # Filter to only valid character keys
+    valid_keys = set(char_map.keys())
+    line_map = {k: v for k, v in line_map.items() if v in valid_keys}
+
+    return line_map
+
 
 def interpret_new_result(result, attempt_num, seed_characters=None):
-    """Process result of new LLM query of the following format:
+    """Process result of new LLM query using unified JSON parsing.
+
+    Handles the new format:
     {
-  "speaker_map": {
-    "1": "narrator",
-    "2": "First character",
-    "3": "Second Character",
-  },
-  "attributions": {
-    "7": 2,
-    "9": 2,
-    "11": 2,
-    "13": 3,
-    "15": 3
-  }
-  -----
-      return character_map, line_map
+      "speaker_map": {"1": "narrator", "2": "First character"},
+      "attributions": {"7": 2, "9": 2, ...}
+    }
 
     Args:
         result: List of lines from LLM output
         attempt_num: Current attempt number for error reporting
         seed_characters: Dict of character names -> voice paths from seed voices_map
                        Used to prefer existing voice names when matching
+
+    Returns:
+        Tuple of (character_map, line_map)
     """
-    line_map = {}
-    char_map = {}
-    # Filter out markdown code blocks and combine lines
+    # Combine result lines into text
     filtered_result = [x for x in result if not x.startswith("```")]
     result_text = "\n".join(filtered_result)
 
-    # Count how many valid JSON objects are in the response
-    # If there are multiple, this is an error (LLM outputting duplicates)
-    brace_positions = []
-    brace_count = 0
-    first_brace = result_text.find("{")
-    if first_brace != -1:
-        for i, char in enumerate(result_text[first_brace:], start=first_brace):
-            if char == "{":
-                brace_count += 1
-            elif char == "}":
-                brace_count -= 1
-                if brace_count == 0:
-                    brace_positions.append(i)
+    # Use unified JSON parsing
+    try:
+        char_map, line_map = parse_json_output(result_text, attempt_num)
+    except (ValueError, json.JSONDecodeError) as e:
+        raise type(e)(f"Attempt {attempt_num}: {e}") from e
 
-    # If we found more than one complete JSON object, raise an error
-    if len(brace_positions) > 1:
-        # Find where the second JSON starts
-        first_json_end = brace_positions[0]
-        second_json_start = result_text.find("{", first_json_end)
-        raise ValueError(
-            f"LLM returned duplicate JSON objects in attempt {attempt_num}. "
-            f"First JSON ends at position {first_json_end}, "
-            f"second JSON starts at position {second_json_start}. "
-            f"Response preview: {result_text[:200]}..."
-        )
-
-    # Extract only the first valid JSON object
-    if first_brace != -1 and brace_positions:
-        end_pos = brace_positions[0] + 1
-        result_text = result_text[first_brace:end_pos]
-
-    # Handle LLM output that's wrapped in escaped quotes (e.g., "{\\"speaker_map\\": ...}")
-    # This can happen when the LLM returns JSON as a stringified JSON
-    def try_parse_json(text):
-        """Try to parse JSON, handling cases where output is wrapped in quotes."""
-        result = None
-
-        # First, try direct parsing
-        try:
-            result = json.loads(text)
-            # If the result is a dict, we're done
-            if isinstance(result, dict):
-                return result
-            # If the result is a string, it might be double-encoded JSON
-            if isinstance(result, str):
-                try:
-                    return json.loads(result)
-                except json.JSONDecodeError:
-                    pass
-        except json.JSONDecodeError:
-            pass
-
-        # If that fails and text is wrapped in quotes, try stripping them
-        if text.startswith('"') and text.endswith('"'):
-            # Strip the outer quotes and try again
-            stripped = text[1:-1]
-            try:
-                return json.loads(stripped)
-            except json.JSONDecodeError:
-                pass
-
-        return result if result is not None else None
-
-    json_result = try_parse_json(result_text)
-    if json_result is None:
-        raise json.JSONDecodeError(
-            "Failed to parse LLM output after multiple attempts",
-            result_text,
-            0
-        )
-    # convert keys to int
-    char_map = {int(k): v.lower().strip().replace("_"," ").replace("'","").split("/")[0].split(" (")[0] for k,v in json_result["speaker_map"].items()}
-    # remove line_map entries that are invalid.
-    for line_num_str, char_num in json_result["attributions"].items():
-        if char_num in char_map.keys():
-            if "-" in line_num_str:
-                start, end = line_num_str.split("-")
-                for line in range(int(start), int(end), 1):
-                    line_map[line] = char_num
-            else:
-                line_map[int(line_num_str)] = char_num
-    # merge same name indexes
+    # Merge duplicate character names (same name mapped to different keys)
     valid_characters = {}
-    for idx, char in char_map.items():
-        if char not in valid_characters.keys():
+    for idx, char in list(char_map.items()):
+        if char not in valid_characters:
             valid_characters[char] = idx
         else:
-            # replace duplicates in line_map
-            print(f"Removing duplicate {idx}: {char}")
-            line_map = {k: valid_characters[char] if (v==idx) else v for k,v in line_map.items() }
-    # remove unused characters
-    used_char_indexes = [1]+list(set(line_map.values())) # 1 added for narrator
-    char_map = {k:v for k,v in char_map.items() if k in used_char_indexes}
+            # Replace duplicates in line_map with the first occurrence
+            existing_idx = valid_characters[char]
+            print(f"Removing duplicate {idx}: {char} -> using key {existing_idx}")
+            line_map = {k: existing_idx if v == idx else v for k, v in line_map.items()}
 
-    # If seed_characters provided, prefer seed character names when matching
+    # Remove unused characters (keep narrator at key 1)
+    used_char_indexes = [1] + list(set(line_map.values()))
+    char_map = {k: v for k, v in char_map.items() if k in used_char_indexes}
+
+    # Apply seed character name preferences if provided
     if seed_characters:
-        # Build a mapping from normalized seed names to original seed names
         seed_name_map = {}
         for seed_name in seed_characters.keys():
-            seed_name_lower = seed_name.lower().strip()
-            if seed_name_lower not in seed_name_map:
-                seed_name_map[seed_name_lower] = seed_name.lower().strip()
+            seed_lower = seed_name.lower().strip()
+            if seed_lower not in seed_name_map:
+                seed_name_map[seed_lower] = seed_lower
 
-        # Map normalized char_map names to seed names if they match
         char_to_seed = {}
         for idx, char in char_map.items():
             char_lower = char.lower().strip()
-            # Check if this character matches any seed character (substring matching)
-            for seed_lower, seed_original in seed_name_map.items():
+            for seed_lower in seed_name_map:
                 if char_lower == seed_lower or (len(char_lower) > len(seed_lower) and char_lower.startswith(seed_lower)):
                     char_to_seed[idx] = seed_lower
                     break
 
-        # Update char_map to use seed names where matches found
         for idx, seed_name in char_to_seed.items():
             if idx in char_map:
                 char_map[idx] = seed_name
@@ -185,16 +358,71 @@ def interpret_new_result(result, attempt_num, seed_characters=None):
     return char_map, line_map 
 
 def interpret_result(result, attempt_num):
-    """Process result of a LLM query of the following format:
------
-char_map : {"1": "narrator", "2": "First Character", "3": "Second Character"}
-7:2
-9:2
-11:2
-13:3
-15:3
------
-      return character_map, line_map"""
+    """Process result of a LLM query in old format (char_map + line mappings).
+
+    Handles format:
+    -----
+    char_map : {"1": "narrator", "2": "First Character", "3": "Second Character"}
+    7:2
+    9:2
+    11:2
+    13:3
+    15:3
+    -----
+
+    Args:
+        result: List of lines from LLM output
+        attempt_num: Current attempt number for error reporting
+
+    Returns:
+        Tuple of (character_map, line_map)
+    """
+    # Combine result lines into text
+    filtered_result = [x for x in result if not x.startswith("```")]
+    result_text = "\n".join(filtered_result)
+
+    # Use unified JSON parsing for char_map extraction
+    try:
+        # Extract JSON from text to get char_map
+        json_str = extract_json_from_text(result_text)
+        if json_str is None:
+            # Fallback to old parsing method
+            return _parse_old_format_fallback(result, attempt_num)
+
+        # Normalize and parse JSON
+        normalized_json = normalize_key_value_pairs(json_str)
+        data = json.loads(normalized_json)
+
+        # Get char_map from either "char_map" key or direct object
+        if "char_map" in data:
+            char_map = _normalize_character_map(data["char_map"])
+        else:
+            char_map = _normalize_character_map(data)
+
+    except (json.JSONDecodeError, ValueError) as e:
+        # Fallback to old parsing method on error
+        print(f"JSON parsing failed, falling back to old method: {e}", file=sys.stderr)
+        return _parse_old_format_fallback(result, attempt_num)
+
+    # Parse line mappings from the remaining text (the line:speaker format)
+    line_map = parse_old_format_lines(result, char_map)
+
+    return char_map, line_map
+
+
+def _parse_old_format_fallback(result, attempt_num):
+    """Fallback parsing for old format (original implementation).
+
+    This preserves the original behavior as a fallback when the unified
+    parsing fails.
+
+    Args:
+        result: List of lines from LLM output
+        attempt_num: Current attempt number for error reporting
+
+    Returns:
+        Tuple of (character_map, line_map)
+    """
     line_map = {}
     char_map = {}
     IN_CHARMAP = False
@@ -204,10 +432,10 @@ char_map : {"1": "narrator", "2": "First Character", "3": "Second Character"}
             if ":" in line and not (line.startswith("#") or line.startswith("`") or line.startswith("*")):
                 try:
                     this_line, speaker_num = line.split(":")
-                    this_line = this_line.replace("Line ","").replace("Lines ","").replace("- ", "")
+                    this_line = this_line.replace("Line ", "").replace("Lines ", "").replace("- ", "")
                     if "-" in this_line:
                         line_start, line_stop = this_line.split("-")
-                        for x in range(int(line_start),int(line_stop)+1):
+                        for x in range(int(line_start), int(line_stop) + 1):
                             line_map[int(x)] = int(speaker_num)
                     else:
                         line_map[int(this_line)] = int(speaker_num)
@@ -216,39 +444,95 @@ char_map : {"1": "narrator", "2": "First Character", "3": "Second Character"}
         elif IN_CHARMAP:
             if MISSING_OPEN:
                 if "{" in line:
-                    MISSING_OPEN=False
+                    MISSING_OPEN = False
                     json_body = line.strip()
             else:
-                json_body = json_body+line.strip()
+                json_body = json_body + line.strip()
             if "}" in line:
-                IN_CHARMAP=False
+                IN_CHARMAP = False
                 print("TRYING MULTLINE CHARMAP:", json_body)
                 try:
                     char_map = json.loads(json_body)
-                except:
-                    char_map = json.loads(add_quotes_around_keys(json_body))
+                except json.JSONDecodeError:
+                    char_map = _parse_unquoted_keys_fallback(json_body)
         else:
             if ("char_map" in line) and ("{" in line) and ("}" in line):
                 json_body = "{" + line.split("{")[1]
                 try:
                     char_map = json.loads(json_body)
-                except:
-                    char_map = json.loads(add_quotes_around_keys(json_body))
+                except json.JSONDecodeError:
+                    char_map = _parse_unquoted_keys_fallback(json_body)
             elif ("char_map" in line) and ("{" in line):
-                IN_CHARMAP=True
+                IN_CHARMAP = True
                 json_body = "{"
             elif "char_map" in line:
-                IN_CHARMAP=True
-                MISSING_OPEN=True
-            # could eventually add a check for """json""" with unquoted keys.
-    for k in char_map.keys():
-        char_map[k] = (char_map[k].split("/")[0]).split(" (")[0].lower().strip().replace("‑","")
-    char_map = {k.lower().strip() : v for k,v in char_map.items()}
-    # convert keys to int
-    char_map = {int(k): v for k,v in char_map.items()}
+                IN_CHARMAP = True
+                MISSING_OPEN = True
+
+    # Normalize character map
+    for k in list(char_map.keys()):
+        char_map[k] = (char_map[k].split("/")[0]).split(" (")[0].lower().strip().replace("\u2013", "")
+    char_map = {k.lower().strip(): v for k, v in char_map.items()}
+    char_map = {int(k): v for k, v in char_map.items()}
+
     # remove line_map entries that are invalid.
     line_map = {line_num: char_num for line_num, char_num in line_map.items() if char_num in char_map.keys()}
+
     return char_map, line_map
+
+
+def _parse_unquoted_keys_fallback(json_body):
+    """Parse JSON with unquoted keys using simple string manipulation.
+
+    This is a fallback for the old add_quotes_around_keys function.
+
+    Args:
+        json_body: JSON string with potentially unquoted keys
+
+    Returns:
+        Parsed dict
+    """
+    # Build a mapping of key to value using simple parsing
+    json_body = json_body.strip()
+    if json_body.startswith('{'):
+        json_body = json_body[1:]
+    if json_body.endswith('}'):
+        json_body = json_body[:-1]
+
+    result = {}
+    current_key = None
+    current_value = ""
+    in_value = False
+    brace_depth = 0
+
+    for char in json_body:
+        if char == ':' and not in_value and brace_depth == 0:
+            current_key = current_key.strip().strip('"')
+            in_value = True
+            current_value = ""
+        elif char == ',' and not in_value and brace_depth == 0:
+            if current_key:
+                result[current_key.strip().strip('"')] = current_value.strip().strip('"')
+            current_key = ""
+            current_value = ""
+            in_value = False
+        elif char == '{':
+            brace_depth += 1
+            current_value += char
+        elif char == '}':
+            brace_depth -= 1
+            current_value += char
+        else:
+            current_value += char
+
+    if current_key:
+        result[current_key.strip().strip('"')] = current_value.strip().strip('"')
+
+    # Convert keys to int
+    try:
+        return {int(k): v for k, v in result.items()}
+    except ValueError:
+        return result
 
 def is_same_character_by_line_mapping(character_key, character, line_map, merged_character_map, merged_line_map):
     """

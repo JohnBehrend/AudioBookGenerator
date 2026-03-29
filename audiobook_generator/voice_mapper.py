@@ -485,11 +485,11 @@ class VoiceMapper:
                     input_ids=batch["input_ids"].to(self.device),
                     attention_mask=batch["attention_mask"].to(self.device),
                     max_new_tokens=max_new_tokens,
-                    # MOSS-TTS hyperparameters
-                    audio_temperature=DEFAULTS["moss_audio_temperature"],
-                    audio_top_p=DEFAULTS["moss_audio_top_p"],
-                    audio_top_k=DEFAULTS["moss_audio_top_k"],
-                    audio_repetition_penalty=DEFAULTS["moss_audio_repetition_penalty"],
+                    # MOSS-VoiceGenerator hyperparameters for Stage 1 voice design
+                    audio_temperature=DEFAULTS["moss_voicegen_temperature"],
+                    audio_top_p=DEFAULTS["moss_voicegen_top_p"],
+                    audio_top_k=DEFAULTS["moss_voicegen_top_k"],
+                    audio_repetition_penalty=DEFAULTS["moss_voicegen_repetition_penalty"],
                 )
 
                 message = processor.decode(outputs)[0]

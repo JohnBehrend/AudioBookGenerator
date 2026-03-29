@@ -92,7 +92,12 @@ DEFAULTS = {
     "min_silence_len": 1250,
     "silence_thresh": -60,
     # Reference text for TTS voice cloning
-    # MOSS-TTS hyperparameters (per model card recommendations)
+    # MOSS-VoiceGenerator hyperparameters (per model card recommendations) for Stage 1 voice design
+    "moss_voicegen_temperature": 1.5,
+    "moss_voicegen_top_p": 0.6,
+    "moss_voicegen_top_k": 50,
+    "moss_voicegen_repetition_penalty": 1.1,
+    # MOSS-TTS hyperparameters (per model card recommendations) for Stage 2 cloning
     "moss_audio_temperature": 1.0,
     "moss_audio_top_p": 0.95,
     "moss_audio_top_k": 50,

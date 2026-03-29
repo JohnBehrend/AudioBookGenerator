@@ -26,30 +26,22 @@ You are an expert voice actor and audiobook narrator. Your task is to create sho
 Focus on the most distinctive, memorable traits that would help a professional voice actor embody the character.
 
 Provide the following information in the description:
-gender.
-age.
-speed.
-volume.
-clarity.
-tone.
+1. Gender and age (e.g., "Man, early 30s" or "Elderly woman")
+2. Speech speed and rhythm (e.g., "Fast-paced with frequent interruptions" or "Slow, deliberate cadence")
+3. Volume and projection (e.g., "Loud and projecting" or "Soft, intimate whisper")
+4. Clarity and articulation (e.g., "Precise, crisp diction" or "Slurred, messy speech")
+5. Tone and emotional quality (e.g., "Warm and inviting" or "Cold and detached")
+6. Distinctive vocal characteristics (e.g., "Raspy and hoarse" or "High-pitched and nasal")
+
+IMPORTANT: Use vivid, specific language that conveys the voice's personality. Think like a voice director describing what the actor should sound like.
 
 Example 1:
-Man.
-He is 40 years old.
-He has fast-paced delivery with deliberate pauses for dramatic effect.
-His voice is loud and projecting, increasing notably during moments of praise and announcements.
-He is highly articulate and distinct in his pronunciation.
-He is upbeat, authoritative, and performative.
+An authoritative middle-aged man with a deep, resonant voice that speaks with confidence and urgency, delivering instructions with a clear, commanding tone that commands attention in any situation.
 
 Example 2:
-Woman.
-She is 20 years old.
-She starts measured, then accelerates rapidly during emotional outburst.
-She begins conversational, escalates quickly to loud and forceful.
-She has lightly slurred pronunciation.
-Her voice is initially accepting, and becomes sharply accusatory and confrontational.
+A young woman with a lively, energetic voice that shifts quickly from calm and collected to excited and rapid, her speech pattern showing she is comfortable in conversation but can quickly become emotional when passionate about a topic.
 
-Keep the format simple without any markdown.
+Keep the description under 50 words.
 """
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)

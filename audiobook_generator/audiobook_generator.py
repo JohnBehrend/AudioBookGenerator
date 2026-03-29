@@ -970,7 +970,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
                             llm_port: str = None, gradio_port: int = None,
                             num_attempts: int = 2, max_chapters: int = 10,
-                            seed_voice_map: str = None) -> None:
+                            seed_voice_map: str = None, epub_file: str = None) -> None:
     """Create and launch the Gradio interface for the audiobook pipeline.
 
     This function launches the Gradio interface imported from the package's
@@ -984,10 +984,12 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         num_attempts: Number of LLM attempts
         max_chapters: Max chapters to process
         seed_voice_map: Path to existing voices_map.json to seed voices
+        epub_file: Path to EPUB file to pre-load in the interface
     """
     try:
         from gradio_ui import create_interface, cleanup_temp_dir
         import gradio as gr
+        import shutil
 
         # Use provided LLM port or default
         effective_llm_port = llm_port or str(LLM_SETTINGS["port"])
@@ -1002,12 +1004,22 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
             if not os.path.exists(seed_voice_map_path):
                 print(f"Warning: Seed voice map file not found: {seed_voice_map_path}")
 
+        # Handle EPUB file - copy to output_dir if provided for Gradio to access
+        epub_path_default = None
+        if epub_file:
+            epub_path_default = os.path.abspath(epub_file)
+            if not os.path.exists(epub_path_default):
+                print(f"Error: EPUB file not found: {epub_path_default}")
+                sys.exit(1)
+            print(f"Pre-loading EPUB: {epub_path_default}")
+
         demo = create_interface(
             api_key_default=api_key or DEFAULTS.get("api_key", "lm-studio"),
             port_default=effective_llm_port,
             num_attempts_default=num_attempts,
             max_chapters_default=max_chapters,
-            seed_voice_map_default=seed_voice_map_path
+            seed_voice_map_default=seed_voice_map_path,
+            epub_path_default=epub_path_default
         )
 
         demo.launch(share=False, theme=gr.themes.Soft(), server_port=effective_gradio_port, server_name="0.0.0.0")
@@ -1052,7 +1064,8 @@ def main():
             gradio_port=args.gradio_port,
             num_attempts=args.num_llm_attempts,
             max_chapters=args.max_chapters or DEFAULTS.get("max_chapters", 10),
-            seed_voice_map=args.seed_voice_map
+            seed_voice_map=args.seed_voice_map,
+            epub_file=args.epub_file
         )
     else:
         # Run CLI pipeline

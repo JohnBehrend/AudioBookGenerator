@@ -882,7 +882,11 @@ def create_interface(
     max_chapters_default: int = DEFAULT_MAX_CHAPTERS,
     seed_voice_map_default: Optional[str] = None,
 ):
-    """Create the Gradio interface with all stages using a state machine pattern."""
+    """Create the Gradio interface with all stages using a state machine pattern.
+
+    If epub_path_default is provided and points to an existing file, the interface
+    will automatically trigger parsing on startup.
+    """
 
     with gr.Blocks() as demo:
         gr.Markdown("# Audiobook Voice Generator")
@@ -916,8 +920,13 @@ def create_interface(
                 info="Enable the faster kugel-1-turbo TTS model. Only applicable for kugelaudio engine."
             )
 
-            # EPUB upload
-            epub_upload = gr.File(label="EPUB", file_types=[".epub"], value=epub_path_default)
+            # EPUB upload - use the provided path as default if it exists
+            # If epub_path_default is a string path, convert it to a tuple for Gradio's File component
+            epub_upload_default = None
+            if epub_path_default and os.path.exists(epub_path_default):
+                # Gradio File expects (filepath, label) tuple or None
+                epub_upload_default = (epub_path_default, os.path.basename(epub_path_default))
+            epub_upload = gr.File(label="EPUB", file_types=[".epub"], value=epub_upload_default)
 
             # Seed voice map
             seed_voice_map_input = gr.File(

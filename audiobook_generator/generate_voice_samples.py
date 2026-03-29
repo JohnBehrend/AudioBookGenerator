@@ -252,6 +252,29 @@ def generate_voice_samples(
                 if progress is not None:
                     progress((i + 1) / total_chars, desc=f"Generating voice for '{char_name}'...")
 
+                # Check if voice sample already exists (resume mode)
+                # First check in voices_map (for already generated voices)
+                if char_name in generated:
+                    if verbose:
+                        print(f"    Skipped - already generated (in generated dict)")
+                    continue
+
+                # Check for existing voice file in output_dir
+                voice_file = None
+                for ext in [".wav", ".mp3", ".flac"]:
+                    test_path = os.path.join(output_dir, f"{char_name}{ext}")
+                    if os.path.exists(test_path):
+                        voice_file = test_path
+                        if verbose:
+                            print(f"    Found existing voice: {voice_file}")
+                        break
+
+                if voice_file is not None:
+                    generated[char_name] = voice_file
+                    if verbose:
+                        print(f"    Skipped - voice already exists")
+                    continue
+
                 success, output_file, duration = generate_voice_sample(
                     character_name=char_name,
                     description=char_desc,

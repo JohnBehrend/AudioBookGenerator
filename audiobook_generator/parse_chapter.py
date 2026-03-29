@@ -165,6 +165,36 @@ def write_chapters_to_txt(chapters, output_dir, prefix="chapter_"):
     return written_files
 
 
+def load_chapters_from_txt(output_dir: str, max_chapters: int = None, prefix: str = "chapter_") -> list:
+    """Load chapters from existing text files.
+
+    Args:
+        output_dir: Directory containing chapter text files
+        max_chapters: Maximum number of chapters to load (None for all)
+        prefix: Filename prefix for chapter files (default: "chapter_")
+
+    Returns:
+        List of ChapterObj lists (one list per chapter)
+    """
+    import os
+    import glob
+
+    chapters = []
+    pattern = os.path.join(output_dir, f"{prefix}*.txt")
+    chapter_files = sorted(glob.glob(pattern))
+
+    if max_chapters is not None:
+        chapter_files = chapter_files[:max_chapters]
+
+    for chapter_file in chapter_files:
+        with open(chapter_file, "r", encoding="utf-8") as f:
+            text = f.read()
+        chapter_objs = get_chapter_objs(text)
+        chapters.append(chapter_objs)
+
+    return chapters
+
+
 def main():
     """CLI entry point for EPUB parsing."""
     parser = argparse.ArgumentParser(description="Parse an EPUB file into chapter text files.")

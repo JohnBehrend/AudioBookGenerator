@@ -856,10 +856,15 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     if resume and epub_parsed:
         if verbose:
             print(f"[STAGE 1] Skipping - EPUB already parsed ({len(chapter_files)} chapters found)")
-        # Load existing chapters from state if available, otherwise re-parse
+        # Load existing chapters from text files (don't re-parse EPUB)
         if not state.chapters:
-            from parse_chapter import parse_epub_to_chapters
-            state.chapters = parse_epub_to_chapters(epub_path, max_chapters=max_chapters)
+            from parse_chapter import load_chapters_from_txt
+            state.chapters = load_chapters_from_txt(
+                str(state.output_dir),
+                max_chapters=max_chapters
+            )
+            if verbose:
+                print(f"[STAGE 1] Loaded {len(state.chapters)} chapters from existing files")
     else:
         if verbose:
             print(f"[STAGE 1] Parsing EPUB: {epub_path}")
@@ -896,6 +901,14 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     else:
         with ProgressHandler(progress=None, use_tqdm=True, total=num_chapters, desc="Labeling speakers") as handler:
             for i, chapter_file in enumerate(chapter_files):
+                # Skip if already labeled (for resume after partial completion)
+                map_file = state.chapters_dir / f"chapter_{i:02d}.map.json"
+                if resume and map_file.exists():
+                    if verbose:
+                        print(f"[STAGE 2] Skipping chapter {i} - already labeled")
+                    handler.update((i + 1) / num_chapters, desc=f"Labeling chapter {i + 1}/{num_chapters}")
+                    continue
+
                 handler.update((i + 1) / num_chapters, desc=f"Labeling chapter {i + 1}/{num_chapters}")
 
                 result_msg, char_map, line_map = label_speakers(

@@ -51,6 +51,9 @@ from utils import (
     get_chapters_dir,
     get_temp_dir,
     cleanup_temp_dir,
+    save_temp_dir,
+    load_temp_dir,
+    get_available_saved_audiobooks,
     ProgressHandler,
     copy_mp3_files_to_chapters,
     load_json_file,
@@ -881,11 +884,16 @@ def create_interface(
     epub_path_default: Optional[str] = str(DEFAULT_EPUB_FILE),
     max_chapters_default: int = DEFAULT_MAX_CHAPTERS,
     seed_voice_map_default: Optional[str] = None,
+    saved_temp_dir: Optional[str] = None,
 ):
     """Create the Gradio interface with all stages using a state machine pattern.
 
     If epub_path_default is provided and points to an existing file, the interface
     will automatically trigger parsing on startup.
+
+    Args:
+        saved_temp_dir: Optional path to a saved temp directory to restore from.
+                       If provided, restores the pipeline state from this directory.
     """
 
     with gr.Blocks() as demo:
@@ -924,9 +932,16 @@ def create_interface(
             # If epub_path_default is a string path, convert it to a tuple for Gradio's File component
             epub_upload_default = None
             if epub_path_default and os.path.exists(epub_path_default):
-                # Gradio File expects (filepath, label) tuple or None
-                epub_upload_default = (epub_path_default, os.path.basename(epub_path_default))
+                # Gradio File expects file path string or None
+                epub_upload_default = epub_path_default
             epub_upload = gr.File(label="EPUB", file_types=[".epub"], value=epub_upload_default)
+
+            # Temp directory display
+            temp_dir_display = gr.Textbox(
+                label="Temp Directory (click 'Load' or 'Save')",
+                interactive=False,
+                info="Current temp directory path. Click 'Save Temp' to preserve, 'Load Temp' to restore.",
+            )
 
             # Seed voice map
             seed_voice_map_input = gr.File(
@@ -947,6 +962,8 @@ def create_interface(
             log_output = gr.Textbox(label="Log (State: Ready)", lines=3, max_lines=3, interactive=False)
         with gr.Row():
             stop_btn = gr.Button("Stop", variant="stop", scale=1)
+            save_temp_btn = gr.Button("Save Temp", variant="secondary", scale=1)
+            load_temp_btn = gr.Button("Load Temp", variant="secondary", scale=1)
         with gr.Row():
             with gr.Tab("Characters"):
                 # Character info
@@ -1131,4 +1148,94 @@ def create_interface(
             outputs=None,
         )
 
+        # Save Temp button - save the current temp directory as a zip archive
+        def save_temp_handler():
+            """Save the current temp directory as a zip archive."""
+            temp_dir = get_temp_dir()
+            if not temp_dir:
+                return "No temp directory to save"
+            try:
+                archive_path = save_temp_dir(temp_dir)
+                return f"Saved to: {archive_path}"
+            except Exception as e:
+                return f"Error saving: {str(e)}"
+
+        save_temp_btn.click(
+            fn=save_temp_handler,
+            inputs=None,
+            outputs=temp_dir_display,
+        )
+
+        # Dropdown for available saved audiobooks
+        saved_audiobooks_dropdown = gr.Dropdown(
+            label="Saved Audiobooks",
+            choices=[],
+            interactive=True,
+            info="Select a saved audiobook to restore"
+        )
+
+        # Refresh saved audiobooks button
+        refresh_btn = gr.Button("Refresh", variant="secondary", scale=0, min_width=80)
+
+        # Update dropdown on load
+        demo.load(
+            fn=refresh_saved_audiobooks,
+            inputs=None,
+            outputs=saved_audiobooks_dropdown
+        )
+
+        # Load selected audiobook
+        def load_selected_audiobook(archive_path):
+            """Load a saved audiobook from archive and initialize state."""
+            if not archive_path:
+                return "No archive selected"
+            try:
+                # Clear any existing temp context
+                cleanup_temp_dir()
+                # Load the archive and extract to a new temp dir
+                temp_dir = load_temp_dir(archive_path)
+                if temp_dir:
+                    temp_dir_display.value = temp_dir
+                    return f"Loaded: {temp_dir}"
+                return "Failed to load archive"
+            except Exception as e:
+                return f"Error loading: {str(e)}"
+
+        # Load button for selected audiobook
+        load_selected_btn = gr.Button("Load Selected", variant="primary", scale=1)
+
+        load_selected_btn.click(
+            fn=load_selected_audiobook,
+            inputs=saved_audiobooks_dropdown,
+            outputs=temp_dir_display,
+        ).then(
+            fn=refresh_saved_audiobooks,
+            inputs=None,
+            outputs=saved_audiobooks_dropdown
+        )
+
+        refresh_btn.click(
+            fn=refresh_saved_audiobooks,
+            inputs=None,
+            outputs=saved_audiobooks_dropdown
+        )
+
+    # Initialize temp directory if saved_temp_dir was provided
+    if saved_temp_dir:
+        from utils import get_chapters_dir_from_saved
+        chapters_dir = get_chapters_dir_from_saved(saved_temp_dir)
+        temp_dir_display.value = saved_temp_dir
+    else:
+        temp_dir_display.value = get_temp_dir()
+
     return demo
+
+
+def refresh_saved_audiobooks() -> gr.update:
+    """Helper function to refresh the saved audiobooks dropdown choices.
+
+    Returns:
+        gr.update with updated choices list
+    """
+    return gr.update(choices=[(f"{a['name']} ({a['timestamp']})", a['archive'])
+                               for a in get_available_saved_audiobooks()])

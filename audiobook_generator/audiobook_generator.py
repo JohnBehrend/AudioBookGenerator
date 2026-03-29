@@ -69,6 +69,10 @@ from utils import (
     get_chapters_dir,
     get_temp_dir,
     cleanup_temp_dir,
+    save_temp_dir,
+    load_temp_dir,
+    get_available_saved_audiobooks,
+    get_chapters_dir_from_saved,
     ProgressHandler,
     copy_mp3_files_to_chapters,
     load_json_file as load_json,
@@ -776,7 +780,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       verbose: bool = False, api_key: str = None, llm_port: str = None,
                       tts_engine: str = "kugelaudio", turbo: bool = False,
                       device: str = AUDIO_SETTINGS["default_device"], seed_voice_map: str = None,
-                      num_llm_attempts: int = DEFAULTS["num_llm_attempts"]) -> str:
+                      num_llm_attempts: int = DEFAULTS["num_llm_attempts"],
+                      resume: bool = False) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -791,12 +796,28 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         device: CUDA device (e.g., 'cuda', 'cuda:1')
         seed_voice_map: Path to existing voices_map.json to seed voices
         num_llm_attempts: Number of LLM attempts for speaker labeling
+        resume: If True, detect existing state and resume from where it left off
 
     Returns:
         Status message
     """
     # Initialize state
     state = PipelineState(output_dir)
+
+    if resume:
+        # Detect current state and load existing data
+        state.pipeline_state = state.get_pipeline_state()
+        state.load_chapter_maps()
+        state.get_characters()
+        state.load_character_descriptions()
+        state.load_voice_map()
+
+        if verbose:
+            print(f"[RESUME] Detected state: {state.pipeline_state}")
+            print(f"[RESUME] Loaded {len(state.chapter_maps)} chapter maps")
+            print(f"[RESUME] Found {len(state.characters)} characters")
+            print(f"[RESUME] Loaded {len(state.character_descriptions)} character descriptions")
+            print(f"[RESUME] Loaded {len(state.voice_map)} voice mappings")
 
     # Load duplicate replacement map if available (from Stage 3)
     duplicate_replacement_map = {}
@@ -826,23 +847,35 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             if verbose:
                 print(f"[SEED] No characters found in seed file: {seed_voice_map}")
 
+    # Check if EPUB is already parsed (for resume mode)
+    chapter_files = sorted(state.chapters_dir.glob("chapter_*.txt"))
+    epub_parsed = len(chapter_files) > 0
+
     # Store chapters in state for reuse (avoid re-parsing)
-    # Stage 1: Parse EPUB with progress
-    if verbose:
-        print(f"[STAGE 1] Parsing EPUB: {epub_path}")
-
-    # Use tqdm for progress tracking (falls back to verbose print if tqdm not available)
-    total_lines_estimate = None  # We'll estimate from the EPUB parsing
-    with ProgressHandler(progress=None, use_tqdm=True, total=0, desc="Parsing EPUB") as handler:
-        chapters = parse_chapter.parse_epub_to_chapters(epub_path, max_chapters=max_chapters)
-        if not chapters:
-            return "Error: No chapters found in EPUB file."
-
-        # Store chapters in state for Stage 5 reuse
-        state.chapters = chapters
-        state.write_chapter_text_files(chapters)
+    # Stage 1: Parse EPUB with progress (skip if already done in resume mode)
+    if resume and epub_parsed:
         if verbose:
-            print(f"[STAGE 1] Parsed {len(chapters)} chapters")
+            print(f"[STAGE 1] Skipping - EPUB already parsed ({len(chapter_files)} chapters found)")
+        # Load existing chapters from state if available, otherwise re-parse
+        if not state.chapters:
+            from parse_chapter import parse_epub_to_chapters
+            state.chapters = parse_epub_to_chapters(epub_path, max_chapters=max_chapters)
+    else:
+        if verbose:
+            print(f"[STAGE 1] Parsing EPUB: {epub_path}")
+
+        # Use tqdm for progress tracking (falls back to verbose print if tqdm not available)
+        total_lines_estimate = None  # We'll estimate from the EPUB parsing
+        with ProgressHandler(progress=None, use_tqdm=True, total=0, desc="Parsing EPUB") as handler:
+            chapters = parse_chapter.parse_epub_to_chapters(epub_path, max_chapters=max_chapters)
+            if not chapters:
+                return "Error: No chapters found in EPUB file."
+
+            # Store chapters in state for Stage 5 reuse
+            state.chapters = chapters
+            state.write_chapter_text_files(chapters)
+            if verbose:
+                print(f"[STAGE 1] Parsed {len(chapters)} chapters")
 
     # Stage 2: Label Speakers with progress
     if verbose:
@@ -851,24 +884,34 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                            if re.match(r"^chapter_\d+\.txt$", f.name)])
     num_chapters = len(chapter_files)
 
-    with ProgressHandler(progress=None, use_tqdm=True, total=num_chapters, desc="Labeling speakers") as handler:
-        for i, chapter_file in enumerate(chapter_files):
-            handler.update((i + 1) / num_chapters, desc=f"Labeling chapter {i + 1}/{num_chapters}")
+    # Check if speakers are already labeled (for resume mode)
+    map_files = sorted(state.chapters_dir.glob("*.map.json"))
+    speakers_labeled = len(map_files) > 0
 
-            result_msg, char_map, line_map = label_speakers(
-                txt_file=str(chapter_file),
-                api_key=api_key or LLM_SETTINGS["api_key"],
-                port=llm_port or str(LLM_SETTINGS["port"]),
-                num_attempts=num_llm_attempts,
-                verbose=verbose,
-                seed_characters=seed_characters
-            )
+    if resume and speakers_labeled:
+        if verbose:
+            print(f"[STAGE 2] Skipping - Speakers already labeled ({len(map_files)} map files found)")
+        state.load_chapter_maps()
+        # Note: characters already loaded in resume block at start of function
+    else:
+        with ProgressHandler(progress=None, use_tqdm=True, total=num_chapters, desc="Labeling speakers") as handler:
+            for i, chapter_file in enumerate(chapter_files):
+                handler.update((i + 1) / num_chapters, desc=f"Labeling chapter {i + 1}/{num_chapters}")
 
-            if verbose:
-                print(f"  {result_msg}")
+                result_msg, char_map, line_map = label_speakers(
+                    txt_file=str(chapter_file),
+                    api_key=api_key or LLM_SETTINGS["api_key"],
+                    port=llm_port or str(LLM_SETTINGS["port"]),
+                    num_attempts=num_llm_attempts,
+                    verbose=verbose,
+                    seed_characters=seed_characters
+                )
 
-    state.load_chapter_maps()
-    state.get_characters()
+                if verbose:
+                    print(f"  {result_msg}")
+
+        state.load_chapter_maps()
+        state.get_characters()
 
     # Stage 3: Describe Characters with progress
     if verbose:
@@ -970,7 +1013,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
                             llm_port: str = None, gradio_port: int = None,
                             num_attempts: int = 2, max_chapters: int = 10,
-                            seed_voice_map: str = None, epub_file: str = None) -> None:
+                            seed_voice_map: str = None, epub_file: str = None,
+                            saved_temp_dir: str = None) -> None:
     """Create and launch the Gradio interface for the audiobook pipeline.
 
     This function launches the Gradio interface imported from the package's
@@ -985,6 +1029,7 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         max_chapters: Max chapters to process
         seed_voice_map: Path to existing voices_map.json to seed voices
         epub_file: Path to EPUB file to pre-load in the interface
+        saved_temp_dir: Optional path to a saved temp directory to restore from
     """
     try:
         from gradio_ui import create_interface, cleanup_temp_dir
@@ -1019,7 +1064,8 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
             num_attempts_default=num_attempts,
             max_chapters_default=max_chapters,
             seed_voice_map_default=seed_voice_map_path,
-            epub_path_default=epub_path_default
+            epub_path_default=epub_path_default,
+            saved_temp_dir=saved_temp_dir
         )
 
         demo.launch(share=False, theme=gr.themes.Soft(), server_port=effective_gradio_port, server_name="0.0.0.0")
@@ -1036,7 +1082,25 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Audiobook Generator - Parse EPUB and generate audiobook audio"
+        description="Audiobook Generator - Parse EPUB and generate audiobook audio",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run full pipeline with temp folder that persists
+  audiobook_generator.py book.epub --save_temp
+
+  # List saved audiobooks
+  audiobook_generator.py --list_saved
+
+  # Resume from last saved audiobook
+  audiobook_generator.py --resume_latest
+
+  # Resume from specific saved audiobook
+  audiobook_generator.py --resume_from /path/to/archive.zip
+
+  # Launch Gradio with saved state
+  audiobook_generator.py --gradio --resume_latest
+        """
     )
     parser.add_argument("epub_file", nargs="?", help="Path to the EPUB file")
     parser.add_argument("-output_dir", default=None, help="Output directory for generated files (default: temp directory)")
@@ -1052,20 +1116,74 @@ def main():
     parser.add_argument("-num_llm_attempts", type=int, default=DEFAULTS["num_llm_attempts"], help="Number of LLM attempts for speaker labeling")
     parser.add_argument("-gradio_port", type=int, default=None, help="Port for Gradio web interface")
     parser.add_argument("-seed_voice_map", help="Path to existing voices_map.json to seed voices")
+    parser.add_argument("--save_temp", action="store_true", help="Save temp directory as zip archive for later recovery")
+    parser.add_argument("--list_saved", action="store_true", help="List all saved audiobook archives")
+    parser.add_argument("--resume_latest", action="store_true", help="Resume from the most recently saved audiobook")
+    parser.add_argument("--resume_from", help="Resume from a specific saved audiobook archive path")
 
     args = parser.parse_args()
-    print(args)
+
+    # Handle list saved audiobooks
+    if args.list_saved:
+        saved = get_available_saved_audiobooks()
+        if saved:
+            print("\nSaved Audiobooks:")
+            print("-" * 80)
+            for i, a in enumerate(saved, 1):
+                print(f"{i}. {a['name']} ({a['timestamp']})")
+                print(f"   Archive: {a['archive']}")
+                print(f"   Temp: {a['temp_dir']}")
+            print("-" * 80)
+            print(f"Total: {len(saved)} saved audiobook(s)")
+        else:
+            print("No saved audiobooks found.")
+        sys.exit(0)
+
+    # Handle --resume_latest and --resume_from
+    saved_temp_dir = None
+    resume_from_archive = None
+
+    if args.resume_latest:
+        saved = get_available_saved_audiobooks()
+        if saved:
+            # Get the latest archive
+            latest = saved[0]  # Already sorted by mtime (most recent first)
+            resume_from_archive = latest['archive']
+            print(f"Resuming from latest saved audiobook: {latest['name']}")
+        else:
+            print("Error: No saved audiobooks found.")
+            sys.exit(1)
+
+    if args.resume_from:
+        resume_from_archive = args.resume_from
+
+    # Extract archive if loading from saved
+    if resume_from_archive:
+        archive_path = Path(resume_from_archive)
+        if not archive_path.exists():
+            print(f"Error: Archive not found: {resume_from_archive}")
+            sys.exit(1)
+        # Load the archive and get the temp directory
+        saved_temp_dir = load_temp_dir(str(archive_path))
+        if not saved_temp_dir:
+            print("Error: Failed to load archive.")
+            sys.exit(1)
+        output_dir = saved_temp_dir
+    else:
+        output_dir = args.output_dir
+
     if args.gradio:
         # Launch Gradio interface
         create_gradio_interface(
-            output_dir=args.output_dir,
+            output_dir=output_dir,
             api_key=args.api_key,
             llm_port=args.llm_port,
             gradio_port=args.gradio_port,
             num_attempts=args.num_llm_attempts,
             max_chapters=args.max_chapters or DEFAULTS.get("max_chapters", 10),
             seed_voice_map=args.seed_voice_map,
-            epub_file=args.epub_file
+            epub_file=args.epub_file,
+            saved_temp_dir=saved_temp_dir if (args.resume_latest or args.resume_from) else None
         )
     else:
         # Run CLI pipeline
@@ -1080,12 +1198,14 @@ def main():
 
         # Use temp directory by default, or user-specified output_dir if provided
         used_temp_dir = False
-        if args.output_dir is None:
-            output_dir = str(get_chapters_dir())
+        if output_dir is None:
             used_temp_dir = True
-            print(f"Using temporary directory: {get_temp_dir()}")
-        else:
-            output_dir = args.output_dir
+            # Check for resume_from_archive (from --resume_latest or --resume_from)
+            if resume_from_archive:
+                print(f"Using extracted temp directory from archive: {output_dir}")
+            else:
+                output_dir = str(get_chapters_dir())
+                print(f"Using temporary directory: {get_temp_dir()}")
 
         status = run_full_pipeline(
             epub_path=args.epub_file,
@@ -1098,16 +1218,30 @@ def main():
             turbo=args.turbo,
             device=args.device,
             seed_voice_map=args.seed_voice_map,
-            num_llm_attempts=args.num_llm_attempts
+            num_llm_attempts=args.num_llm_attempts,
+            resume=(resume_from_archive is not None)
         )
 
         print(status)
 
+        # Save temp directory as archive if --save_temp was specified
+        if args.save_temp:
+            try:
+                archive_path = save_temp_dir(output_dir)
+                print(f"\nTemp directory saved to archive: {archive_path}")
+                print(f"Use --list_saved to view, --resume_from to restore.")
+            except Exception as e:
+                print(f"Warning: Failed to save temp directory: {e}")
+
         # Copy MP3 files to ./chapters/ if we used a temporary directory
         if used_temp_dir:
-            copy_mp3_files_to_chapters(output_dir)
-            print(f"\nMP3 files have been copied to ./chapters/ directory.")
-            print(f"Temporary directory will be cleaned up on exit.")
+            if args.save_temp:
+                print(f"\nTemp directory archived for recovery.")
+                print(f"Use --list_saved to view saved archives, --resume_from to restore.")
+            else:
+                copy_mp3_files_to_chapters(output_dir)
+                print(f"\nMP3 files have been copied to ./chapters/ directory.")
+                print(f"Temporary directory will be cleaned up on exit.")
 
 
 if __name__ == "__main__":

@@ -363,8 +363,8 @@ class VoiceMapper:
         if max_new_tokens is None:
             max_new_tokens = DEFAULTS["max_new_tokens"]
 
-        # Reference text for voice generation - uses static description from config
-        sample_text = DEFAULTS["static_voice_description"]
+        # Reference text for voice generation - uses static text from config
+        sample_text = DEFAULTS["static_voice_text"]
 
         # Validate description
         if not description or not description.strip():

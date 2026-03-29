@@ -10,9 +10,11 @@ import tempfile
 import atexit
 import glob
 import shutil
+import zipfile
+import datetime
 from pathlib import Path
 from collections import Counter
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from openai import OpenAI
 
 from config import LLM_SETTINGS
@@ -95,15 +97,38 @@ class ProgressHandler:
         self.close()
 
 
-def get_chapters_dir() -> Path:
+def _reset_chapters_dir_internal() -> None:
+    """Internal function to reset cached state from get_chapters_dir.
+
+    Clears all cached attributes and cleans up the temp context.
+    This is an internal helper used by get_chapters_dir_from_saved and load_temp_dir.
+    """
+    if hasattr(get_chapters_dir, "_temp_context") and get_chapters_dir._temp_context:
+        try:
+            get_chapters_dir._temp_context.cleanup()
+        except Exception:
+            pass
+    for attr in ["_temp_dir", "_chapters_dir", "_temp_context"]:
+        if hasattr(get_chapters_dir, attr):
+            delattr(get_chapters_dir, attr)
+
+
+def get_chapters_dir(saved_temp_dir: Optional[str] = None) -> Path:
     """Get or create a temporary chapters directory for this session.
 
     This provides a consistent way for both CLI and Gradio to use temporary
     directories that auto-clean on program exit.
 
+    Args:
+        saved_temp_dir: Optional path to a saved temp directory to restore from.
+                       If provided, uses this directory instead of creating a new one.
+
     Returns:
         Path to the chapters directory (temp_dir / "chapters")
     """
+    if saved_temp_dir:
+        return get_chapters_dir_from_saved(saved_temp_dir)
+
     if not hasattr(get_chapters_dir, "_temp_dir"):
         # Use TemporaryDirectory which auto-cleans on program exit
         get_chapters_dir._temp_context = tempfile.TemporaryDirectory(prefix="jbab_chapters_")
@@ -156,16 +181,198 @@ def reset_chapters_dir() -> None:
     This clears all cached state from get_chapters_dir() to allow
     fresh directory creation in tests.
     """
-    if hasattr(get_chapters_dir, "_temp_context") and get_chapters_dir._temp_context:
-        try:
-            get_chapters_dir._temp_context.cleanup()
-        except Exception:
-            pass
+    _reset_chapters_dir_internal()
 
-    # Clear all attributes
-    for attr in ["_temp_dir", "_chapters_dir", "_temp_context"]:
-        if hasattr(get_chapters_dir, attr):
-            delattr(get_chapters_dir, attr)
+
+# ============================================================================
+# SAVE/RESUME TEMP FOLDER FUNCTIONALITY
+# ============================================================================
+
+def get_saved_audiobooks_dir() -> Path:
+    """Get the directory where saved audiobook archives are stored."""
+    return Path.home() / ".claude" / "saved_audiobooks"
+
+
+def get_latest_saved_file() -> Path:
+    """Get the path to the latest saved audiobook info file."""
+    return Path.home() / ".claude" / "latest_saved_audiobook.json"
+
+
+def save_temp_dir(temp_dir: str) -> str:
+    """Save the temp directory as a zip archive for later recovery.
+
+    Args:
+        temp_dir: Path to the temp directory to save
+
+    Returns:
+        Path to the saved archive
+    """
+    temp_path = Path(temp_dir)
+    if not temp_path.exists():
+        raise ValueError(f"Temp directory does not exist: {temp_dir}")
+
+    # Create saved archives directory
+    saved_dir = get_saved_audiobooks_dir()
+    saved_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use timestamp in archive name
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    archive_name = f"audiobook_{timestamp}"
+    archive_path = saved_dir / f"{archive_name}.zip"
+
+    # Create zip archive of the temp directory
+    print(f"Creating zip archive: {archive_path}")
+    with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for item in temp_path.rglob('*'):
+            if item.is_file():
+                # Store relative path in archive
+                arcname = item.relative_to(temp_path.parent)
+                zip_file.write(item, arcname)
+
+    # Save metadata
+    state_file = get_latest_saved_file()
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state = {
+        "temp_dir": str(temp_dir),
+        "archive": str(archive_path),
+        "timestamp": timestamp,
+        "name": archive_name,
+    }
+    with open(state_file, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+
+    print(f"Saved temp dir to archive: {archive_path}")
+    print(f"Metadata saved to: {state_file}")
+    return str(archive_path)
+
+
+def load_temp_dir(archive_path: Optional[str] = None) -> Optional[str]:
+    """Load from a saved audiobook archive and extract to a new temp directory.
+
+    Args:
+        archive_path: Path to the archive to load. If None, loads the latest archive.
+
+    Returns:
+        Path to the extracted temp directory, or None if not found
+    """
+    import tempfile
+
+    if archive_path:
+        archive_file = Path(archive_path)
+        if not archive_file.exists():
+            print(f"Error: Archive not found: {archive_path}")
+            return None
+    else:
+        # Load latest archive
+        state_file = get_latest_saved_file()
+        if not state_file.exists():
+            print("No saved audiobook found.")
+            return None
+        with open(state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        archive_file = Path(state.get("archive"))
+        if not archive_file.exists():
+            print(f"Error: Archive not found: {archive_file}")
+            return None
+
+    print(f"Loading archive: {archive_file}")
+
+    # Create a new temp directory for extraction
+    temp_context = tempfile.TemporaryDirectory(prefix="jbab_resumed_")
+    extract_dir = Path(temp_context.name) / "chapters"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+
+    # Extract the archive
+    with zipfile.ZipFile(archive_file, 'r') as zip_file:
+        zip_file.extractall(extract_dir.parent)
+
+    print(f"Extracted to: {extract_dir.parent}")
+
+    # Save the new temp dir path for get_chapters_dir to use
+    _reset_chapters_dir_internal()
+
+    # Set up the extracted directory as the temp directory
+    get_chapters_dir._temp_dir = str(extract_dir.parent)
+    get_chapters_dir._chapters_dir = extract_dir
+    get_chapters_dir._temp_context = temp_context  # Register cleanup on exit
+
+    # Register cleanup on normal exit
+    atexit.register(cleanup_temp_dir)
+
+    return str(extract_dir.parent)
+
+
+def get_available_saved_audiobooks() -> List[Dict[str, str]]:
+    """Get list of all available saved audiobook archives.
+
+    Returns:
+        List of dicts with 'name', 'timestamp', 'archive', and 'temp_dir' keys
+    """
+    saved_dir = get_saved_audiobooks_dir()
+    if not saved_dir.exists():
+        return []
+
+    # Get the latest saved audiobook metadata (stored in latest_saved_audiobook.json)
+    latest_metadata = {}
+    state_file = get_latest_saved_file()
+    if state_file.exists():
+        with open(state_file, "r", encoding="utf-8") as f:
+            latest_metadata = json.load(f)
+
+    archives = []
+    for archive_file in sorted(saved_dir.glob("*.zip"), key=lambda x: x.stat().st_mtime, reverse=True):
+        # Use metadata from latest_saved_audiobook.json if it matches this archive
+        if latest_metadata.get("archive") == str(archive_file):
+            meta = latest_metadata
+        else:
+            # Fall back to archive filename for archives without separate metadata
+            meta = {"name": archive_file.stem, "timestamp": archive_file.stat().st_mtime}
+
+        archives.append({
+            "name": meta.get("name", archive_file.stem),
+            "timestamp": meta.get("timestamp", ""),
+            "archive": str(archive_file),
+            "temp_dir": meta.get("temp_dir", ""),
+        })
+    return archives
+
+
+def cleanup_saved_temp_dir() -> None:
+    """Remove the latest saved audiobook state file."""
+    try:
+        state_file = get_latest_saved_file()
+        if state_file.exists():
+            state_file.unlink()
+    except Exception:
+        pass
+
+
+def get_chapters_dir_from_saved(saved_temp_dir: str) -> Path:
+    """Get the chapters directory from a saved temp directory path.
+
+    This creates a temporary directory context that points to an existing
+    saved temp directory instead of creating a new one.
+
+    Args:
+        saved_temp_dir: Path to the saved temp directory
+
+    Returns:
+        Path to the chapters subdirectory within the saved temp dir
+    """
+    _reset_chapters_dir_internal()
+
+    # Set up the saved directory as the temp directory
+    saved_path = Path(saved_temp_dir)
+    chapters_path = saved_path / "chapters"
+
+    # Create the chapters directory if it doesn't exist
+    chapters_path.mkdir(parents=True, exist_ok=True)
+
+    get_chapters_dir._temp_dir = str(saved_path)
+    get_chapters_dir._chapters_dir = chapters_path
+    get_chapters_dir._temp_context = None  # No context - we're using an existing directory
+
+    return chapters_path
 
 
 def get_characters_from_map_files(chapters_dir: Path) -> list:

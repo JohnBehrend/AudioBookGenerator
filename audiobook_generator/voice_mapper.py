@@ -233,6 +233,11 @@ class VoiceMapper:
 
             model_path = TTS_MODEL_PATHS["moss"]
 
+            # Memory-efficient attention settings
+            torch.backends.cuda.enable_cudnn_sdp(False)
+            torch.backends.cuda.enable_flash_sdp(True)
+            torch.backends.cuda.enable_mem_efficient_sdp(True)
+
             # Initialize model with explicit device placement (not device_map)
             # This avoids meta tensor issues with lazy loading
             tts_model = AutoModel.from_pretrained(
@@ -244,6 +249,15 @@ class VoiceMapper:
             # Initialize processor and move audio_tokenizer to device
             processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
             processor.audio_tokenizer = processor.audio_tokenizer.to(self.device)
+
+            # Fix: Ensure model.config has num_hidden_layers for DynamicCache compatibility
+            # The MOSS model's config class (MossTTSDelayConfig) doesn't expose this
+            # so we add it manually if missing
+            if not hasattr(tts_model.config, "num_hidden_layers"):
+                tts_model.config.num_hidden_layers = getattr(
+                    tts_model.config, "num_layers",
+                    getattr(tts_model.config, "n_layers", 32)  # Default to 32 if neither exists
+                )
 
             result = (tts_model, processor, model_path, None)
             self.tts_models[engine_key] = result
@@ -264,6 +278,17 @@ class VoiceMapper:
         self.tts_models.clear()
         gc.collect()
         torch.cuda.empty_cache()
+
+    def unload_model(self, model_name: str) -> None:
+        """Unload a specific model by name.
+
+        Args:
+            model_name: Name of the model to unload (e.g., 'kugelaudio', 'moss')
+        """
+        if model_name in self.tts_models:
+            del self.tts_models[model_name]
+            gc.collect()
+            torch.cuda.empty_cache()
 
     def reset(self) -> None:
         """Reset all internal state (for testing).
@@ -338,8 +363,8 @@ class VoiceMapper:
         if max_new_tokens is None:
             max_new_tokens = DEFAULTS["max_new_tokens"]
 
-        # Reference text for voice generation
-        sample_text = "The quick brown fox jumps over the lazy dog."
+        # Reference text for voice generation - uses static description from config
+        sample_text = DEFAULTS["static_voice_description"]
 
         # Validate description
         if not description or not description.strip():

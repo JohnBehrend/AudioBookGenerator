@@ -47,7 +47,7 @@ TTS_MODEL_PATHS = {
         "turbo": "kugel-1-turbo",
     },
     "vibevoice": "Jmica/VibeVoice7B",
-    "moss": "OpenMOSS-Team/MOSS-TTS",
+    "moss": "OpenMOSS-Team/MOSS-TTS-Local-Transformer",
 }
 
 # Voice samples directory
@@ -80,21 +80,22 @@ if os.environ.get("GRADIO_PORT"):
 DEFAULTS = {
     "num_llm_attempts": 1,
     "max_chapters": 1,
-    "max_new_tokens": 512,
+    "max_new_tokens": 256,
     "sample_text_length": 150,
     "description_length": 400,
     # Audio generation defaults
     "cfg_scale": 1.30,
     "short_text_postfix": "and also with you?",
+    "static_voice_description": "A clear, expressive voice speaking with natural rhythm and emotion.",
     "validation_model_name": "large-v2",
     "min_silence_len": 1250,
     "silence_thresh": -60,
     # Reference text for TTS voice cloning
-    # MOSS-TTS hyperparameters
-    "moss_audio_temperature": 1.5,
-    "moss_audio_top_p": 0.6,
-    "moss_audio_top_k": 50,
-    "moss_audio_repetition_penalty": 1.1,
+    # MOSS-TTS hyperparameters (reduced for lower VRAM usage)
+    "moss_audio_temperature": 0.7,
+    "moss_audio_top_p": 0.95,
+    "moss_audio_top_k": 20,
+    "moss_audio_repetition_penalty": 1.05,
 }
 
 

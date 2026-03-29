@@ -100,7 +100,8 @@ def setup_validation_model(device: str) -> WhisperModel:
         WhisperModel instance for audio validation
     """
     model_name = DEFAULTS["validation_model_name"]
-    return WhisperModel(model_name, device=device, compute_type="float16")
+    # Use CPU for Whisper to save VRAM - it's faster to transfer audio than to keep 1-2GB on GPU
+    return WhisperModel(model_name, device="cpu", compute_type="float32")
 
 
 def get_non_silent_audio_from_wavs(wav_filepath_list, min_silence_len=1250, silence_thresh=-60):
@@ -636,8 +637,9 @@ def generate_audiobook_from_chapters(
                 if verbose:
                     print(f"[CHAPTER_COMPLETE] Chapter {i}/{len(chapters_to_process)}")
 
-                # Clear cache periodically
+                # Clear cache after each chapter to free VRAM
                 torch.cuda.empty_cache()
+                gc.collect()
 
                 processed += 1
 

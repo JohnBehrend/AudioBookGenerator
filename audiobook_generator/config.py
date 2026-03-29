@@ -80,7 +80,7 @@ if os.environ.get("GRADIO_PORT"):
 DEFAULTS = {
     "num_llm_attempts": 1,
     "max_chapters": 1,
-    "max_new_tokens": 256,
+    "max_new_tokens": 384,
     "sample_text_length": 150,
     "description_length": 400,
     # Audio generation defaults
@@ -92,11 +92,11 @@ DEFAULTS = {
     "min_silence_len": 1250,
     "silence_thresh": -60,
     # Reference text for TTS voice cloning
-    # MOSS-TTS hyperparameters (reduced for lower VRAM usage)
-    "moss_audio_temperature": 0.7,
+    # MOSS-TTS hyperparameters (per model card recommendations)
+    "moss_audio_temperature": 1.0,
     "moss_audio_top_p": 0.95,
-    "moss_audio_top_k": 20,
-    "moss_audio_repetition_penalty": 1.05,
+    "moss_audio_top_k": 50,
+    "moss_audio_repetition_penalty": 1.1,
 }
 
 

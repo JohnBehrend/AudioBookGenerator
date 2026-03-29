@@ -13,24 +13,10 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from openai import OpenAI
-import requests
-from bs4 import BeautifulSoup
+from functools import lru_cache
 
 from config import LLM_SETTINGS, OUTPUT_DIR
 from utils import get_llm_client, compare_characters, get_characters_from_map_files
-
-# Module-level cache for chapter text content
-_chapter_text_cache: Dict[str, Dict[Path, str]] = {}
-
-
-def reset_chapter_cache() -> None:
-    """Clear the chapter text cache (for testing).
-
-    This resets the module-level cache to allow fresh chapter loading
-    in tests.
-    """
-    global _chapter_text_cache
-    _chapter_text_cache.clear()
 
 
 # Default prompt for character description
@@ -169,20 +155,23 @@ def load_chapter_texts_with_cache(chapters_dir: Path) -> Tuple[List[str], List[P
     """
     chapters_dir_str = str(chapters_dir)
 
-    # Check if we have cached data for this directory
-    if chapters_dir_str in _chapter_text_cache:
-        return _chapter_text_cache[chapters_dir_str]
+    # Use lru_cache for bounded caching instead of unbounded module-level cache
+    return _load_chapter_texts_cached(chapters_dir_str)
 
-    # Load and cache chapter texts
-    chapter_files = sorted(chapters_dir.glob("chapter_*.txt"))
-    chapter_texts = []
 
-    for chapter_file in chapter_files:
-        chapter_texts.append(load_chapter_text(str(chapter_file)))
+@lru_cache(maxsize=32)
+def _load_chapter_texts_cached(chapters_dir_str: str) -> Tuple[List[str], Tuple[Path, ...]]:
+    """Load and cache chapter texts using bounded LRU cache.
 
-    # Store in cache
-    _chapter_text_cache[chapters_dir_str] = (chapter_texts, chapter_files)
+    Args:
+        chapters_dir_str: String path to chapters directory
 
+    Returns:
+        Tuple of (list of chapter texts, tuple of chapter file paths)
+    """
+    chapters_dir = Path(chapters_dir_str)
+    chapter_files = tuple(sorted(chapters_dir.glob("chapter_*.txt")))
+    chapter_texts = [load_chapter_text(str(f)) for f in chapter_files]
     return chapter_texts, chapter_files
 
 
@@ -205,45 +194,6 @@ def find_chapters_with_character(chapter_texts: list, chapter_files: list, chara
             chapters_with_char.append((filepath, text))
 
     return chapters_with_char
-
-
-def lookup_character_on_wiki(character_name: str, wiki_url_template: str = "") -> str:
-    """Look up a character on a wiki for additional context.
-
-    Args:
-        character_name: The name of the character to look up
-        wiki_url_template: URL template with {name} placeholder for the character name
-
-    Returns:
-        A string with biographical information from the wiki, or empty string if not found
-    """
-    # Format the URL with the character name
-    url = wiki_url_template.format(name=character_name.replace(" ", "_"))
-
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Audiobook Character Describer)"}
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.content, "html.parser")
-
-        # Check if it's a disambiguation page or doesn't exist
-        content = soup.find("div", class_="mw-parser-output")
-        if not content:
-            return ""
-
-        # Get the first paragraph (usually the most relevant)
-        first_para = content.find("p")
-        if first_para:
-            text = first_para.get_text(strip=True)
-            # Clean up citation brackets like [1], [2], etc.
-            text = re.sub(r'\[\d+\]', '', text)
-            return text[:1000]  # Limit to first 1000 chars
-
-    except requests.RequestException:
-        pass
-
-    return ""
 
 
 def load_chapter_lines(chapter_file: str) -> list:
@@ -360,14 +310,6 @@ def build_character_context(characters: list, chapter_texts: list, chapter_files
     context = "Characters to describe:\n"
     for char in characters:
         context += f"{char}\n"
-
-    # # Add wiki lookup context if enabled
-    # if wiki_url_template:
-    #     context += "\n\nAdditional context from wiki:\n"
-    #     for char in characters:
-    #         wiki_info = lookup_character_on_wiki(char, wiki_url_template)
-    #         if wiki_info:
-    #             context += f"--- {char} ---\n{wiki_info}\n\n"
 
     # Build character-specific context using actual dialogue from map files
     context = "Character dialogue examples from the book:\n"
@@ -799,7 +741,6 @@ def describe_characters(
     Returns:
         Tuple of (status message, dict of character descriptions)
     """
-    import json
     from pathlib import Path
     from openai import OpenAI
 

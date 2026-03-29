@@ -896,10 +896,6 @@ def label_speakers(
     Returns:
         Tuple of (status_message, character_map, line_map)
     """
-    from openai import OpenAI
-    import json
-    from typing import Dict, Tuple
-
     chapter_file_base, _ = os.path.splitext(txt_file)
     client = get_llm_client(api_key, port)
 
@@ -908,7 +904,6 @@ def label_speakers(
 
     # Extract chapter number from filename for context
     chapter_num = None
-    import re
     chapter_match = re.search(r'chapter[_\s]?(\d+)', str(txt_file), re.IGNORECASE)
     if chapter_match:
         chapter_num = int(chapter_match.group(1))

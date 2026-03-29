@@ -712,7 +712,7 @@ def describe_characters(
     chapters_dir: str = "chapters",
     api_key: str = None,
     port: str = None,
-    model: str = "qwen3-model",
+    model: str = LLM_SETTINGS["default_model"],
     single_character: Optional[str] = None,
     wiki_url_template: str = "",
     verbose: bool = False,

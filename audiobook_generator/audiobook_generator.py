@@ -193,7 +193,7 @@ def generate_tts_for_line(
     tts_engine: str,
     cfg_scale: float,
     output_dir: str,
-    short_text_postfix: str = "and also with you?",
+    short_text_postfix: str = DEFAULTS["short_text_postfix"],
     validation_model = None,
     verbose: bool = False,
     voice_path: str = None,
@@ -447,9 +447,9 @@ def generate_audiobook_from_chapters(
     chapter_maps: Dict[int, Tuple[Dict, Dict]],
     voices_map: Dict[str, str],
     output_dir: str,
-    device: str = "cuda",
-    tts_engine: str = "kugelaudio",
-    cfg_scale: float = 1.30,
+    device: str = AUDIO_SETTINGS["default_device"],
+    tts_engine: str = AUDIO_SETTINGS["default_tts_engine"],
+    cfg_scale: float = DEFAULTS["cfg_scale"],
     max_chapters: Optional[int] = None,
     verbose: bool = False,
     turbo: bool = False,
@@ -773,8 +773,8 @@ class PipelineState:
 def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       verbose: bool = False, api_key: str = None, llm_port: str = None,
                       tts_engine: str = "kugelaudio", turbo: bool = False,
-                      device: str = "cuda", seed_voice_map: str = None,
-                      num_llm_attempts: int = 2) -> str:
+                      device: str = AUDIO_SETTINGS["default_device"], seed_voice_map: str = None,
+                      num_llm_attempts: int = DEFAULTS["num_llm_attempts"]) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -855,8 +855,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
             result_msg, char_map, line_map = label_speakers(
                 txt_file=str(chapter_file),
-                api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
-                port=llm_port or LLM_SETTINGS.get("port", "1234"),
+                api_key=api_key or LLM_SETTINGS["api_key"],
+                port=llm_port or str(LLM_SETTINGS["port"]),
                 num_attempts=num_llm_attempts,
                 verbose=verbose,
                 seed_characters=seed_characters
@@ -877,7 +877,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             output_dir=str(state.output_dir),
             chapters_dir=str(state.output_dir),
             api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
-            port=llm_port or LLM_SETTINGS.get("port", "1234"),
+            port=llm_port or str(LLM_SETTINGS["port"]),
             verbose=verbose,
             seed_characters=seed_characters,
             progress_callback=handler.update
@@ -988,7 +988,7 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         import gradio as gr
 
         # Use provided LLM port or default
-        effective_llm_port = llm_port or LLM_SETTINGS.get("port", "1234")
+        effective_llm_port = llm_port or str(LLM_SETTINGS["port"])
 
         # Use provided gradio port or default from config
         effective_gradio_port = gradio_port if gradio_port is not None else AUDIO_SETTINGS.get("gradio_port", 7860)
@@ -1029,11 +1029,11 @@ def main():
     parser.add_argument("-max_chapters", type=int, help="Maximum number of chapters to process")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print verbose output")
     parser.add_argument("-api_key", help="LLM API key for speaker labeling")
-    parser.add_argument("-llm_port", default="8080", help="LLM endpoint port (for LM Studio)")
-    parser.add_argument("-tts_engine", default="kugelaudio", choices=["kugelaudio", "vibevoice", "moss"],
+    parser.add_argument("-llm_port", default=str(LLM_SETTINGS["port"]), help="LLM endpoint port (for LM Studio)")
+    parser.add_argument("-tts_engine", default=AUDIO_SETTINGS["default_tts_engine"], choices=["kugelaudio", "vibevoice", "moss"],
                         help="TTS engine to use")
     parser.add_argument("--turbo", action="store_true", help="Use KugelAudio turbo model (kugel-1-turbo)")
-    parser.add_argument("-device", default="cuda", help="CUDA device to use")
+    parser.add_argument("-device", default=AUDIO_SETTINGS["default_device"], help="CUDA device to use")
     parser.add_argument("--gradio", action="store_true", help="Launch Gradio interface instead of CLI")
     parser.add_argument("-num_llm_attempts", type=int, default=DEFAULTS["num_llm_attempts"], help="Number of LLM attempts for speaker labeling")
     parser.add_argument("-gradio_port", type=int, default=None, help="Port for Gradio web interface")

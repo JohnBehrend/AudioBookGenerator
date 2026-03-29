@@ -17,7 +17,7 @@ from typing import Dict, Tuple, Optional, Any
 from pathlib import Path
 
 # Import config for default values
-from config import DEFAULTS, AUDIO_SETTINGS
+from config import DEFAULTS, AUDIO_SETTINGS, TTS_MODEL_PATHS
 
 # Helper to check if flash-attn is available
 def _get_attn_implementation() -> Optional[str]:
@@ -54,7 +54,7 @@ class VoiceMapper:
         """
         self.output_dir = Path(output_dir)
         self.device = device
-        self.tts_engine = tts_engine or AUDIO_SETTINGS.get("default_tts_engine", "kugelaudio")
+        self.tts_engine = tts_engine or AUDIO_SETTINGS["default_tts_engine"]
         self.supported_extensions = AUDIO_SETTINGS.get("supported_audio_extensions", [".wav", ".mp3", ".flac"])
         self.duplicate_replacement_map = duplicate_replacement_map or {}
 
@@ -198,7 +198,7 @@ class VoiceMapper:
             from kugelaudio_open.processors.kugelaudio_processor import KugelAudioProcessor
             from kugelaudio_open.models.kugelaudio_inference import KugelAudioForConditionalGenerationInference
 
-            model_path = "kugel-1-turbo" if turbo else "kugelaudio/kugelaudio-0-open"
+            model_path = TTS_MODEL_PATHS["kugelaudio"]["turbo"] if turbo else TTS_MODEL_PATHS["kugelaudio"]["base"]
             tts_model = KugelAudioForConditionalGenerationInference.from_pretrained(
                 model_path,
                 torch_dtype=torch.bfloat16,
@@ -215,7 +215,7 @@ class VoiceMapper:
             from vibevoice.processor.vibevoice_processor import VibeVoiceProcessor
             from vibevoice.modular.modeling_vibevoice_inference import VibeVoiceForConditionalGenerationInference
 
-            model_path = "Jmica/VibeVoice7B"
+            model_path = TTS_MODEL_PATHS["vibevoice"]
             tts_model = VibeVoiceForConditionalGenerationInference.from_pretrained(
                 model_path,
                 torch_dtype=torch.bfloat16,
@@ -231,7 +231,7 @@ class VoiceMapper:
         elif self.tts_engine == "moss":
             from transformers import AutoModel, AutoProcessor
 
-            model_path = "OpenMOSS-Team/MOSS-TTS"
+            model_path = TTS_MODEL_PATHS["moss"]
 
             # Initialize model with explicit device placement (not device_map)
             # This avoids meta tensor issues with lazy loading

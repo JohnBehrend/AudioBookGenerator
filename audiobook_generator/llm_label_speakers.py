@@ -833,7 +833,7 @@ if __name__ == "__main__":
             # Send the chat completion request
             print(f"Processing attempt {a}")
             response = client.chat.completions.create(
-                model="qwen3-model",  # Use a placeholder model name or the specific ID from LM Studio
+                model=LLM_SETTINGS["default_model"],
                 messages=messages,
                 temperature=0.7,
                 #stream=True # Set to True for streaming responses
@@ -941,7 +941,7 @@ def label_speakers(
             if verbose:
                 print(f"Processing attempt {a}")
             response = client.chat.completions.create(
-                model="qwen3-model",
+                model=LLM_SETTINGS["default_model"],
                 messages=messages,
                 temperature=0.7,
             ).choices[0].message

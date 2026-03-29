@@ -575,13 +575,13 @@ def generate_tts_audio(
 
         # Determine device (use CUDA if available, default to cuda:0)
         import torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = AUDIO_SETTINGS["default_device"] if torch.cuda.is_available() else "cpu"
         log_output += f"\nUsing device: {device}"
 
         # Use the unified generate_audiobook_from_chapters function from package
         verbose = True
         tts_engine = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
-        cfg_scale = 1.30
+        cfg_scale = DEFAULTS["cfg_scale"]
 
         # Load duplicate replacement map if available (from Stage 3)
         duplicate_replacement_map = {}

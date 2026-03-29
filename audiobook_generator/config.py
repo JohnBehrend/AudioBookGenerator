@@ -23,16 +23,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 LLM_SETTINGS = {
     "endpoint": "http://localhost:8080/v1",
+    "port": 8080,
     "api_key": "lm-studio",
     "default_model": "qwen3-model",
 }
-
-# Environment variable overrides
-if os.environ.get("LLM_ENDPOINT"):
-    LLM_SETTINGS["endpoint"] = os.environ["LLM_ENDPOINT"]
-if os.environ.get("LLM_API_KEY"):
-    LLM_SETTINGS["api_key"] = os.environ["LLM_API_KEY"]
-
 
 # ============================================================================
 # AUDIO SETTINGS
@@ -41,13 +35,36 @@ if os.environ.get("LLM_API_KEY"):
 AUDIO_SETTINGS = {
     "default_device": "cuda:0",
     "alt_device": "cuda:1",
-    "default_tts_engine": "moss",
+    "default_tts_engine": "kugelaudio",
     "supported_audio_extensions": [".wav", ".mp3", ".flac"],
     "gradio_port": 7860,
-    # Voice samples directory is now a separate path variable
 }
 
-# Environment variable overrides
+# TTS Model paths for each engine
+TTS_MODEL_PATHS = {
+    "kugelaudio": {
+        "base": "kugelaudio/kugelaudio-0-open",
+        "turbo": "kugel-1-turbo",
+    },
+    "vibevoice": "Jmica/VibeVoice7B",
+    "moss": "OpenMOSS-Team/MOSS-TTS",
+}
+
+# Voice samples directory
+VOICE_SAMPLES_DIR = Path("character_voice_samples")
+
+# Environment variable overrides for LLM settings
+if os.environ.get("LLM_ENDPOINT"):
+    LLM_SETTINGS["endpoint"] = os.environ["LLM_ENDPOINT"]
+if os.environ.get("LLM_API_KEY"):
+    LLM_SETTINGS["api_key"] = os.environ["LLM_API_KEY"]
+if os.environ.get("LLM_PORT"):
+    LLM_SETTINGS["port"] = int(os.environ["LLM_PORT"])
+if os.environ.get("LLM_MODEL"):
+    LLM_SETTINGS["default_model"] = os.environ["LLM_MODEL"]
+
+# Environment variable overrides for AUDIO settings
+
 if os.environ.get("TTS_ENGINE"):
     AUDIO_SETTINGS["default_tts_engine"] = os.environ["TTS_ENGINE"]
 if os.environ.get("AUDIO_DEVICE"):
@@ -87,10 +104,23 @@ DEFAULTS = {
 
 # Output directories
 OUTPUT_DIR = Path("chapters")
-VOICE_SAMPLES_DIR = Path(AUDIO_SETTINGS.get("voice_samples_dir", "character_voice_samples"))
+# VOICE_SAMPLES_DIR is already defined above in AUDIO_SETTINGS section
 
 # Default EPUB file for Gradio interface
 DEFAULT_EPUB_FILE = SCRIPT_DIR.parent / "voice_test" / "test_pride_and_prejudice.epub"
+
+
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
+
+def get_llm_port() -> int:
+    """Get the LLM port from settings.
+
+    Returns:
+        LLM port number (default: 8080)
+    """
+    return LLM_SETTINGS["port"]
 
 # File patterns
 CHAPTER_PATTERN = "chapter_*.txt"

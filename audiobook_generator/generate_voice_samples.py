@@ -50,11 +50,8 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
     if device is None:
         device = AUDIO_SETTINGS["default_device"]
 
-    # Validate description
-    if not description or not description.strip():
-        if verbose:
-            print(f"    ERROR: Skipping '{character_name}' due to empty description")
-        return False, None, 0
+    # Description no longer used - voice generation uses static string from config
+    # Kept for API compatibility but not validated
 
     # Create VoiceMapper and generate voice sample
     engine = tts_engine or AUDIO_SETTINGS.get("default_tts_engine", "kugelaudio")
@@ -238,17 +235,12 @@ def generate_voice_samples(
         failed = []
         total_chars = len(descriptions)
 
-        # Validate and print descriptions summary
+        # Note: Descriptions are no longer used for voice generation
+        # Voices use static text from config instead
         if verbose:
             print("\n" + "=" * 60)
-            print("Character Descriptions Summary:")
-            print("=" * 60)
-            for char_name, char_desc in descriptions.items():
-                desc_preview = char_desc.strip()[:100].replace("\n", " ")
-                print(f"  {char_name}:")
-                print(f"    Description: {desc_preview}...")
-                if not char_desc or not char_desc.strip():
-                    print(f"    WARNING: Empty or whitespace-only description!")
+            print("NOTE: Character descriptions are no longer used for voice generation.")
+            print("      Voices use a static string from config instead.")
             print("=" * 60 + "\n")
 
         try:

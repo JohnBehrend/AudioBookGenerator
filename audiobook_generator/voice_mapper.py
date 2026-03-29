@@ -460,9 +460,8 @@ class VoiceMapper:
         if max_new_tokens is None:
             max_new_tokens = DEFAULTS["max_new_tokens"]
 
-        # Use the character description as the speech text
-        # This allows the voice to reflect the character's described traits
-        sample_text = description.strip() if description else "The quick brown fox jumps over the lazy dog."
+        # Use the static voice text from config for high emotional range
+        sample_text = DEFAULTS["static_voice_text"]
 
         # Validate description
         if not description or not description.strip():

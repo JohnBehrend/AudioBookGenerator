@@ -86,7 +86,8 @@ DEFAULTS = {
     # Audio generation defaults
     "cfg_scale": 1.30,
     "short_text_postfix": "and also with you?",
-    "static_voice_description": "A clear, expressive voice speaking with natural rhythm and emotion.",
+    # Static text for voice generation - 10 seconds, high emotional range
+    "static_voice_text": "I cannot believe it! After all these years, it's finally here for us to bask in the warm glow of the future.",
     "validation_model_name": "large-v2",
     "min_silence_len": 1250,
     "silence_thresh": -60,

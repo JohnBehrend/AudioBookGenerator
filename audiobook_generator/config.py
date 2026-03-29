@@ -22,10 +22,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # ============================================================================
 
 LLM_SETTINGS = {
-    "endpoint": "http://localhost:1234/v1",
+    "endpoint": "http://localhost:8080/v1",
     "api_key": "lm-studio",
-    "port": "1234",
-    "default_model": "local-model",
+    "port": "8080",
+    "default_model": "qwen3-model",
 }
 
 # Environment variable overrides

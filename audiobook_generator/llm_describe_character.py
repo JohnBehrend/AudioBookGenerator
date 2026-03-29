@@ -770,7 +770,7 @@ def describe_characters(
     chapters_dir: str = "chapters",
     api_key: str = None,
     port: str = None,
-    model: str = "local-model",
+    model: str = "qwen3-model",
     single_character: Optional[str] = None,
     wiki_url_template: str = "",
     verbose: bool = False,

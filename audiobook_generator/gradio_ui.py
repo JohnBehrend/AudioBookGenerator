@@ -103,22 +103,6 @@ def get_duplicate_replacement_map_file() -> Optional[Path]:
     return chapters_dir / "duplicate_replacement_map.json"
 
 
-def cleanup_temp_dir() -> None:
-    """Clean up the temporary directory when done."""
-    # Use get_chapters_dir from utils to get and cleanup the temp directory
-    # This handles both CLI (which uses get_chapters_dir's _temp_context) and Gradio
-    if hasattr(get_chapters_dir, "_temp_context") and get_chapters_dir._temp_context:
-        try:
-            get_chapters_dir._temp_context.cleanup()
-        except Exception:
-            pass
-        get_chapters_dir._temp_dir = None
-        get_chapters_dir._chapters_dir = None
-        get_chapters_dir._temp_context = None
-
-
-
-
 def get_all_character_wav_files(chapters_dir: Path) -> Dict[str, str]:
     """Get all generated character WAV files."""
     wav_files = {}
@@ -155,9 +139,18 @@ def parse_epub_to_file(
         # Create PipelineState
         state = PipelineState(str(chapters_dir))
 
+        # Check if EPUB is already parsed (resume from existing state)
+        existing_chapter_files = sorted(chapters_dir.glob("chapter_*.txt"))
+        if existing_chapter_files:
+            # EPUB already parsed - preserve existing progress
+            log_msg = f"=== Stage 1: EPUB already parsed ({len(existing_chapter_files)} chapters found) ===\n"
+            log_msg += "Preserving existing state. To start fresh, use 'Load Temp' with a different directory.\n"
+            state.chapters = parse_chapter.load_chapters_from_txt(str(chapters_dir), max_chapters=int(max_chapters) if max_chapters else None)
+            state.pipeline_state = "epub_parsed"
+            return log_msg, state
+
         # Clean up existing files in the chapters directory before starting fresh
-        if chapters_dir.exists():
-            for item in chapters_dir.iterdir():
+        for item in chapters_dir.iterdir():
                 if item.is_file():
                     item.unlink()
                 elif item.is_dir():
@@ -231,6 +224,11 @@ def process_chapters_for_labels(
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 2: Run LLM to label speakers in all chapters."""
+    if pipeline_state is None:
+        progress(1.0, desc="Pipeline state not initialized. Please run Stage 1 (Parse EPUB) first.")
+        log_output += "\nPipeline state not initialized. Please run Stage 1 (Parse EPUB) first."
+        return log_output, None
+
     chapters_dir = get_chapters_dir()
     if not chapters_dir:
         progress(1.0, desc=f"Error: Chapters directory not initialized. (temp: {chapters_dir.parent})")
@@ -245,12 +243,29 @@ def process_chapters_for_labels(
         log_output += "\nNo chapter files found. Please run Stage 1 (Parse EPUB) first."
         return log_output, pipeline_state
 
+    # Check for existing map files (resume from partial completion)
+    existing_map_files = get_chapter_map_files(chapters_dir)
+    labeled_chapters = {int(f.name.replace("chapter_", "").replace(".map.json", ""))
+                       for f in existing_map_files}
+
     num_chapters = len(chapter_files)
+    num_labeled = len(labeled_chapters)
+
+    if num_labeled > 0:
+        log_output += f"\nFound {num_labeled} already labeled chapters (resume mode). Processing remaining..."
+        log_output += f" (temp: {chapters_dir.parent})"
+
     log_output += f"\nProcessing {num_chapters} chapters with LLM... (temp: {chapters_dir.parent})"
 
     all_character_names = set()
 
     for i, chapter_file in enumerate(chapter_files):
+        # Skip if already labeled
+        if i in labeled_chapters:
+            progress((i + 1) / num_chapters, desc=f"Skipping chapter {i + 1}/{num_chapters} (already labeled)... (temp: {chapters_dir.parent})")
+            log_output += f"\nSkipping chapter {i + 1} (already labeled)"
+            continue
+
         progress(i / num_chapters, desc=f"Labeling speakers in chapter {i + 1}/{num_chapters}... (temp: {chapters_dir.parent})")
         log_output += f"\nProcessing: {chapter_file}"
 
@@ -303,6 +318,11 @@ def describe_characters_ui(
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 3: Use LLM to describe characters."""
+    if pipeline_state is None:
+        progress(1.0, desc="Pipeline state not initialized. Please run Stage 2 (Label Speakers) first.")
+        log_output += "\nPipeline state not initialized. Please run Stage 2 (Label Speakers) first."
+        return log_output, None
+
     progress(0, desc="Starting character description generation...")
     log_output += "\n\nGenerating character descriptions..."
 
@@ -317,6 +337,18 @@ def describe_characters_ui(
         if not map_files:
             log_output += "\nNo .map.json files found. Please run Stage 2 (Label Speakers) first."
             return log_output, pipeline_state
+
+        # Check if descriptions already exist (resume mode)
+        descriptions_file = get_characters_descriptions_file()
+        if descriptions_file and descriptions_file.exists():
+            with open(descriptions_file, "r", encoding="utf-8") as f:
+                existing_descriptions = json.load(f)
+            if existing_descriptions:
+                log_output += f"\nFound existing character descriptions ({len(existing_descriptions)} characters) - preserving (resume mode). (temp: {chapters_dir.parent})"
+                pipeline_state.character_descriptions = existing_descriptions
+                pipeline_state.pipeline_state = "characters_described"
+                log_output += f" State: {pipeline_state.pipeline_state}"
+                return log_output, pipeline_state
 
         # Get characters from existing state
         characters = pipeline_state.get_characters()
@@ -367,6 +399,11 @@ def generate_voice_samples(
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 4: Generate voice samples for each character."""
+    if pipeline_state is None:
+        progress(1.0, desc="Pipeline state not initialized. Please run Stage 3 (Describe Characters) first.")
+        log_output += "\nPipeline state not initialized. Please run Stage 3 (Describe Characters) first."
+        return log_output, None
+
     log_output += "\n\nGenerating voice samples..."
 
     try:
@@ -386,6 +423,9 @@ def generate_voice_samples(
             descriptions = json.load(f)
 
         num_characters = len(descriptions)
+        if num_characters == 0:
+            log_output += "\nNo characters found in descriptions. Please run Stage 3 (Describe Characters) first."
+            return log_output, pipeline_state
         log_output += f"\nFound {num_characters} characters to process. (temp: {chapters_dir.parent})"
 
         # Get TTS engine from environment variable or config default
@@ -412,7 +452,6 @@ def generate_voice_samples(
         return log_output, pipeline_state
 
     except Exception as e:
-        import traceback
         log_output += f"\nError generating voice samples: {str(e)}"
         log_output += f"\n{traceback.format_exc()}"
         return log_output, pipeline_state
@@ -473,7 +512,6 @@ def regenerate_voice_sample(
         return log_output, pipeline_state, wav_path
 
     except Exception as e:
-        import traceback
         log_output += f"\nError regenerating voice sample: {str(e)}"
         log_output += f"\n{traceback.format_exc()}"
         return log_output, pipeline_state, None
@@ -504,6 +542,11 @@ def generate_tts_audio(
     Returns:
         Tuple of (log_output, pipeline_state)
     """
+    if pipeline_state is None:
+        progress(1.0, desc="Pipeline state not initialized. Please run Stage 4 (Generate Voices) first.")
+        log_output += "\nPipeline state not initialized. Please run Stage 4 (Generate Voices) first."
+        return log_output, None
+
     log_output += "\n\n=== Stage 5.1: Generating TTS Audio ==="
     progress(0, desc=f"Starting TTS audio generation... (temp: {get_chapters_dir().parent})")
     try:
@@ -531,18 +574,14 @@ def generate_tts_audio(
         # Load seed voices if provided
         seed_characters = load_seed_characters(seed_voice_map)
 
-        # Create voices_map: character_name -> voice_path (wav file)
         voices_map = {}
-        # Start with seed characters (they already have voice samples)
         if seed_characters:
             for char_name, voice_path in seed_characters.items():
-                # Store just the filename (not full path) for consistency
                 voices_map[char_name] = os.path.basename(voice_path)
             progress(0, desc=f"Loaded {len(seed_characters)} seeded voices from seed voice map")
 
         for char_name in descriptions.keys():
             progress(0, desc=f"Finding voice sample for character: {char_name}... (temp: {chapters_dir.parent})")
-            # Skip if already in seed characters
             if char_name in voices_map:
                 continue
             wav_path = get_character_wav_file(char_name, chapters_dir)
@@ -619,7 +658,6 @@ def generate_tts_audio(
         return log_output, pipeline_state
 
     except Exception as e:
-        import traceback
         log_output += f"\nError generating TTS audio: {str(e)}"
         log_output += f"\n{traceback.format_exc()}"
         return log_output, pipeline_state
@@ -957,13 +995,19 @@ def create_interface(
             describe_btn = gr.Button("3. Describe", variant="secondary", scale=1, interactive=False)
             voice_samples_btn = gr.Button("4. Voices", variant="secondary", scale=1, interactive=False)
             tts_btn = gr.Button("Read Chapters", variant="primary", scale=1, interactive=False)
+        # Initialize log label based on restored state
+        if saved_temp_dir:
+            restored_state, restore_msg = restore_pipeline_state(saved_temp_dir)
+            initial_log_label = f"=== Session Restored ===\n{restore_msg}"
+        else:
+            initial_log_label = "Log (State: Ready)"
+            restored_state = None
+
         with gr.Row():
-            # Log output with state on same element
-            log_output = gr.Textbox(label="Log (State: Ready)", lines=3, max_lines=3, interactive=False)
+            log_output = gr.Textbox(label=initial_log_label, lines=3, max_lines=3, interactive=False)
         with gr.Row():
             stop_btn = gr.Button("Stop", variant="stop", scale=1)
             save_temp_btn = gr.Button("Save Temp", variant="secondary", scale=1)
-            load_temp_btn = gr.Button("Load Temp", variant="secondary", scale=1)
         with gr.Row():
             with gr.Tab("Characters"):
                 # Character info
@@ -986,8 +1030,7 @@ def create_interface(
                 generate_chap_btn = gr.Button("Regen", variant="secondary", scale=0, visible=False)
 
         # Use PipelineState as the unified state for both CLI and Gradio
-        # This replaces separate gr.State() for chapters, characters, and pipeline_state
-        pipeline_state_obj = gr.State(None)
+        pipeline_state_obj = gr.State(restored_state)
 
         # ============================================================================
         # EVENT HANDLERS
@@ -1155,8 +1198,16 @@ def create_interface(
             if not temp_dir:
                 return "No temp directory to save"
             try:
+                # Check if there's any work to save
+                chapters_dir = Path(temp_dir) / "chapters"
+                chapter_files = list(chapters_dir.glob("chapter_*.txt")) if chapters_dir.exists() else []
+                if not chapter_files:
+                    return "No work to save. Please parse an EPUB file first."
                 archive_path = save_temp_dir(temp_dir)
-                return f"Saved to: {archive_path}"
+                # Show the chapters directory path for consistency
+                from utils import get_chapters_dir
+                chapters_dir = get_chapters_dir()
+                return f"Saved to: {archive_path}\nChapters: {chapters_dir}"
             except Exception as e:
                 return f"Error saving: {str(e)}"
 
@@ -1184,6 +1235,28 @@ def create_interface(
             outputs=saved_audiobooks_dropdown
         )
 
+        # Initialize UI state on load (shows restored state if available)
+        def initialize_ui(pipeline_state, current_log):
+            """Initialize UI with restored state."""
+            if pipeline_state:
+                # Update button visibility based on restored state
+                button_updates = update_button_visibility_from_state(pipeline_state)
+                # Update character table
+                char_table = update_character_table_from_state(pipeline_state)
+                # Prepend restoration message to existing log
+                new_log = f"=== Session Restored ===\n{current_log}"
+                return (new_log, char_table, *button_updates)
+            return (current_log, gr.update(),
+                    *[gr.update() for _ in range(7)])
+
+        if saved_temp_dir:
+            demo.load(
+                fn=initialize_ui,
+                inputs=[pipeline_state_obj, log_output],
+                outputs=[log_output, character_table,
+                         parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
+            )
+
         # Load selected audiobook
         def load_selected_audiobook(archive_path):
             """Load a saved audiobook from archive and initialize state."""
@@ -1195,8 +1268,12 @@ def create_interface(
                 # Load the archive and extract to a new temp dir
                 temp_dir = load_temp_dir(archive_path)
                 if temp_dir:
-                    temp_dir_display.value = temp_dir
-                    return f"Loaded: {temp_dir}"
+                    # Get the chapters directory path for display
+                    from utils import get_chapters_dir_from_saved
+                    chapters_dir = get_chapters_dir_from_saved(temp_dir)
+                    # Note: Pipeline state is not automatically restored here.
+                    # User should use --resume_from at startup for full state restoration.
+                    return f"Loaded: {chapters_dir}\nNote: Refresh page to see restored state."
                 return "Failed to load archive"
             except Exception as e:
                 return f"Error loading: {str(e)}"
@@ -1207,7 +1284,7 @@ def create_interface(
         load_selected_btn.click(
             fn=load_selected_audiobook,
             inputs=saved_audiobooks_dropdown,
-            outputs=temp_dir_display,
+            outputs=log_output,
         ).then(
             fn=refresh_saved_audiobooks,
             inputs=None,
@@ -1224,11 +1301,63 @@ def create_interface(
     if saved_temp_dir:
         from utils import get_chapters_dir_from_saved
         chapters_dir = get_chapters_dir_from_saved(saved_temp_dir)
-        temp_dir_display.value = saved_temp_dir
+        temp_dir_display.value = str(chapters_dir)
     else:
         temp_dir_display.value = get_temp_dir()
 
     return demo
+
+
+def restore_pipeline_state(saved_temp_dir: str) -> Tuple[PipelineState, str]:
+    """Restore PipelineState from a saved temp directory.
+
+    Args:
+        saved_temp_dir: Path to the saved temp directory
+
+    Returns:
+        Tuple of (PipelineState, log_message)
+    """
+    from utils import get_chapters_dir_from_saved
+
+    chapters_dir = get_chapters_dir_from_saved(saved_temp_dir)
+    state = PipelineState(str(chapters_dir))
+
+    log_msg = f"Restoring state from: {saved_temp_dir}\n"
+
+    # Detect pipeline state
+    state.pipeline_state = state.get_pipeline_state()
+    log_msg += f"Detected state: {state.pipeline_state}\n"
+
+    # Load existing data based on state
+    # Always load chapters if they exist (applies to all non-initial states)
+    chapter_files = sorted(chapters_dir.glob("chapter_*.txt"))
+    if chapter_files and state.pipeline_state != "initial":
+        state.chapters = parse_chapter.load_chapters_from_txt(str(chapters_dir))
+        log_msg += f"Loaded {len(state.chapters)} chapter(s)\n"
+
+    if state.pipeline_state in ["labels_complete", "characters_described", "voice_samples_complete", "audiobook_complete"]:
+        # Load chapter maps
+        state.load_chapter_maps()
+        log_msg += f"Loaded {len(state.chapter_maps)} chapter map(s)\n"
+
+        # Load characters
+        state.get_characters()
+        log_msg += f"Found {len(state.characters)} character(s)\n"
+
+    if state.pipeline_state in ["characters_described", "voice_samples_complete", "audiobook_complete"]:
+        # Load character descriptions
+        state.load_character_descriptions()
+        log_msg += f"Loaded {len(state.character_descriptions)} description(s)\n"
+
+    if state.pipeline_state in ["voice_samples_complete", "audiobook_complete"]:
+        # Load voice map
+        state.load_voice_map()
+        log_msg += f"Loaded {len(state.voice_map)} voice mapping(s)\n"
+
+    if state.pipeline_state == "initial":
+        log_msg += "No previous work found. Start by parsing an EPUB file.\n"
+
+    return state, log_msg
 
 
 def refresh_saved_audiobooks() -> gr.update:

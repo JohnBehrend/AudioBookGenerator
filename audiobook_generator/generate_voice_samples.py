@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import shutil
+import traceback
 from typing import Optional
 
 # Import config for default values
@@ -72,7 +73,6 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
         return success, output_file, duration
 
     except Exception as e:
-        import traceback
         print(f"    Error: {e}", file=sys.stderr)
         print(f"    Exception type: {type(e).__name__}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
@@ -253,26 +253,23 @@ def generate_voice_samples(
                     progress((i + 1) / total_chars, desc=f"Generating voice for '{char_name}'...")
 
                 # Check if voice sample already exists (resume mode)
-                # First check in voices_map (for already generated voices)
                 if char_name in generated:
                     if verbose:
-                        print(f"    Skipped - already generated (in generated dict)")
+                        print(f"    Skipped - already generated")
                     continue
 
                 # Check for existing voice file in output_dir
-                voice_file = None
+                voice_found = False
                 for ext in [".wav", ".mp3", ".flac"]:
                     test_path = os.path.join(output_dir, f"{char_name}{ext}")
                     if os.path.exists(test_path):
-                        voice_file = test_path
+                        generated[char_name] = test_path
                         if verbose:
-                            print(f"    Found existing voice: {voice_file}")
+                            print(f"    Found existing voice: {test_path}")
+                        voice_found = True
                         break
 
-                if voice_file is not None:
-                    generated[char_name] = voice_file
-                    if verbose:
-                        print(f"    Skipped - voice already exists")
+                if voice_found:
                     continue
 
                 success, output_file, duration = generate_voice_sample(
@@ -294,7 +291,6 @@ def generate_voice_samples(
                     if verbose:
                         print(f"    Failed")
         except Exception as e:
-            import traceback
             return f"Error generating voices: {str(e)}\n{traceback.format_exc()}", {}
 
         if verbose:
@@ -309,7 +305,6 @@ def generate_voice_samples(
         return f"Successfully generated {len(generated)} voice sample(s).", generated
 
     except Exception as e:
-        import traceback
         error_msg = f"Error generating voice samples: {str(e)}\n{traceback.format_exc()}"
         if verbose:
             print(error_msg)

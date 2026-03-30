@@ -23,6 +23,7 @@ import json
 import re
 import glob
 import gc
+import traceback
 from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
 
@@ -69,9 +70,7 @@ from utils import (
     get_chapters_dir,
     get_temp_dir,
     cleanup_temp_dir,
-    save_temp_dir,
     load_temp_dir,
-    get_available_saved_audiobooks,
     get_chapters_dir_from_saved,
     ProgressHandler,
     copy_mp3_files_to_chapters,
@@ -1011,7 +1010,6 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         return f"Audiobook generation complete! Generated {len(mp3_files)} chapter MP3 files."
 
     except Exception as e:
-        import traceback
         error_msg = f"Error in Stage 5: {str(e)}\n{traceback.format_exc()}"
         if verbose:
             print(error_msg)
@@ -1099,20 +1097,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run full pipeline with temp folder that persists
-  audiobook_generator.py book.epub --save_temp
+  # Run full pipeline with temp folder kept for later resume
+  audiobook_generator.py book.epub --keep_temp
 
-  # List saved audiobooks
-  audiobook_generator.py --list_saved
-
-  # Resume from last saved audiobook
-  audiobook_generator.py --resume_latest
-
-  # Resume from specific saved audiobook
-  audiobook_generator.py --resume_from /path/to/archive.zip
+  # Resume from a specific temp directory
+  audiobook_generator.py --resume_from /path/to/temp/dir
 
   # Launch Gradio with saved state
-  audiobook_generator.py --gradio --resume_latest
+  audiobook_generator.py --gradio --resume_from /path/to/temp/dir
         """
     )
     parser.add_argument("epub_file", nargs="?", help="Path to the EPUB file")
@@ -1129,61 +1121,30 @@ Examples:
     parser.add_argument("-num_llm_attempts", type=int, default=DEFAULTS["num_llm_attempts"], help="Number of LLM attempts for speaker labeling")
     parser.add_argument("-gradio_port", type=int, default=None, help="Port for Gradio web interface")
     parser.add_argument("-seed_voice_map", help="Path to existing voices_map.json to seed voices")
-    parser.add_argument("--save_temp", action="store_true", help="Save temp directory as zip archive for later recovery")
-    parser.add_argument("--list_saved", action="store_true", help="List all saved audiobook archives")
-    parser.add_argument("--resume_latest", action="store_true", help="Resume from the most recently saved audiobook")
-    parser.add_argument("--resume_from", help="Resume from a specific saved audiobook archive path")
+    parser.add_argument("--keep_temp", action="store_true", help="Keep temp directory on exit (don't clean up or copy to ./chapters/)")
+    parser.add_argument("--resume_from", help="Resume from a specific temp directory path")
 
     args = parser.parse_args()
 
-    # Handle list saved audiobooks
-    if args.list_saved:
-        saved = get_available_saved_audiobooks()
-        if saved:
-            print("\nSaved Audiobooks:")
-            print("-" * 80)
-            for i, a in enumerate(saved, 1):
-                print(f"{i}. {a['name']} ({a['timestamp']})")
-                print(f"   Archive: {a['archive']}")
-                print(f"   Temp: {a['temp_dir']}")
-            print("-" * 80)
-            print(f"Total: {len(saved)} saved audiobook(s)")
-        else:
-            print("No saved audiobooks found.")
-        sys.exit(0)
-
-    # Handle --resume_latest and --resume_from
+    # Handle --resume_from
     saved_temp_dir = None
-    resume_from_archive = None
-
-    if args.resume_latest:
-        saved = get_available_saved_audiobooks()
-        if saved:
-            # Get the latest archive
-            latest = saved[0]  # Already sorted by mtime (most recent first)
-            resume_from_archive = latest['archive']
-            print(f"Resuming from latest saved audiobook: {latest['name']}")
-        else:
-            print("Error: No saved audiobooks found.")
-            sys.exit(1)
+    output_dir = args.output_dir
 
     if args.resume_from:
-        resume_from_archive = args.resume_from
-
-    # Extract archive if loading from saved
-    if resume_from_archive:
-        archive_path = Path(resume_from_archive)
-        if not archive_path.exists():
-            print(f"Error: Archive not found: {resume_from_archive}")
+        resume_path = Path(args.resume_from)
+        if resume_path.is_dir():
+            saved_temp_dir = args.resume_from
+            print(f"Resuming from temp directory: {saved_temp_dir}")
+        elif resume_path.exists():
+            saved_temp_dir = load_temp_dir(str(resume_path))
+            if not saved_temp_dir:
+                print("Error: Failed to load archive.")
+                sys.exit(1)
+            output_dir = saved_temp_dir
+            print(f"Resuming from archive: {args.resume_from}")
+        else:
+            print(f"Error: Path not found: {args.resume_from}")
             sys.exit(1)
-        # Load the archive and get the temp directory
-        saved_temp_dir = load_temp_dir(str(archive_path))
-        if not saved_temp_dir:
-            print("Error: Failed to load archive.")
-            sys.exit(1)
-        output_dir = saved_temp_dir
-    else:
-        output_dir = args.output_dir
 
     if args.gradio:
         # Launch Gradio interface
@@ -1196,7 +1157,7 @@ Examples:
             max_chapters=args.max_chapters or DEFAULTS.get("max_chapters", 10),
             seed_voice_map=args.seed_voice_map,
             epub_file=args.epub_file,
-            saved_temp_dir=saved_temp_dir if (args.resume_latest or args.resume_from) else None
+            saved_temp_dir=saved_temp_dir if args.resume_from else None
         )
     else:
         # Run CLI pipeline
@@ -1213,9 +1174,10 @@ Examples:
         used_temp_dir = False
         if output_dir is None:
             used_temp_dir = True
-            # Check for resume_from_archive (from --resume_latest or --resume_from)
-            if resume_from_archive:
-                print(f"Using extracted temp directory from archive: {output_dir}")
+            # Check for saved_temp_dir (from --resume_from with archive or dir)
+            if saved_temp_dir:
+                print(f"Using saved temp directory: {saved_temp_dir}")
+                output_dir = saved_temp_dir
             else:
                 output_dir = str(get_chapters_dir())
                 print(f"Using temporary directory: {get_temp_dir()}")
@@ -1232,25 +1194,16 @@ Examples:
             device=args.device,
             seed_voice_map=args.seed_voice_map,
             num_llm_attempts=args.num_llm_attempts,
-            resume=(resume_from_archive is not None)
+            resume=(saved_temp_dir is not None)
         )
 
         print(status)
 
-        # Save temp directory as archive if --save_temp was specified
-        if args.save_temp:
-            try:
-                archive_path = save_temp_dir(output_dir)
-                print(f"\nTemp directory saved to archive: {archive_path}")
-                print(f"Use --list_saved to view, --resume_from to restore.")
-            except Exception as e:
-                print(f"Warning: Failed to save temp directory: {e}")
-
-        # Copy MP3 files to ./chapters/ if we used a temporary directory
+        # Handle temp directory cleanup
         if used_temp_dir:
-            if args.save_temp:
-                print(f"\nTemp directory archived for recovery.")
-                print(f"Use --list_saved to view saved archives, --resume_from to restore.")
+            if args.keep_temp:
+                print(f"\nTemp directory kept: {output_dir}")
+                print(f"Use --resume_from {output_dir} to resume from this directory.")
             else:
                 copy_mp3_files_to_chapters(output_dir)
                 print(f"\nMP3 files have been copied to ./chapters/ directory.")

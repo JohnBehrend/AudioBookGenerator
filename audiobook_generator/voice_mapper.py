@@ -12,6 +12,7 @@ This module provides a centralized, stateful VoiceMapper class that:
 import os
 import json
 import gc
+import traceback
 import torch
 from typing import Dict, Tuple, Optional, Any
 from pathlib import Path
@@ -518,7 +519,6 @@ class VoiceMapper:
             return True, output_file, duration
 
         except Exception as e:
-            import traceback
             print(f"    Error generating voice with MOSS-TTS: {e}")
             print(f"    Exception type: {type(e).__name__}")
             traceback.print_exc()

@@ -14,7 +14,7 @@ import zipfile
 import datetime
 from pathlib import Path
 from collections import Counter
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List, Union
 from openai import OpenAI
 
 from config import LLM_SETTINGS
@@ -220,13 +220,11 @@ def save_temp_dir(temp_dir: str) -> str:
     archive_name = f"audiobook_{timestamp}"
     archive_path = saved_dir / f"{archive_name}.zip"
 
-    # Create zip archive of the temp directory
     print(f"Creating zip archive: {archive_path}")
     with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         for item in temp_path.rglob('*'):
             if item.is_file():
-                # Store relative path in archive
-                arcname = item.relative_to(temp_path.parent)
+                arcname = item.relative_to(temp_path)
                 zip_file.write(item, arcname)
 
     # Save metadata
@@ -279,27 +277,31 @@ def load_temp_dir(archive_path: Optional[str] = None) -> Optional[str]:
 
     # Create a new temp directory for extraction
     temp_context = tempfile.TemporaryDirectory(prefix="jbab_resumed_")
-    extract_dir = Path(temp_context.name) / "chapters"
-    extract_dir.mkdir(parents=True, exist_ok=True)
+    extract_dir = Path(temp_context.name)
 
     # Extract the archive
     with zipfile.ZipFile(archive_file, 'r') as zip_file:
-        zip_file.extractall(extract_dir.parent)
+        zip_file.extractall(extract_dir)
 
-    print(f"Extracted to: {extract_dir.parent}")
+    chapters_dir = extract_dir / "chapters"
+    if not chapters_dir.exists():
+        chapters_dir = extract_dir
+
+    print(f"Extracted to: {extract_dir}")
+    print(f"Chapters directory: {chapters_dir}")
 
     # Save the new temp dir path for get_chapters_dir to use
     _reset_chapters_dir_internal()
 
     # Set up the extracted directory as the temp directory
-    get_chapters_dir._temp_dir = str(extract_dir.parent)
-    get_chapters_dir._chapters_dir = extract_dir
+    get_chapters_dir._temp_dir = str(extract_dir)
+    get_chapters_dir._chapters_dir = chapters_dir
     get_chapters_dir._temp_context = temp_context  # Register cleanup on exit
 
     # Register cleanup on normal exit
     atexit.register(cleanup_temp_dir)
 
-    return str(extract_dir.parent)
+    return str(extract_dir)
 
 
 def get_available_saved_audiobooks() -> List[Dict[str, str]]:
@@ -320,7 +322,9 @@ def get_available_saved_audiobooks() -> List[Dict[str, str]]:
             latest_metadata = json.load(f)
 
     archives = []
-    for archive_file in sorted(saved_dir.glob("*.zip"), key=lambda x: x.stat().st_mtime, reverse=True):
+    # Pre-compute mtime to avoid repeated stat calls
+    archives_data = [(f, f.stat().st_mtime) for f in saved_dir.glob("*.zip")]
+    for archive_file, _ in sorted(archives_data, key=lambda x: x[1], reverse=True):
         # Use metadata from latest_saved_audiobook.json if it matches this archive
         if latest_metadata.get("archive") == str(archive_file):
             meta = latest_metadata
@@ -545,15 +549,22 @@ def get_character_wav_file(character_name: str, chapters_dir: Path) -> Optional[
     return None
 
 
-def load_seed_characters(seed_voice_map: str) -> Optional[Dict[str, str]]:
+def load_seed_characters(seed_voice_map: Optional[Union[str, Dict]]) -> Optional[Dict[str, str]]:
     """Load seed characters from a voices_map.json file.
 
     Args:
-        seed_voice_map: Path to the seed voices_map.json file
+        seed_voice_map: Path to the seed voices_map.json file, or a dict/FileData from Gradio
 
     Returns:
         Dict mapping character names to voice file paths, or None if file not found
     """
+    if not seed_voice_map:
+        return None
+
+    # Handle Gradio File component output (can be dict with 'name' key or path string)
+    if isinstance(seed_voice_map, dict):
+        seed_voice_map = seed_voice_map.get('name')
+
     if not seed_voice_map or not os.path.exists(seed_voice_map):
         return None
 
@@ -655,7 +666,6 @@ def parse_map_file(map_file: Path) -> Optional[Tuple[Dict[int, str], Dict[int, i
         else:
             return None
 
-        # Convert keys to integers
         char_map = {int(k): v for k, v in char_map.items()}
         line_map = {int(k): v for k, v in line_map.items()}
 

@@ -200,12 +200,13 @@ class VoiceMapper:
             from kugelaudio_open.models.kugelaudio_inference import KugelAudioForConditionalGenerationInference
 
             model_path = TTS_MODEL_PATHS["kugelaudio"]["turbo"] if turbo else TTS_MODEL_PATHS["kugelaudio"]["base"]
+            # Load model without device_map to avoid meta tensor issues, then move to device explicitly
             tts_model = KugelAudioForConditionalGenerationInference.from_pretrained(
                 model_path,
                 torch_dtype=torch.bfloat16,
-                device_map=self.device,
                 **attn_kwargs,
             )
+            tts_model = tts_model.to(self.device)
             tts_model.eval()
             processor = KugelAudioProcessor.from_pretrained(model_path)
             result = (tts_model, processor, model_path, None)

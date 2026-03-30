@@ -976,9 +976,17 @@ def create_interface(
 
             # Temp directory display
             temp_dir_display = gr.Textbox(
-                label="Temp Directory (click 'Load' or 'Save')",
+                label="Temp Directory",
                 interactive=False,
-                info="Current temp directory path. Click 'Save Temp' to preserve, 'Load Temp' to restore.",
+                info="Current temp directory path.",
+            )
+
+            # Load temp directory from path
+            load_temp_path_input = gr.Textbox(
+                label="Load Temp Path",
+                interactive=True,
+                info="Enter path to a saved temp directory or zip archive to load.",
+                scale=2,
             )
 
             # Seed voice map
@@ -1008,6 +1016,7 @@ def create_interface(
         with gr.Row():
             stop_btn = gr.Button("Stop", variant="stop", scale=1)
             save_temp_btn = gr.Button("Save Temp", variant="secondary", scale=1)
+            load_temp_btn = gr.Button("Load Temp", variant="secondary", scale=1)
         with gr.Row():
             with gr.Tab("Characters"):
                 # Character info
@@ -1214,6 +1223,56 @@ def create_interface(
         save_temp_btn.click(
             fn=save_temp_handler,
             inputs=None,
+            outputs=temp_dir_display,
+        )
+
+        # Load temp directory from path input
+        def load_temp_handler(path: str) -> str:
+            """Load from a saved temp directory path.
+
+            Args:
+                path: Path to the saved temp directory or zip archive
+
+            Returns:
+                Status message
+            """
+            if not path or not path.strip():
+                return "Please enter a path to load."
+
+            path = path.strip()
+            path_obj = Path(path)
+
+            if not path_obj.exists():
+                return f"Error: Path does not exist: {path}"
+
+            try:
+                # Handle zip archives
+                if path_obj.suffix == ".zip":
+                    temp_dir = load_temp_dir(str(path_obj))
+                else:
+                    # It's a directory - check if it contains a zip or is an extracted dir
+                    if path_obj.is_dir():
+                        # Look for a zip file inside or use the directory directly
+                        zip_files = list(path_obj.glob("*.zip"))
+                        if zip_files:
+                            temp_dir = load_temp_dir(str(zip_files[0]))
+                        else:
+                            # Assume it's an extracted directory - set it up directly
+                            from utils import get_chapters_dir_from_saved
+                            chapters_dir = get_chapters_dir_from_saved(path)
+                            temp_dir = str(chapters_dir.parent)
+                    else:
+                        temp_dir = load_temp_dir(str(path_obj))
+
+                if temp_dir:
+                    return f"Loaded: {temp_dir}\nNote: Refresh page to see restored state."
+                return "Failed to load archive."
+            except Exception as e:
+                return f"Error loading: {str(e)}"
+
+        load_temp_btn.click(
+            fn=load_temp_handler,
+            inputs=load_temp_path_input,
             outputs=temp_dir_display,
         )
 

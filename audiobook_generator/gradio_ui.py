@@ -815,31 +815,38 @@ def create_or_get_pipeline_state(output_dir: str = None) -> PipelineState:
     return PipelineState(output_dir)
 
 
-def get_next_step_recommendation(state: Optional[str]) -> str:
-    """Get a recommendation for the next step based on pipeline state."""
-    recommendations = {
-        None: "Upload an EPUB file and click '1. Parse' to begin.",
-        "epub_parsed": "Click '2. Label' to use LLM for speaker labeling.",
-        "labels_complete": "Click '3. Describe' to generate character descriptions.",
-        "characters_described": "Click '4. Voices' to generate voice samples for each character.",
-        "voice_samples_complete": "Click 'Read Chapters' to generate the full audiobook.",
-        "audiobook_complete": "Audiobook generation complete! You can start a new project.",
-    }
-    return recommendations.get(state, "Unknown state.")
+STATE_LABELS = {
+    None: "Ready",
+    "epub_parsed": "EPUB Parsed",
+    "labels_complete": "Speakers Labeled",
+    "characters_described": "Characters Described",
+    "voice_samples_complete": "Voice Samples Ready",
+    "audiobook_complete": "Audiobook Complete",
+}
+
+BUTTON_STATES = {
+    None: [True, False, False, False, False, False],
+    "epub_parsed": [True, True, False, False, False, False],
+    "labels_complete": [True, True, True, False, False, False],
+    "characters_described": [True, True, True, True, True, False],
+    "voice_samples_complete": [True, True, True, True, True, True],
+    "audiobook_complete": BUTTON_STATES.get("voice_samples_complete", [True, True, True, True, True, True]),
+}
+
+RECOMMENDATIONS = {
+    None: "Upload an EPUB file and click '1. Parse' to begin.",
+    "epub_parsed": "Click '2. Label' to use LLM for speaker labeling.",
+    "labels_complete": "Click '3. Describe' to generate character descriptions.",
+    "characters_described": "Click '4. Voices' to generate voice samples for each character.",
+    "voice_samples_complete": "Click 'Read Chapters' to generate the full audiobook.",
+    "audiobook_complete": "Audiobook generation complete! You can start a new project.",
+}
 
 
 def update_state_display(state: Optional[str]) -> gr.Textbox:
     """Update log label with state based on pipeline state."""
-    state_labels = {
-        None: "Ready",
-        "epub_parsed": "EPUB Parsed",
-        "labels_complete": "Speakers Labeled",
-        "characters_described": "Characters Described",
-        "voice_samples_complete": "Voice Samples Ready",
-        "audiobook_complete": "Audiobook Complete",
-    }
-    state_text = state_labels.get(state, "Unknown")
-    next_step = get_next_step_recommendation(state)
+    state_text = STATE_LABELS.get(state, "Unknown")
+    next_step = RECOMMENDATIONS.get(state, "Unknown state.")
     return gr.update(label=f"Log (State: {state_text}) - {next_step}")
 
 
@@ -849,38 +856,15 @@ def update_button_visibility_from_state(pipeline_state: PipelineState):
     Returns tuple of updates for all buttons and components.
     """
     state = pipeline_state.pipeline_state if pipeline_state else None
-
-    if state is None:
-        # Initial state: only Parse EPUB is enabled
-        _states = [True, False, False, False, False, False, False]
-    elif state == "epub_parsed":
-        _states = [True,  True, False, False, False, False, False]
-    elif state == "labels_complete":
-        _states = [True,  True,  True, False, False, False, False]
-    elif state == "characters_described":
-        _states = [True,  True,  True,  True,  True, False, False]
-    elif state == "voice_samples_complete":
-        _states = [True,  True,  True,  True,  True,  True, True]
-    elif state == "audiobook_complete":
-        _states = [True,  True,  True,  True,  True,  True,  True]
-    else:
-        _states = [True,  True,  True,  True,  True,  True,  True]
-    return tuple(gr.update(interactive=state) for state in _states)
+    _states = BUTTON_STATES.get(state, BUTTON_STATES["audiobook_complete"])
+    return tuple(gr.update(interactive=s) for s in _states)
 
 
 def update_state_display_from_state(pipeline_state: PipelineState) -> gr.Textbox:
     """Update log label with state based on pipeline state."""
     state = pipeline_state.pipeline_state if pipeline_state else None
-    state_labels = {
-        None: "Ready",
-        "epub_parsed": "EPUB Parsed",
-        "labels_complete": "Speakers Labeled",
-        "characters_described": "Characters Described",
-        "voice_samples_complete": "Voice Samples Ready",
-        "audiobook_complete": "Audiobook Complete",
-    }
-    state_text = state_labels.get(state, "Unknown")
-    next_step = get_next_step_recommendation(state)
+    state_text = STATE_LABELS.get(state, "Unknown")
+    next_step = RECOMMENDATIONS.get(state, "Unknown state.")
     return gr.update(label=f"Log (State: {state_text}) - {next_step}")
 
 
@@ -897,19 +881,20 @@ def update_character_table_from_state(pipeline_state: PipelineState) -> gr.Dataf
             # Get character lines from map files
             character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
 
-            # Build table data with character name, truncated description, and lines spoken
+            # Build table data with character name, truncated description, lines spoken, and audio path
             table_data = []
             for char_name, char_desc in descriptions.items():
                 truncated_desc = char_desc[:100] + ("..." if len(char_desc) > 100 else "")
                 lines_spoken = character_lines.get(char_name, 0)
-                table_data.append([char_name, truncated_desc, lines_spoken])
+                voice_file = str(chapters_dir / f"{char_name}.wav") if chapters_dir and (chapters_dir / f"{char_name}.wav").exists() else None
+                table_data.append([char_name, truncated_desc, lines_spoken, voice_file])
 
             # Sort by lines spoken (descending)
             table_data.sort(key=lambda x: x[2], reverse=True)
 
             return gr.Dataframe(
-                headers=["Character", "Description", "Lines Spoken"],
-                datatype=["str", "str", "int"],
+                headers=["Character", "Description", "Lines Spoken", "Audio"],
+                datatype=["str", "str", "int", "audio"],
                 value=table_data,
                 wrap=True,
             )
@@ -920,10 +905,10 @@ def update_character_table_from_state(pipeline_state: PipelineState) -> gr.Dataf
     if pipeline_state and pipeline_state.characters:
         if isinstance(pipeline_state.characters, list):
             # Build table data with just character names (no descriptions or line counts yet)
-            table_data = [[char_name, "", 0] for char_name in sorted(pipeline_state.characters)]
+            table_data = [[char_name, "", 0, None] for char_name in sorted(pipeline_state.characters)]
             return gr.Dataframe(
-                headers=["Character", "Description", "Lines Spoken"],
-                datatype=["str", "str", "int"],
+                headers=["Character", "Description", "Lines Spoken", "Audio"],
+                datatype=["str", "str", "int", "audio"],
                 value=table_data,
                 wrap=True,
             )
@@ -1023,27 +1008,16 @@ def create_interface(
         with gr.Row():
             log_output = gr.Textbox(label=initial_log_label, lines=3, max_lines=3, interactive=False)
         with gr.Row():
-            stop_btn = gr.Button("Stop", variant="stop", scale=1)
-        with gr.Row():
             with gr.Tab("Characters"):
                 # Character info
                 character_table = gr.Dataframe(
-                    headers=["Character", "Description", "Lines Spoken"],
-                    datatype=["str", "str", "int"],
+                    headers=["Character", "Description", "Lines Spoken", "Audio"],
+                    datatype=["str", "str", "int", "audio"],
                     wrap=True,
                     max_height=300,
                 )
                 character_audio = gr.Audio(label="", type="filepath", visible=False, scale=1)
                 generate_char_btn = gr.Button("Regen", variant="secondary", scale=0, visible=False)
-            with gr.Tab("Chapters"):
-                chapter_table = gr.Dataframe(
-                    headers=["Chapter", "Line", "Character", "Text"],
-                    datatype=["str", "str", "str", "str"],
-                    wrap=True,
-                    max_height=300,
-                )
-                chapter_audio = gr.Audio(label="", type="filepath", visible=False, scale=1)
-                generate_chap_btn = gr.Button("Regen", variant="secondary", scale=0, visible=False)
 
             # Hidden file input for Load Temp (required for button to work)
             load_temp_path_input = gr.File(
@@ -1067,7 +1041,7 @@ def create_interface(
         ).then(
             fn=update_button_visibility_from_state,
             inputs=pipeline_state_obj,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
         ).then(
             fn=update_state_display_from_state,
             inputs=pipeline_state_obj,
@@ -1082,7 +1056,7 @@ def create_interface(
         ).then(
             fn=update_button_visibility_from_state,
             inputs=pipeline_state_obj,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
         ).then(
             fn=update_state_display_from_state,
             inputs=pipeline_state_obj,
@@ -1101,7 +1075,7 @@ def create_interface(
         ).then(
             fn=update_button_visibility_from_state,
             inputs=pipeline_state_obj,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
         ).then(
             fn=update_state_display_from_state,
             inputs=pipeline_state_obj,
@@ -1120,7 +1094,7 @@ def create_interface(
         ).then(
             fn=update_button_visibility_from_state,
             inputs=pipeline_state_obj,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
         ).then(
             fn=update_state_display_from_state,
             inputs=pipeline_state_obj,
@@ -1177,7 +1151,7 @@ def create_interface(
         ).then(
             fn=update_button_visibility_from_state,
             inputs=pipeline_state_obj,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
         ).then(
             fn=update_state_display_from_state,
             inputs=pipeline_state_obj,
@@ -1196,22 +1170,11 @@ def create_interface(
         ).then(
             fn=update_button_visibility_from_state,
             inputs=pipeline_state_obj,
-            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, generate_chap_btn, tts_btn],
+            outputs=[parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
         ).then(
             fn=update_state_display_from_state,
             inputs=pipeline_state_obj,
             outputs=log_output,
-        )
-
-        # Stop button - clean up and exit
-        stop_btn.click(
-            fn=cleanup_temp_dir,
-            inputs=None,
-            outputs=None,
-        ).then(
-            fn=lambda: sys.exit(0),
-            inputs=None,
-            outputs=None,
         )
 
         # Save Temp button - save the current temp directory as a zip archive
@@ -1305,12 +1268,40 @@ def create_interface(
                 new_log = f"=== Session Restored ===\n{current_log}"
                 return (new_log, char_table, *button_updates)
             return (current_log, gr.update(),
-                    *[gr.update() for _ in range(7)])
+                    *[gr.update() for _ in range(6)])
 
         def check_and_restore_state(current_log):
-            """Check if there's a loaded state from a previous load_temp_dir call and restore it."""
-            # Auto-restore is disabled - state must be manually loaded via Load Temp button
-            return (current_log, gr.update(), gr.update(),
+            """Check if there's existing work in the temp directory and restore it."""
+            temp_dir = get_temp_dir()
+            if not temp_dir:
+                return (current_log, gr.State(None), gr.update(),
+                        *[gr.update() for _ in range(6)])
+
+            # Check for existing work
+            chapters_path = Path(temp_dir)
+            if not chapters_path.exists():
+                return (current_log, gr.State(None), gr.update(),
+                        *[gr.update() for _ in range(6)])
+
+            # Detect pipeline state from existing files
+            state = PipelineState(str(chapters_path))
+            detected_state = state.get_pipeline_state()
+
+            if detected_state != "initial":
+                # Load the actual state
+                state.pipeline_state = detected_state
+                state.load_chapter_maps()
+                state.get_characters()
+                state.load_character_descriptions()
+                state.load_voice_map()
+
+                # Update UI
+                button_updates = update_button_visibility_from_state(state)
+                char_table = update_character_table_from_state(state)
+                new_log = f"=== Session Restored ===\nState: {detected_state}\n" + current_log
+                return (new_log, gr.State(state), char_table, *button_updates)
+
+            return (current_log, gr.State(None), gr.update(),
                     *[gr.update() for _ in range(6)])
 
         # Always check for restored state on page load

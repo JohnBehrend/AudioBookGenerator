@@ -830,7 +830,7 @@ BUTTON_STATES = {
     "labels_complete": [True, True, True, False, False, False],
     "characters_described": [True, True, True, True, True, False],
     "voice_samples_complete": [True, True, True, True, True, True],
-    "audiobook_complete": BUTTON_STATES.get("voice_samples_complete", [True, True, True, True, True, True]),
+    "audiobook_complete": [True, True, True, True, True, True],
 }
 
 RECOMMENDATIONS = {
@@ -857,7 +857,50 @@ def update_button_visibility_from_state(pipeline_state: PipelineState):
     """
     state = pipeline_state.pipeline_state if pipeline_state else None
     _states = BUTTON_STATES.get(state, BUTTON_STATES["audiobook_complete"])
-    return tuple(gr.update(interactive=s) for s in _states)
+
+    # Define button labels with icons for each state
+    # Icons: ⬜ = pending, ✅ = complete, 🔵 = active (current stage)
+    # 6 buttons: parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn (Regen), tts_btn
+    button_configs = {
+        None: {
+            "buttons": ["⬜ 1. Parse", "⬜ 2. Label", "⬜ 3. Describe", "⬜ 4. Voices", "⬜ Regen", "⬜ Read Chapters"],
+            "classes": ["", "", "", "", "", ""]
+        },
+        "epub_parsed": {
+            "buttons": ["✅ 1. Parse", "🔵 2. Label", "⬜ 3. Describe", "⬜ 4. Voices", "⬜ Regen", "⬜ Read Chapters"],
+            "classes": ["stage-complete", "stage-active", "", "", "", ""]
+        },
+        "labels_complete": {
+            "buttons": ["✅ 1. Parse", "✅ 2. Label", "🔵 3. Describe", "⬜ 4. Voices", "⬜ Regen", "⬜ Read Chapters"],
+            "classes": ["stage-complete", "stage-complete", "stage-active", "", "", ""]
+        },
+        "characters_described": {
+            "buttons": ["✅ 1. Parse", "✅ 2. Label", "✅ 3. Describe", "🔵 4. Voices", "⬜ Regen", "⬜ Read Chapters"],
+            "classes": ["stage-complete", "stage-complete", "stage-complete", "stage-active", "", ""]
+        },
+        "voice_samples_complete": {
+            "buttons": ["✅ 1. Parse", "✅ 2. Label", "✅ 3. Describe", "✅ 4. Voices", "🔵 Regen", "⬜ Read Chapters"],
+            "classes": ["stage-complete", "stage-complete", "stage-complete", "stage-complete", "stage-active", ""]
+        },
+        "audiobook_complete": {
+            "buttons": ["✅ 1. Parse", "✅ 2. Label", "✅ 3. Describe", "✅ 4. Voices", "✅ Regen", "✅ Read Chapters"],
+            "classes": ["stage-complete", "stage-complete", "stage-complete", "stage-complete", "stage-complete", "stage-complete"]
+        },
+    }
+
+    config = button_configs.get(state, button_configs[None])
+    button_updates = []
+
+    for i, (label, interactive, css_class) in enumerate(zip(config["buttons"], _states, config["classes"])):
+        update = gr.update(
+            value=label,
+            interactive=interactive
+        )
+        if css_class:
+            update["elem_classes"] = css_class
+        button_updates.append(update)
+
+    return tuple(button_updates)
 
 
 def update_state_display_from_state(pipeline_state: PipelineState) -> gr.Textbox:
@@ -916,6 +959,175 @@ def update_character_table_from_state(pipeline_state: PipelineState) -> gr.Dataf
     return gr.Dataframe(value=[])
 
 
+def update_character_gallery_from_state(pipeline_state: PipelineState) -> gr.HTML:
+    """Update character gallery with card-style display."""
+    chapters_dir = get_chapters_dir()
+
+    # Check if we have descriptions (Stage 3+)
+    descriptions_file = get_characters_descriptions_file()
+    if descriptions_file and descriptions_file.exists() and pipeline_state and pipeline_state.character_descriptions:
+        try:
+            descriptions = pipeline_state.character_descriptions
+            character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
+
+            # Assign consistent colors to characters
+            colors = [
+                ("#667eea", "#764ba2"), ("#f093fb", "#f5576c"), ("#4facfe", "#00f2fe"),
+                ("#43e97b", "#38f9d7"), ("#fa709a", "#fee140"), ("#30cfd0", "#330867"),
+                ("#a8edea", "#fed6e3"), ("#ff9a9e", "#fecfef"), ("#f6d365", "#fda085"),
+                ("#84fab0", "#8fd3f4"), ("#a18cd1", "#fbc2eb"), ("#ffecd2", "#fcb69f")
+            ]
+
+            # Build HTML gallery
+            html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; padding: 8px;">'
+
+            for idx, (char_name, char_desc) in enumerate(descriptions.items()):
+                color_pair = colors[idx % len(colors)]
+                truncated_desc = char_desc[:80] + ("..." if len(char_desc) > 80 else "")
+                lines_spoken = character_lines.get(char_name, 0)
+                voice_file = f"{char_name}.wav" if chapters_dir and (chapters_dir / f"{char_name}.wav").exists() else None
+
+                # Create gradient background
+                grad_start, grad_end = color_pair[0], color_pair[1] if len(color_pair) >= 2 else color_pair[0]
+
+                html += f'''
+                <div class="character-card" style="background: linear-gradient(135deg, {grad_start}22 0%, {grad_end}22 100%);">
+                    <div class="character-card-name">{char_name}</div>
+                    <div class="character-card-desc">{truncated_desc}</div>
+                    <div class="character-card-lines">Lines spoken: {lines_spoken}</div>
+                    '''
+                if voice_file:
+                    html += f'''
+                    <audio controls style="width: 100%; margin-top: 12px; height: 40px;">
+                        <source src="/file={chapters_dir / voice_file}" type="audio/wav">
+                        Your browser does not support the audio element.
+                    </audio>
+                    '''
+                html += '</div>'
+
+            html += '</div>'
+            return gr.HTML(value=html)
+        except Exception:
+            return gr.HTML(value="<div style='color: #666; padding: 20px;'>No character data available.</div>")
+
+    # Check if we have character list (Stage 2)
+    if pipeline_state and pipeline_state.characters:
+        if isinstance(pipeline_state.characters, list):
+            # Define colors for this branch too
+            colors = [
+                ("#667eea", "#764ba2"), ("#f093fb", "#f5576c"), ("#4facfe", "#00f2fe"),
+                ("#43e97b", "#38f9d7"), ("#fa709a", "#fee140"), ("#30cfd0", "#330867"),
+                ("#a8edea", "#fed6e3"), ("#ff9a9e", "#fecfef"), ("#f6d365", "#fda085"),
+                ("#84fab0", "#8fd3f4"), ("#a18cd1", "#fbc2eb"), ("#ffecd2", "#fcb69f")
+            ]
+            html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; padding: 8px;">'
+            for idx, char_name in enumerate(sorted(pipeline_state.characters)):
+                color_pair = colors[idx % len(colors)]
+                html += f'''
+                <div class="character-card" style="background: linear-gradient(135deg, {color_pair[0]}22 0%, {color_pair[1] if len(color_pair) > 1 else color_pair[0]}22 100%);">
+                    <div class="character-card-name">{char_name}</div>
+                    <div class="character-card-desc" style="color: #888;">Waiting for description...</div>
+                </div>
+                '''
+            html += '</div>'
+            return gr.HTML(value=html)
+
+    return gr.HTML(value="<div style='color: #888; padding: 20px; text-align: center;'>Characters will appear here after speaker labeling.</div>")
+
+
+def update_chapter_progress_from_state(pipeline_state: PipelineState) -> gr.HTML:
+    """Update chapter progress display."""
+    chapters_dir = get_chapters_dir()
+
+    if not chapters_dir or not chapters_dir.exists():
+        return gr.HTML(value="<div style='color: #888; padding: 20px; text-align: center;'>Chapters will appear here after EPUB parsing.</div>")
+
+    # Get chapter text files (only chapter_N.txt format, exclude intermediate files)
+    import re
+    chapter_txt_files = sorted([f for f in chapters_dir.glob("chapter_*.txt") if re.match(r'chapter_\d+\.txt$', f.name)])
+    # Get chapter map files (speaker labeled)
+    chapter_map_files = sorted(chapters_dir.glob("chapter_*.map.json"))
+    # Get chapter audio files
+    chapter_mp3_files = sorted(chapters_dir.glob("chapter_*.mp3"))
+
+    if not chapter_txt_files:
+        return gr.HTML(value="<div style='color: #888; padding: 20px; text-align: center;'>Chapters will appear here after EPUB parsing.</div>")
+
+    # Create progress bar
+    total_chapters = len(chapter_txt_files)
+    labeled_chapters = len(chapter_map_files)
+    audio_chapters = len(chapter_mp3_files)
+
+    # Progress percentages
+    label_progress = (labeled_chapters / total_chapters * 100) if total_chapters > 0 else 0
+    audio_progress = (audio_chapters / total_chapters * 100) if total_chapters > 0 else 0
+
+    html = f'''
+    <div style="padding: 16px; max-width: 800px; margin: 0 auto;">
+        <h3 style="color: #667eea; margin-bottom: 16px;">📚 Chapter Progress</h3>
+
+        <!-- Overall Progress -->
+        <div style="margin-bottom: 24px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                <span style="color: #b2bec3;">Overall Progress</span>
+                <span style="color: #667eea;">{total_chapters} chapters</span>
+            </div>
+            <div style="height: 8px; background: rgba(102, 126, 234, 0.2); border-radius: 4px; overflow: hidden;">
+                <div style="width: 100%; height: 100%; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);"></div>
+            </div>
+        </div>
+
+        <!-- Labeling Progress -->
+        <div style="margin-bottom: 16px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span style="color: #b2bec3;">🏷️ Speaker Labeling</span>
+                <span style="color: #00b894;">{labeled_chapters}/{total_chapters} ({label_progress:.0f}%)</span>
+            </div>
+            <div style="height: 6px; background: rgba(0, 184, 148, 0.2); border-radius: 3px; overflow: hidden;">
+                <div style="width: {label_progress}%; height: 100%; background: linear-gradient(90deg, #00b894 0%, #00cec9 100%); transition: width 0.3s;"></div>
+            </div>
+        </div>
+
+        <!-- Audio Progress -->
+        <div style="margin-bottom: 24px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span style="color: #b2bec3;">🎵 Audio Generated</span>
+                <span style="color: #f39c12;">{audio_chapters}/{total_chapters} ({audio_progress:.0f}%)</span>
+            </div>
+            <div style="height: 6px; background: rgba(243, 156, 18, 0.2); border-radius: 3px; overflow: hidden;">
+                <div style="width: {audio_progress}%; height: 100%; background: linear-gradient(90deg, #f39c12 0%, #f1c40f 100%); transition: width 0.3s;"></div>
+            </div>
+        </div>
+
+        <!-- Chapter List -->
+        <div style="background: rgba(26, 26, 46, 0.6); border-radius: 8px; padding: 12px;">
+            <h4 style="color: #667eea; margin-bottom: 12px;">Chapter Files</h4>
+    '''
+
+    # Add chapter list
+    for i, txt_file in enumerate(chapter_txt_files):
+        chapter_num = i + 1
+        has_map = any(f.stem == txt_file.stem for f in chapter_map_files)
+        has_audio = any(f.stem == txt_file.stem for f in chapter_mp3_files)
+
+        status_icon = "✅🎵" if has_audio else ("✅" if has_map else "⬜")
+        audio_link = f'<a href="/file={chapters_dir / f"{txt_file.stem}.mp3"}" style="color: #00b894; text-decoration: none; margin-left: 8px;">🎧 Download</a>' if has_audio else ""
+
+        html += f'''
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; margin-bottom: 4px; background: rgba(102, 126, 234, 0.1); border-radius: 6px;">
+                <span style="color: #e0e0e0;">Chapter {chapter_num}</span>
+                <span style="color: #888;">{status_icon} {audio_link}</span>
+            </div>
+        '''
+
+    html += '''
+        </div>
+    </div>
+    '''
+
+    return gr.HTML(value=html)
+
+
 # ============================================================================
 # GRADIO INTERFACE
 # ============================================================================
@@ -942,6 +1154,182 @@ def create_interface(
     """
 
     with gr.Blocks() as demo:
+        # Custom CSS for audio/voice aesthetic
+        gr.HTML("""
+        <style>
+        /* Custom scrollbar with audio-wave aesthetic */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1a1a2e;
+            border-radius: 5px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+            border-radius: 5px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, #764ba2 0%, #f093fb 100%);
+        }
+
+        /* Main background with dark audio-theme */
+        .gradio-container {
+            background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
+            min-height: 100vh;
+        }
+
+        /* Header styling */
+        h1 {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-weight: 800;
+            letter-spacing: -1px;
+        }
+
+        /* Accordion styling */
+        .gr-accordion {
+            background: rgba(26, 26, 46, 0.8) !important;
+            border: 1px solid rgba(102, 126, 234, 0.3) !important;
+            border-radius: 12px !important;
+        }
+        .gr-accordion-header {
+            background: linear-gradient(90deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%) !important;
+            color: #e0e0e0 !important;
+        }
+
+        /* Button styling with gradient */
+        .gr-button-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            border: none !important;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4) !important;
+            transition: all 0.3s ease !important;
+        }
+        .gr-button-primary:hover {
+            transform: translateY(-2px) !important;
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6) !important;
+        }
+        .gr-button-secondary {
+            background: linear-gradient(135deg, #2d3436 0%, #636e72 100%) !important;
+            border: 1px solid rgba(102, 126, 234, 0.3) !important;
+            color: #e0e0e0 !important;
+            transition: all 0.3s ease !important;
+        }
+        .gr-button-secondary:hover {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            border-color: transparent !important;
+        }
+
+        /* Pulse animation for active stage */
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 10px rgba(102, 126, 234, 0.5); }
+            50% { box-shadow: 0 0 25px rgba(102, 126, 234, 0.9); }
+        }
+        .stage-active {
+            animation: pulse-glow 2s infinite;
+        }
+
+        /* Completed stage styling */
+        .stage-complete {
+            background: linear-gradient(135deg, #00b894 0%, #00cec9 100%) !important;
+            border: none !important;
+            box-shadow: 0 4px 15px rgba(0, 184, 148, 0.4) !important;
+        }
+
+        /* Log display styling */
+        .log-display {
+            background: #0d0d1a !important;
+            border: 1px solid rgba(102, 126, 234, 0.5) !important;
+            border-radius: 8px !important;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace !important;
+            font-size: 13px !important;
+            line-height: 1.5 !important;
+        }
+
+        /* Tab styling */
+        .gr-tab {
+            background: rgba(26, 26, 46, 0.5) !important;
+            border-color: rgba(102, 126, 234, 0.3) !important;
+        }
+        .gr-tab-active {
+            background: rgba(102, 126, 234, 0.2) !important;
+            border-color: #667eea !important;
+        }
+
+        /* Dataframe styling */
+        .dataframe-container {
+            background: rgba(26, 26, 46, 0.6) !important;
+            border-radius: 8px !important;
+        }
+        .dataframe thead {
+            background: linear-gradient(90deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%) !important;
+            color: #e0e0e0 !important;
+        }
+        .dataframe tbody tr:hover {
+            background: rgba(102, 126, 234, 0.1) !important;
+        }
+
+        /* Audio player styling */
+        audio {
+            filter: drop-shadow(0 2px 8px rgba(102, 126, 234, 0.3));
+        }
+
+        /* Progress bar styling */
+        .progress-bar {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%) !important;
+        }
+
+        /* Card styling for character gallery */
+        .character-card {
+            background: linear-gradient(135deg, rgba(45, 52, 54, 0.8) 0%, rgba(118, 75, 162, 0.2) 100%);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 8px;
+            transition: all 0.3s ease;
+        }
+        .character-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+            border-color: rgba(102, 126, 234, 0.6);
+        }
+        .character-card-name {
+            font-size: 18px;
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 8px;
+        }
+        .character-card-desc {
+            font-size: 14px;
+            color: #b2bec3;
+            margin-bottom: 12px;
+        }
+        .character-card-lines {
+            font-size: 12px;
+            color: #636e72;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Waveform animation */
+        @keyframes waveform {
+            0%, 100% { height: 10px; }
+            50% { height: 25px; }
+        }
+        .waveform-bar {
+            display: inline-block;
+            width: 4px;
+            background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+            border-radius: 2px;
+            animation: waveform 0.5s ease-in-out infinite;
+            margin: 0 2px;
+        }
+        </style>
+        """)
+
         gr.Markdown("# Audiobook Voice Generator")
 
         # Collapsible input area (settings only, buttons stay visible)
@@ -1006,18 +1394,30 @@ def create_interface(
             restored_state = None
 
         with gr.Row():
-            log_output = gr.Textbox(label=initial_log_label, lines=3, max_lines=3, interactive=False)
+            log_output = gr.Textbox(label=initial_log_label, lines=3, max_lines=3, interactive=False, elem_classes=["log-display"])
+
         with gr.Row():
-            with gr.Tab("Characters"):
-                # Character info
+            with gr.Tab("🎭 Characters"):
+                # Character gallery with cards
+                character_gallery = gr.HTML(
+                    value="<div style='color: #888; padding: 20px; text-align: center;'>Characters will appear here after speaker labeling.</div>"
+                )
+                # Character info (keep dataframe as alternative view)
                 character_table = gr.Dataframe(
                     headers=["Character", "Description", "Lines Spoken", "Audio"],
                     datatype=["str", "str", "int", "audio"],
                     wrap=True,
                     max_height=300,
+                    visible=False,  # Hidden by default, show gallery instead
                 )
                 character_audio = gr.Audio(label="", type="filepath", visible=False, scale=1)
                 generate_char_btn = gr.Button("Regen", variant="secondary", scale=0, visible=False)
+
+            with gr.Tab("📚 Chapters"):
+                # Chapter progress display
+                chapter_progress = gr.HTML(
+                    value="<div style='color: #888; padding: 20px; text-align: center;'>Chapters will appear here after EPUB parsing.</div>"
+                )
 
             # Hidden file input for Load Temp (required for button to work)
             load_temp_path_input = gr.File(
@@ -1046,6 +1446,14 @@ def create_interface(
             fn=update_state_display_from_state,
             inputs=pipeline_state_obj,
             outputs=log_output,
+        ).then(
+            fn=update_character_gallery_from_state,
+            inputs=pipeline_state_obj,
+            outputs=character_gallery,
+        ).then(
+            fn=update_chapter_progress_from_state,
+            inputs=pipeline_state_obj,
+            outputs=chapter_progress,
         )
 
         # Label Speakers - Stage 2
@@ -1065,6 +1473,14 @@ def create_interface(
             fn=update_character_table_from_state,
             inputs=pipeline_state_obj,
             outputs=character_table,
+        ).then(
+            fn=update_character_gallery_from_state,
+            inputs=pipeline_state_obj,
+            outputs=character_gallery,
+        ).then(
+            fn=update_chapter_progress_from_state,
+            inputs=pipeline_state_obj,
+            outputs=chapter_progress,
         )
 
         # Describe Characters - Stage 3
@@ -1084,6 +1500,14 @@ def create_interface(
             fn=update_character_table_from_state,
             inputs=pipeline_state_obj,
             outputs=character_table,
+        ).then(
+            fn=update_character_gallery_from_state,
+            inputs=pipeline_state_obj,
+            outputs=character_gallery,
+        ).then(
+            fn=update_chapter_progress_from_state,
+            inputs=pipeline_state_obj,
+            outputs=chapter_progress,
         )
 
         # Generate All Voice Samples - Stage 4
@@ -1099,6 +1523,14 @@ def create_interface(
             fn=update_state_display_from_state,
             inputs=pipeline_state_obj,
             outputs=log_output,
+        ).then(
+            fn=update_character_gallery_from_state,
+            inputs=pipeline_state_obj,
+            outputs=character_gallery,
+        ).then(
+            fn=update_chapter_progress_from_state,
+            inputs=pipeline_state_obj,
+            outputs=chapter_progress,
         )
 
         # Handle row selection in character table - show audio when character selected
@@ -1160,6 +1592,10 @@ def create_interface(
             fn=update_character_table_from_state,
             inputs=pipeline_state_obj,
             outputs=character_table,
+        ).then(
+            fn=update_character_gallery_from_state,
+            inputs=pipeline_state_obj,
+            outputs=character_gallery,
         )
 
         # Generate Full Audiobook - Stage 5
@@ -1175,6 +1611,14 @@ def create_interface(
             fn=update_state_display_from_state,
             inputs=pipeline_state_obj,
             outputs=log_output,
+        ).then(
+            fn=update_character_gallery_from_state,
+            inputs=pipeline_state_obj,
+            outputs=character_gallery,
+        ).then(
+            fn=update_chapter_progress_from_state,
+            inputs=pipeline_state_obj,
+            outputs=chapter_progress,
         )
 
         # Save Temp button - save the current temp directory as a zip archive
@@ -1264,23 +1708,27 @@ def create_interface(
                 button_updates = update_button_visibility_from_state(pipeline_state)
                 # Update character table
                 char_table = update_character_table_from_state(pipeline_state)
+                # Update character gallery
+                char_gallery = update_character_gallery_from_state(pipeline_state)
+                # Update chapter progress
+                chap_progress = update_chapter_progress_from_state(pipeline_state)
                 # Prepend restoration message to existing log
                 new_log = f"=== Session Restored ===\n{current_log}"
-                return (new_log, char_table, *button_updates)
-            return (current_log, gr.update(),
+                return (new_log, char_table, char_gallery, chap_progress, *button_updates)
+            return (current_log, gr.update(), gr.update(), gr.update(),
                     *[gr.update() for _ in range(6)])
 
         def check_and_restore_state(current_log):
             """Check if there's existing work in the temp directory and restore it."""
             temp_dir = get_temp_dir()
             if not temp_dir:
-                return (current_log, gr.State(None), gr.update(),
+                return (current_log, gr.State(None), gr.update(), gr.update(), gr.update(),
                         *[gr.update() for _ in range(6)])
 
             # Check for existing work
             chapters_path = Path(temp_dir)
             if not chapters_path.exists():
-                return (current_log, gr.State(None), gr.update(),
+                return (current_log, gr.State(None), gr.update(), gr.update(), gr.update(),
                         *[gr.update() for _ in range(6)])
 
             # Detect pipeline state from existing files
@@ -1298,17 +1746,19 @@ def create_interface(
                 # Update UI
                 button_updates = update_button_visibility_from_state(state)
                 char_table = update_character_table_from_state(state)
+                char_gallery = update_character_gallery_from_state(state)
+                chap_progress = update_chapter_progress_from_state(state)
                 new_log = f"=== Session Restored ===\nState: {detected_state}\n" + current_log
-                return (new_log, gr.State(state), char_table, *button_updates)
+                return (new_log, gr.State(state), char_table, char_gallery, chap_progress, *button_updates)
 
-            return (current_log, gr.State(None), gr.update(),
+            return (current_log, gr.State(None), gr.update(), gr.update(), gr.update(),
                     *[gr.update() for _ in range(6)])
 
         # Always check for restored state on page load
         demo.load(
             fn=check_and_restore_state,
             inputs=[log_output],
-            outputs=[log_output, pipeline_state_obj, character_table,
+            outputs=[log_output, pipeline_state_obj, character_table, character_gallery, chapter_progress,
                      parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
         )
 
@@ -1317,7 +1767,7 @@ def create_interface(
             demo.load(
                 fn=initialize_ui,
                 inputs=[pipeline_state_obj, log_output],
-                outputs=[log_output, character_table,
+                outputs=[log_output, character_table, character_gallery, chapter_progress,
                          parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
             )
 

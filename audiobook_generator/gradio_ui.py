@@ -912,7 +912,7 @@ def update_state_display_from_state(pipeline_state: PipelineState) -> gr.Textbox
 
 
 def update_character_table_from_state(pipeline_state: PipelineState) -> gr.Dataframe:
-    """Update character table based on PipelineState."""
+    """Update character table based on PipelineState (simple list, no audio)."""
     chapters_dir = get_chapters_dir()
 
     # Check if we have descriptions (Stage 3+)
@@ -924,20 +924,19 @@ def update_character_table_from_state(pipeline_state: PipelineState) -> gr.Dataf
             # Get character lines from map files
             character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
 
-            # Build table data with character name, truncated description, lines spoken, and audio path
+            # Build table data with character name, truncated description, lines spoken
             table_data = []
             for char_name, char_desc in descriptions.items():
                 truncated_desc = char_desc[:100] + ("..." if len(char_desc) > 100 else "")
                 lines_spoken = character_lines.get(char_name, 0)
-                voice_file = str(chapters_dir / f"{char_name}.wav") if chapters_dir and (chapters_dir / f"{char_name}.wav").exists() else None
-                table_data.append([char_name, truncated_desc, lines_spoken, voice_file])
+                table_data.append([char_name, truncated_desc, lines_spoken])
 
             # Sort by lines spoken (descending)
             table_data.sort(key=lambda x: x[2], reverse=True)
 
             return gr.Dataframe(
-                headers=["Character", "Description", "Lines Spoken", "Audio"],
-                datatype=["str", "str", "int", "audio"],
+                headers=["Character", "Description", "Lines Spoken"],
+                datatype=["str", "str", "int"],
                 value=table_data,
                 wrap=True,
             )
@@ -947,11 +946,11 @@ def update_character_table_from_state(pipeline_state: PipelineState) -> gr.Dataf
     # Check if we have character list (Stage 2)
     if pipeline_state and pipeline_state.characters:
         if isinstance(pipeline_state.characters, list):
-            # Build table data with just character names (no descriptions or line counts yet)
-            table_data = [[char_name, "", 0, None] for char_name in sorted(pipeline_state.characters)]
+            # Build table data with just character names
+            table_data = [[char_name, "", 0] for char_name in sorted(pipeline_state.characters)]
             return gr.Dataframe(
-                headers=["Character", "Description", "Lines Spoken", "Audio"],
-                datatype=["str", "str", "int", "audio"],
+                headers=["Character", "Description", "Lines Spoken"],
+                datatype=["str", "str", "int"],
                 value=table_data,
                 wrap=True,
             )
@@ -959,84 +958,24 @@ def update_character_table_from_state(pipeline_state: PipelineState) -> gr.Dataf
     return gr.Dataframe(value=[])
 
 
-def update_character_gallery_from_state(pipeline_state: PipelineState) -> gr.HTML:
-    """Update character gallery with card-style display."""
-    chapters_dir = get_chapters_dir()
-
+def update_character_gallery_from_state(pipeline_state: PipelineState) -> gr.Radio:
+    """Update character gallery with clickable character badges using Radio component."""
     # Check if we have descriptions (Stage 3+)
     descriptions_file = get_characters_descriptions_file()
     if descriptions_file and descriptions_file.exists() and pipeline_state and pipeline_state.character_descriptions:
         try:
             descriptions = pipeline_state.character_descriptions
-            character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
-
-            # Assign consistent colors to characters
-            colors = [
-                ("#667eea", "#764ba2"), ("#f093fb", "#f5576c"), ("#4facfe", "#00f2fe"),
-                ("#43e97b", "#38f9d7"), ("#fa709a", "#fee140"), ("#30cfd0", "#330867"),
-                ("#a8edea", "#fed6e3"), ("#ff9a9e", "#fecfef"), ("#f6d365", "#fda085"),
-                ("#84fab0", "#8fd3f4"), ("#a18cd1", "#fbc2eb"), ("#ffecd2", "#fcb69f")
-            ]
-
-            # Build HTML gallery
-            html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; padding: 8px;">'
-
-            for idx, (char_name, char_desc) in enumerate(descriptions.items()):
-                color_pair = colors[idx % len(colors)]
-                truncated_desc = char_desc[:80] + ("..." if len(char_desc) > 80 else "")
-                lines_spoken = character_lines.get(char_name, 0)
-                voice_file = f"{char_name}.wav" if chapters_dir and (chapters_dir / f"{char_name}.wav").exists() else None
-
-                # Create gradient background
-                grad_start, grad_end = color_pair[0], color_pair[1] if len(color_pair) >= 2 else color_pair[0]
-
-                html += f'''
-                <div class="character-card" style="background: linear-gradient(135deg, {grad_start}22 0%, {grad_end}22 100%);">
-                    <div class="character-card-name">{char_name}</div>
-                    <div class="character-card-desc">{truncated_desc}</div>
-                    <div class="character-card-lines">Lines spoken: {lines_spoken}</div>
-                    '''
-                if voice_file:
-                    # URL encode the file path for proper serving
-                    from urllib.parse import quote
-                    full_path = chapters_dir / voice_file
-                    encoded_path = quote(str(full_path))
-                    html += f'''
-                    <audio controls style="width: 100%; margin-top: 12px; height: 40px;">
-                        <source src="/file={encoded_path}" type="audio/wav">
-                        Your browser does not support the audio element.
-                    </audio>
-                    '''
-                html += '</div>'
-
-            html += '</div>'
-            return gr.HTML(value=html)
+            # Return list of character names for Radio component
+            return gr.Radio(choices=list(descriptions.keys()), label="Select Character")
         except Exception:
-            return gr.HTML(value="<div style='color: #666; padding: 20px;'>No character data available.</div>")
+            return gr.Radio(choices=[], label="No characters available")
 
     # Check if we have character list (Stage 2)
     if pipeline_state and pipeline_state.characters:
         if isinstance(pipeline_state.characters, list):
-            # Define colors for this branch too
-            colors = [
-                ("#667eea", "#764ba2"), ("#f093fb", "#f5576c"), ("#4facfe", "#00f2fe"),
-                ("#43e97b", "#38f9d7"), ("#fa709a", "#fee140"), ("#30cfd0", "#330867"),
-                ("#a8edea", "#fed6e3"), ("#ff9a9e", "#fecfef"), ("#f6d365", "#fda085"),
-                ("#84fab0", "#8fd3f4"), ("#a18cd1", "#fbc2eb"), ("#ffecd2", "#fcb69f")
-            ]
-            html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; padding: 8px;">'
-            for idx, char_name in enumerate(sorted(pipeline_state.characters)):
-                color_pair = colors[idx % len(colors)]
-                html += f'''
-                <div class="character-card" style="background: linear-gradient(135deg, {color_pair[0]}22 0%, {color_pair[1] if len(color_pair) > 1 else color_pair[0]}22 100%);">
-                    <div class="character-card-name">{char_name}</div>
-                    <div class="character-card-desc" style="color: #888;">Waiting for description...</div>
-                </div>
-                '''
-            html += '</div>'
-            return gr.HTML(value=html)
+            return gr.Radio(choices=sorted(pipeline_state.characters), label="Select Character")
 
-    return gr.HTML(value="<div style='color: #888; padding: 20px; text-align: center;'>Characters will appear here after speaker labeling.</div>")
+    return gr.Radio(choices=[], label="Characters will appear here after speaker labeling")
 
 
 def update_chapter_progress_from_state(pipeline_state: PipelineState) -> gr.HTML:
@@ -1332,6 +1271,24 @@ def create_interface(
             margin: 0 2px;
         }
         </style>
+        <script>
+        // JavaScript helper for character gallery clicks
+        function updateGallerySelection(charName) {
+            console.log('updateGallerySelection called with:', charName);
+            alert('Clicked: ' + charName);
+            // Find the hidden textbox by its elem_id
+            const textbox = document.getElementById('char-gallery-select');
+            console.log('Found textbox:', textbox);
+            if (textbox) {
+                textbox.value = charName;
+                // Dispatch change event to trigger Gradio handler
+                textbox.dispatchEvent(new Event('change', { bubbles: true }));
+                console.log('Change event dispatched');
+            } else {
+                console.log('Textbox not found!');
+            }
+        }
+        </script>
         """)
 
         gr.Markdown("# Audiobook Voice Generator")
@@ -1403,20 +1360,38 @@ def create_interface(
 
         with gr.Row():
             with gr.Tab("🎭 Characters"):
-                # Character gallery with cards
-                character_gallery = gr.HTML(
-                    value="<div style='color: #888; padding: 20px; text-align: center;'>Characters will appear here after speaker labeling.</div>"
+                # Character gallery using Radio for native selection (now first)
+                character_gallery = gr.Radio(
+                    choices=[],
+                    label="Select Character",
+                    interactive=True
                 )
-                # Character info (keep dataframe as alternative view)
+
+                # Active character card (shown when character selected)
+                with gr.Row(visible=False) as active_character_row:
+                    with gr.Column(scale=1):
+                        active_char_name = gr.Markdown("### Character")
+                        active_char_desc = gr.Markdown("Description")
+                        active_char_lines = gr.Markdown("**Lines spoken:** 0")
+                        character_audio = gr.Audio(label="Voice Sample", type="filepath", visible=True)
+                        generate_char_btn = gr.Button("Regenerate Voice", variant="secondary")
+
+                # Hidden component to store selected character from gallery
+                selected_char_gallery = gr.Textbox(
+                    label="Selected Character",
+                    visible=False,
+                    interactive=False,
+                    elem_id="char-gallery-select"
+                )
+
+                # Character info table (hidden - no longer needed)
                 character_table = gr.Dataframe(
-                    headers=["Character", "Description", "Lines Spoken", "Audio"],
-                    datatype=["str", "str", "int", "audio"],
+                    headers=["Character", "Description", "Lines Spoken"],
+                    datatype=["str", "str", "int"],
                     wrap=True,
                     max_height=300,
-                    visible=False,  # Hidden by default, show gallery instead
+                    visible=False,
                 )
-                character_audio = gr.Audio(label="", type="filepath", visible=False, scale=1)
-                generate_char_btn = gr.Button("Regen", variant="secondary", scale=0, visible=False)
 
             with gr.Tab("📚 Chapters"):
                 # Chapter progress display
@@ -1538,37 +1513,116 @@ def create_interface(
             outputs=chapter_progress,
         )
 
-        # Handle row selection in character table - show audio when character selected
+        # Handle row selection in character table - show active character card
         def on_character_select(evt: gr.SelectData, _pipeline_state_obj):
             """Handle row selection in the character table."""
             if evt is None or evt.index is None:
-                return gr.update(visible=False, value=None), gr.update(visible=False)
+                return (gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False))
 
             character_name = evt.row_value[0] if evt.row_value and len(evt.row_value) > 0 else None
 
             if not character_name:
-                return gr.update(visible=False, value=None), gr.update(visible=False)
+                return (gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False))
 
             if not _pipeline_state_obj:
-                return gr.update(visible=False, value=None), gr.update(visible=False)
+                return (gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False))
 
             chapters_dir = get_chapters_dir()
             if not chapters_dir:
-                return gr.update(visible=False, value=None), gr.update(visible=False)
+                return (gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False))
 
             wav_path = get_character_wav_file(character_name, chapters_dir)
 
             if wav_path and os.path.exists(wav_path):
                 # Update selected character in pipeline state
                 _pipeline_state_obj.selected_character = character_name
-                return gr.update(visible=True, value=wav_path), gr.update(visible=True)
+
+                # Get character description if available
+                char_desc = ""
+                if _pipeline_state_obj.character_descriptions:
+                    char_desc = _pipeline_state_obj.character_descriptions.get(character_name, "No description available.")
+                    if len(char_desc) > 200:
+                        char_desc = char_desc[:200] + "..."
+
+                # Get lines spoken
+                character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
+                lines_spoken = character_lines.get(character_name, 0)
+
+                return (
+                    gr.update(visible=True),  # active_character_row
+                    gr.update(value=f"### {character_name}"),  # active_char_name
+                    gr.update(value=char_desc),  # active_char_desc
+                    gr.update(value=f"**Lines spoken:** {lines_spoken}"),  # active_char_lines
+                    gr.update(visible=True, value=wav_path),  # character_audio
+                    gr.update(visible=True)  # generate_char_btn
+                )
             else:
-                return gr.update(visible=False, value=None), gr.update(visible=False)
+                return (gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False))
 
         character_table.select(
             fn=on_character_select,
             inputs=pipeline_state_obj,
-            outputs=[character_audio, generate_char_btn],
+            outputs=[active_character_row, active_char_name, active_char_desc, active_char_lines, character_audio, generate_char_btn],
+        )
+
+        # Handle character badge click from gallery
+        def on_gallery_select(character_name: str, pipeline_state_obj):
+            """Handle character selection from gallery badges."""
+            if not character_name or not pipeline_state_obj:
+                return (gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False))
+
+            chapters_dir = get_chapters_dir()
+            if not chapters_dir:
+                return (gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False))
+
+            wav_path = get_character_wav_file(character_name, chapters_dir)
+
+            if wav_path and os.path.exists(wav_path):
+                # Update selected character in pipeline state
+                pipeline_state_obj.selected_character = character_name
+
+                # Get character description if available
+                char_desc = ""
+                if pipeline_state_obj.character_descriptions:
+                    char_desc = pipeline_state_obj.character_descriptions.get(character_name, "No description available.")
+                    if len(char_desc) > 200:
+                        char_desc = char_desc[:200] + "..."
+
+                # Get lines spoken
+                character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
+                lines_spoken = character_lines.get(character_name, 0)
+
+                return (
+                    gr.update(visible=True),  # active_character_row
+                    gr.update(value=f"### {character_name}"),  # active_char_name
+                    gr.update(value=char_desc),  # active_char_desc
+                    gr.update(value=f"**Lines spoken:** {lines_spoken}"),  # active_char_lines
+                    gr.update(visible=True, value=wav_path),  # character_audio
+                    gr.update(visible=True)  # generate_char_btn
+                )
+            else:
+                return (gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False),
+                        gr.update(visible=False), gr.update(visible=False))
+
+        character_gallery.change(
+            fn=on_gallery_select,
+            inputs=[character_gallery, pipeline_state_obj],
+            outputs=[active_character_row, active_char_name, active_char_desc, active_char_lines, character_audio, generate_char_btn],
         )
 
         # Regenerate voice sample for selected character

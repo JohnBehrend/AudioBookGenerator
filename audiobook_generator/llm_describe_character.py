@@ -21,27 +21,26 @@ from utils import get_llm_client, compare_characters, get_characters_from_map_fi
 
 # Default prompt for character description
 CHARACTER_DESCRIPTION_PROMPT = """
-You are an expert voice actor and audiobook narrator. Your task is to create short, distinctive voice profiles for characters.
+You are an expert voice actor. Create concise voice profiles for characters.
 
-Focus on the most distinctive, memorable traits that would help a professional voice actor embody the character.
+Focus on distinctive traits a voice actor would use:
+- Gender and age (e.g., "Man, early 30s")
+- Speech speed and rhythm (e.g., "Fast-paced" or "Slow, deliberate")
+- Volume and projection (e.g., "Loud and projecting" or "Soft whisper")
+- Clarity and articulation (e.g., "Crisp diction" or "Slurred speech")
+- Tone and emotion (e.g., "Warm and inviting" or "Cold and detached")
+- Vocal texture (e.g., "Raspy" or "Smooth and silky")
 
-Provide the following information in the description:
-1. Gender and age (e.g., "Man, early 30s" or "Elderly woman")
-2. Speech speed and rhythm (e.g., "Fast-paced with frequent interruptions" or "Slow, deliberate cadence")
-3. Volume and projection (e.g., "Loud and projecting" or "Soft, intimate whisper")
-4. Clarity and articulation (e.g., "Precise, crisp diction" or "Slurred, messy speech")
-5. Tone and emotional quality (e.g., "Warm and inviting" or "Cold and detached")
-6. Distinctive vocal characteristics (e.g., "Raspy and hoarse" or "High-pitched and nasal")
+CRITICAL: This description is used as a prompt for MOSS-TTS voice generation. Be specific about:
+- **Emotion**: Emotional quality (e.g., "warm and reassuring," "cold and menacing")
+- **Speed**: Pacing (e.g., "rapid-fire," "measured and deliberate")
+- **Pitch**: Vocal register (e.g., "deep baritone," "high-pitched")
+- **Characteristics**: Unique qualities (e.g., "gravelly texture," "breathy quality")
 
-IMPORTANT: Use vivid, specific language that conveys the voice's personality. Think like a voice director describing what the actor should sound like.
+Example:
+A middle-aged man with a deep, resonant baritone. Confident and urgent delivery with warm, reassuring tone. Crisp articulation, commanding presence. Emotion shifts from calm to passionate.
 
-Example 1:
-An authoritative middle-aged man with a deep, resonant voice that speaks with confidence and urgency, delivering instructions with a clear, commanding tone that commands attention in any situation.
-
-Example 2:
-A young woman with a lively, energetic voice that shifts quickly from calm and collected to excited and rapid, her speech pattern showing she is comfortable in conversation but can quickly become emotional when passionate about a topic.
-
-Keep the description under 50 words.
+Keep under 50 words, focusing on distinctive features.
 """
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)

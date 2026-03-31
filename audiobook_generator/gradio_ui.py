@@ -997,9 +997,13 @@ def update_character_gallery_from_state(pipeline_state: PipelineState) -> gr.HTM
                     <div class="character-card-lines">Lines spoken: {lines_spoken}</div>
                     '''
                 if voice_file:
+                    # URL encode the file path for proper serving
+                    from urllib.parse import quote
+                    full_path = chapters_dir / voice_file
+                    encoded_path = quote(str(full_path))
                     html += f'''
                     <audio controls style="width: 100%; margin-top: 12px; height: 40px;">
-                        <source src="/file={chapters_dir / voice_file}" type="audio/wav">
+                        <source src="/file={encoded_path}" type="audio/wav">
                         Your browser does not support the audio element.
                     </audio>
                     '''
@@ -1372,10 +1376,11 @@ def create_interface(
             # Save and Load
             with gr.Row():
                 save_temp_btn = gr.Button("Save Temp", variant="secondary")
-                load_temp_path_input = gr.UploadButton(
-                    "Load .zip",
+                load_temp_file_input = gr.File(
+                    label="Load .zip (select file to restore)",
                     file_types=[".zip"],
-                    variant="secondary"
+                    type="filepath",
+                    visible=True
                 )
 
         # All 6 buttons in a single row - only Parse is clickable initially
@@ -1648,56 +1653,90 @@ def create_interface(
         )
 
         # Load temp directory from path input
-        def load_temp_handler(path) -> Tuple[str, str]:
-            """Load from a saved temp directory path.
+        def load_temp_handler(path):
+            """Load from a saved temp directory zip archive and restore full state.
 
             Args:
                 path: Path to the saved temp directory zip archive (from File component)
 
             Returns:
-                status_message
+                Tuple of (log_output, pipeline_state, character_table, character_gallery, chapter_progress, button_updates)
             """
-            print(f"[DEBUG] load_temp_handler received: {path}, type: {type(path)}")
-
             # Handle Gradio File component output (dict with 'name' key or path string)
             if isinstance(path, dict):
                 path = path.get('name')
-                print(f"[DEBUG] Extracted name from dict: {path}")
 
             if not path or not str(path).strip():
-                return "Please select a zip file to load."
+                return ("Please select a zip file to load.", None, gr.update(), gr.update(), gr.update(),
+                        *[gr.update() for _ in range(6)])
 
             path = str(path).strip()
             path_obj = Path(path)
-            print(f"[DEBUG] Path object: {path_obj}, exists: {path_obj.exists()}")
 
             if not path_obj.exists():
-                return f"Error: File not found: {path}"
+                return (f"Error: File not found: {path}", None, gr.update(), gr.update(), gr.update(),
+                        *[gr.update() for _ in range(6)])
 
             if path_obj.suffix != ".zip":
-                return "Error: Please select a .zip file."
+                return ("Error: Please select a .zip file.", None, gr.update(), gr.update(), gr.update(),
+                        *[gr.update() for _ in range(6)])
 
             try:
-                print(f"[DEBUG] Calling load_temp_dir with: {path}")
                 temp_dir = load_temp_dir(str(path_obj))
-                print(f"[DEBUG] load_temp_dir returned: {temp_dir}")
 
                 if temp_dir:
                     # Get the chapters directory for display
                     from utils import get_chapters_dir_from_saved
                     chapters_dir = get_chapters_dir_from_saved(temp_dir)
-                    msg = f"Loaded: {chapters_dir}\n\nIMPORTANT: Refresh the page to restore your session state. The files are loaded but the UI needs a refresh to detect them."
-                    return msg
-                return "Failed to load archive."
+                    # temp_dir is the extracted archive root, chapters_dir is the "chapters" subdirectory
+                    # The actual files are in chapters_dir, so pass that to PipelineState
+                    output_dir = str(chapters_dir) if chapters_dir else temp_dir
+
+                    # Detect pipeline state from loaded files
+                    state = PipelineState(output_dir) if output_dir else None
+                    detected_state = state.get_pipeline_state() if state else "initial"
+
+                    if detected_state != "initial":
+                        # Load the actual state
+                        state.pipeline_state = detected_state
+                        state.load_chapter_maps()
+                        state.get_characters()
+                        state.load_character_descriptions()
+                        state.load_voice_map()
+
+                        # Build restoration message
+                        msg = f"=== Session Restored ===\nState: {detected_state}\nChapters: {chapters_dir}\n\nUI updated below."
+
+                        # Update all UI components
+                        button_updates = update_button_visibility_from_state(state)
+                        char_table = update_character_table_from_state(state)
+                        char_gallery = update_character_gallery_from_state(state)
+                        chap_progress = update_chapter_progress_from_state(state)
+
+                        return (msg, state, char_table, char_gallery, chap_progress, *button_updates)
+
+                    return ("Loaded files but no pipeline state detected.", None, gr.update(), gr.update(), gr.update(),
+                            *[gr.update() for _ in range(6)])
+
+                return ("Failed to load archive.", None, gr.update(), gr.update(), gr.update(),
+                        *[gr.update() for _ in range(6)])
             except Exception as e:
                 import traceback
-                return f"Error loading: {str(e)}\n{traceback.format_exc()}"
+                return (f"Error loading: {str(e)}\n{traceback.format_exc()}", None, gr.update(), gr.update(), gr.update(),
+                        *[gr.update() for _ in range(6)])
 
-        # Load temp on file upload
-        load_temp_path_input.upload(
+        # Load temp on button click - uses the file input that was just uploaded
+        def on_load_temp_click():
+            """Triggered when Load .zip button is clicked - reads the file from the hidden File component."""
+            # This is a placeholder - the actual file handling happens via the File component
+            return "Please select a zip file first, then click the Load .zip button."
+
+        # Connect the File component change event to load the temp directory
+        load_temp_file_input.change(
             fn=load_temp_handler,
-            inputs=[load_temp_path_input],
-            outputs=[log_output],
+            inputs=[load_temp_file_input],
+            outputs=[log_output, pipeline_state_obj, character_table, character_gallery, chapter_progress,
+                     parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn],
         )
 
         # Initialize UI state on load (shows restored state if available)
@@ -1807,16 +1846,11 @@ def restore_pipeline_state(saved_temp_dir: str) -> Tuple[PipelineState, str]:
     from utils import get_chapters_dir_from_saved
 
     chapters_dir = get_chapters_dir_from_saved(saved_temp_dir)
-    print(f"[DEBUG] restore_pipeline_state: chapters_dir={chapters_dir}")
-    print(f"[DEBUG] restore_pipeline_state: chapters_dir exists={chapters_dir.exists()}")
 
     # Check for chapter files
     chapter_files = sorted(chapters_dir.glob("chapter_*.txt"))
-    print(f"[DEBUG] restore_pipeline_state: found {len(chapter_files)} chapter files")
 
     state = PipelineState(str(chapters_dir))
-    print(f"[DEBUG] PipelineState.chapters_dir={state.chapters_dir}")
-    print(f"[DEBUG] PipelineState.chapters_dir exists={state.chapters_dir.exists()}")
 
     log_msg = f"Restoring state from: {saved_temp_dir}\n"
 

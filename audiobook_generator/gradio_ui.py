@@ -1590,34 +1590,28 @@ def create_interface(
                         gr.update(visible=False), gr.update(visible=False))
 
             wav_path = get_character_wav_file(character_name, chapters_dir)
+            has_audio = wav_path and os.path.exists(wav_path)
 
-            if wav_path and os.path.exists(wav_path):
-                # Update selected character in pipeline state
-                pipeline_state_obj.selected_character = character_name
+            # Update selected character in pipeline state
+            pipeline_state_obj.selected_character = character_name
 
-                # Get character description if available
-                char_desc = ""
-                if pipeline_state_obj.character_descriptions:
-                    char_desc = pipeline_state_obj.character_descriptions.get(character_name, "No description available.")
-                    if len(char_desc) > 200:
-                        char_desc = char_desc[:200] + "..."
+            # Get character description if available (full description, no truncation)
+            char_desc = ""
+            if pipeline_state_obj.character_descriptions:
+                char_desc = pipeline_state_obj.character_descriptions.get(character_name, "No description available.")
 
-                # Get lines spoken
-                character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
-                lines_spoken = character_lines.get(character_name, 0)
+            # Get lines spoken
+            character_lines = count_lines_per_character(chapters_dir) if chapters_dir else {}
+            lines_spoken = character_lines.get(character_name, 0)
 
-                return (
-                    gr.update(visible=True),  # active_character_row
-                    gr.update(value=f"### {character_name}"),  # active_char_name
-                    gr.update(value=char_desc),  # active_char_desc
-                    gr.update(value=f"**Lines spoken:** {lines_spoken}"),  # active_char_lines
-                    gr.update(visible=True, value=wav_path),  # character_audio
-                    gr.update(visible=True)  # generate_char_btn
-                )
-            else:
-                return (gr.update(visible=False), gr.update(visible=False),
-                        gr.update(visible=False), gr.update(visible=False),
-                        gr.update(visible=False), gr.update(visible=False))
+            return (
+                gr.update(visible=True),  # active_character_row
+                gr.update(value=f"### {character_name}"),  # active_char_name
+                gr.update(value=char_desc),  # active_char_desc
+                gr.update(value=f"**Lines spoken:** {lines_spoken}"),  # active_char_lines
+                gr.update(visible=has_audio, value=wav_path if has_audio else None),  # character_audio
+                gr.update(visible=True)  # generate_char_btn
+            )
 
         character_gallery.change(
             fn=on_gallery_select,
@@ -1807,6 +1801,14 @@ def create_interface(
                 chap_progress = update_chapter_progress_from_state(pipeline_state)
                 # Prepend restoration message to existing log
                 new_log = f"=== Session Restored ===\n{current_log}"
+
+                # If we have characters, auto-select the first one to show the preview
+                if hasattr(char_gallery, 'choices') and char_gallery.choices and len(char_gallery.choices) > 0:
+                    first_char = char_gallery.choices[0] if isinstance(char_gallery.choices[0], str) else char_gallery.choices[0][0]
+                    # Get the character preview updates
+                    preview_updates = on_gallery_select(first_char, pipeline_state)
+                    return (new_log, char_table, char_gallery, chap_progress, *button_updates, preview_updates[0], preview_updates[1], preview_updates[2], preview_updates[3], preview_updates[4], preview_updates[5])
+
                 return (new_log, char_table, char_gallery, chap_progress, *button_updates)
             return (current_log, gr.update(), gr.update(), gr.update(),
                     *[gr.update() for _ in range(6)])
@@ -1861,7 +1863,8 @@ def create_interface(
                 fn=initialize_ui,
                 inputs=[pipeline_state_obj, log_output],
                 outputs=[log_output, character_table, character_gallery, chapter_progress,
-                         parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
+                         parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn,
+                         active_character_row, active_char_name, active_char_desc, active_char_lines, character_audio, generate_char_btn]
             )
 
         # Load selected audiobook

@@ -774,13 +774,15 @@ def count_lines_per_character(chapters_dir: Path) -> Dict[str, int]:
         char_by_id = char_map
 
         # Count labeled lines for each character
-        for char_num in line_map.values():
+        labeled_count = 0
+        for line_num, char_num in line_map.items():
             char_name = char_by_id.get(char_num)
             if char_name:
                 character_lines[char_name] = character_lines.get(char_name, 0) + 1
+                labeled_count += 1
 
         # Count total spoken lines from the corresponding txt file
-        txt_file = map_file.with_suffix(".txt")
+        txt_file = map_file.parent / map_file.name.replace(".map.json", ".txt")
         spoken_lines = set()
         if txt_file.exists():
             with open(txt_file, "r", encoding="utf-8") as f:
@@ -797,7 +799,6 @@ def count_lines_per_character(chapters_dir: Path) -> Dict[str, int]:
                             pass
 
         # Add unlabeled spoken lines to narrator
-        labeled_count = len(line_map)
         narrator_lines = len(spoken_lines) - labeled_count
         if narrator_lines > 0:
             character_lines["narrator"] = character_lines.get("narrator", 0) + narrator_lines

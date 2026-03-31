@@ -198,6 +198,11 @@ def get_latest_saved_file() -> Path:
     return Path.home() / ".claude" / "latest_saved_audiobook.json"
 
 
+def get_loaded_temp_file() -> Path:
+    """Get the path to the loaded temp directory info file."""
+    return Path.home() / ".claude" / "loaded_temp.json"
+
+
 def save_temp_dir(temp_dir: str) -> str:
     """Save the temp directory as a zip archive for later recovery.
 
@@ -298,10 +303,45 @@ def load_temp_dir(archive_path: Optional[str] = None) -> Optional[str]:
     get_chapters_dir._chapters_dir = chapters_dir
     get_chapters_dir._temp_context = temp_context  # Register cleanup on exit
 
+    # Save loaded temp dir path to file for persistence across page refreshes
+    loaded_file = get_loaded_temp_file()
+    loaded_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(loaded_file, "w", encoding="utf-8") as f:
+        json.dump({"temp_dir": str(extract_dir)}, f, indent=2)
+
     # Register cleanup on normal exit
     atexit.register(cleanup_temp_dir)
 
     return str(extract_dir)
+
+
+def get_loaded_temp_dir() -> Optional[str]:
+    """Get the loaded temp directory path from file (if any).
+
+    Returns:
+        Path to the loaded temp directory, or None if not loaded
+    """
+    loaded_file = get_loaded_temp_file()
+    if loaded_file.exists():
+        try:
+            with open(loaded_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            temp_dir = data.get("temp_dir")
+            if temp_dir and Path(temp_dir).exists():
+                return temp_dir
+        except Exception:
+            pass
+    return None
+
+
+def clear_loaded_temp_dir() -> None:
+    """Clear the loaded temp directory file."""
+    loaded_file = get_loaded_temp_file()
+    if loaded_file.exists():
+        try:
+            loaded_file.unlink()
+        except Exception:
+            pass
 
 
 def get_available_saved_audiobooks() -> List[Dict[str, str]]:
@@ -354,8 +394,7 @@ def cleanup_saved_temp_dir() -> None:
 def get_chapters_dir_from_saved(saved_temp_dir: str) -> Path:
     """Get the chapters directory from a saved temp directory path.
 
-    This creates a temporary directory context that points to an existing
-    saved temp directory instead of creating a new one.
+    This points to an existing saved temp directory without creating a new context.
 
     Args:
         saved_temp_dir: Path to the saved temp directory
@@ -363,7 +402,12 @@ def get_chapters_dir_from_saved(saved_temp_dir: str) -> Path:
     Returns:
         Path to the chapters subdirectory within the saved temp dir
     """
-    _reset_chapters_dir_internal()
+    # Check if we're restoring from a directory that's already set up
+    existing_temp = getattr(get_chapters_dir, "_temp_dir", None)
+    if existing_temp == saved_temp_dir:
+        # Already set up - just return the existing chapters path
+        if hasattr(get_chapters_dir, "_chapters_dir"):
+            return get_chapters_dir._chapters_dir
 
     # Set up the saved directory as the temp directory
     saved_path = Path(saved_temp_dir)

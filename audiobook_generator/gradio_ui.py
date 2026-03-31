@@ -396,6 +396,7 @@ def generate_voice_samples(
     pipeline_state: PipelineState,
     log_output: str,
     seed_voice_map: str = None,
+    tts_engine: str = None,
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 4: Generate voice samples for each character."""
@@ -403,6 +404,12 @@ def generate_voice_samples(
         progress(1.0, desc="Pipeline state not initialized. Please run Stage 3 (Describe Characters) first.")
         log_output += "\nPipeline state not initialized. Please run Stage 3 (Describe Characters) first."
         return log_output, None
+
+    # Fall back to default seed_voice_map if not provided
+    if not seed_voice_map:
+        default_seed_path = os.environ.get('SEED_VOICE_MAP')
+        if default_seed_path and os.path.exists(default_seed_path):
+            seed_voice_map = default_seed_path
 
     log_output += "\n\nGenerating voice samples..."
 
@@ -412,6 +419,19 @@ def generate_voice_samples(
         if not chapters_dir:
             log_output += "\nError: Chapters directory not initialized."
             return log_output, pipeline_state
+
+        # Copy seed voice files to chapters directory if seed_voice_map is provided
+        if seed_voice_map:
+            seed_chars = load_seed_characters(seed_voice_map)
+            if seed_chars:
+                voices_archive = Path("/home/johnbehrend/Documents/pydev/voices_archive")
+                if voices_archive.exists():
+                    for char_name, voice_file in seed_chars.items():
+                        src = voices_archive / voice_file
+                        dest = chapters_dir / voice_file
+                        if src.exists() and not dest.exists():
+                            shutil.copy2(src, dest)
+                            log_output += f"\nCopied seed voice: {voice_file}"
 
         descriptions_file = get_characters_descriptions_file()
         if not descriptions_file or not descriptions_file.exists():
@@ -428,8 +448,8 @@ def generate_voice_samples(
             return log_output, pipeline_state
         log_output += f"\nFound {num_characters} characters to process. (temp: {chapters_dir.parent})"
 
-        # Get TTS engine from environment variable or config default
-        tts_engine = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
+        # Voice generation always uses MOSS TTS engine
+        tts_engine = "moss"
 
         # Call generate_voice_samples from package
         progress(0, desc=f"Generating voice samples for {num_characters} characters with TTS engine '{tts_engine}'... (temp: {chapters_dir.parent})")
@@ -487,18 +507,19 @@ def regenerate_voice_sample(
 
         char_description = descriptions[character_name]
 
-        # Get TTS engine from environment variable or config default
-        tts_engine = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
+        # Voice generation always uses MOSS TTS engine
+        tts_engine = "moss"
 
         # Call generate_voice_samples from package
-        progress(0, desc=f"Regenerating voice sample for {character_name} with TTS engine '{tts_engine}'...")
+        progress(0, desc=f"Regenerating voice sample for {character_name} with TTS engine 'moss'...")
         result_msg, generated_voices = gen_voice_samples(
             descriptions={character_name: char_description},
             output_dir=str(chapters_dir),
             single_character=character_name,
             verbose=False,
             progress=progress,
-            tts_engine=tts_engine
+            tts_engine=tts_engine,
+            force_regenerate=True
         )
 
         log_output += f"\n{result_msg}"
@@ -923,6 +944,7 @@ def create_interface(
     max_chapters_default: int = DEFAULT_MAX_CHAPTERS,
     seed_voice_map_default: Optional[str] = None,
     saved_temp_dir: Optional[str] = None,
+    tts_engine_default: Optional[str] = None,
 ):
     """Create the Gradio interface with all stages using a state machine pattern.
 
@@ -959,6 +981,14 @@ def create_interface(
                     scale=2,
                 )
 
+            # TTS engine selector - MOSS only for voice generation
+            tts_engine_input = gr.Dropdown(
+                label="TTS Engine (Voice Generation)",
+                choices=["moss"],
+                value="moss",
+                info="MOSS TTS engine for voice sample generation"
+            )
+
             # Turbo model checkbox
             turbo_checkbox = gr.Checkbox(
                 label="Use KugelAudio Turbo Model (kugel-1-turbo)",
@@ -981,11 +1011,10 @@ def create_interface(
                 info="Current temp directory path.",
             )
 
-            # Load temp directory from path
-            load_temp_path_input = gr.Textbox(
-                label="Load Temp Path",
-                interactive=True,
-                info="Enter path to a saved temp directory or zip archive to load.",
+            # Load temp directory from file picker
+            load_temp_path_input = gr.File(
+                label="Load Temp Path (select .zip)",
+                file_types=[".zip"],
                 scale=2,
             )
 
@@ -1101,7 +1130,7 @@ def create_interface(
         # Generate All Voice Samples - Stage 4
         voice_samples_btn.click(
             fn=generate_voice_samples,
-            inputs=[pipeline_state_obj, log_output, seed_voice_map_input],
+            inputs=[pipeline_state_obj, log_output, seed_voice_map_input, tts_engine_input],
             outputs=[log_output, pipeline_state_obj],
         ).then(
             fn=update_button_visibility_from_state,
@@ -1227,71 +1256,69 @@ def create_interface(
         )
 
         # Load temp directory from path input
-        def load_temp_handler(path: str) -> str:
+        def load_temp_handler(path) -> Tuple[str, str]:
             """Load from a saved temp directory path.
 
             Args:
-                path: Path to the saved temp directory or zip archive
+                path: Path to the saved temp directory zip archive (from File component)
 
             Returns:
-                Status message
+                Tuple of (status_message, temp_dir_display)
             """
-            if not path or not path.strip():
-                return "Please enter a path to load."
+            print(f"[DEBUG] load_temp_handler received: {path}, type: {type(path)}")
 
-            path = path.strip()
+            # Handle Gradio File component output (dict with 'name' key or path string)
+            if isinstance(path, dict):
+                path = path.get('name')
+                print(f"[DEBUG] Extracted name from dict: {path}")
+
+            if not path or not str(path).strip():
+                return "Please select a zip file to load.", gr.update()
+
+            path = str(path).strip()
             path_obj = Path(path)
+            print(f"[DEBUG] Path object: {path_obj}, exists: {path_obj.exists()}")
 
             if not path_obj.exists():
-                return f"Error: Path does not exist: {path}"
+                return f"Error: File not found: {path}", gr.update()
+
+            if path_obj.suffix != ".zip":
+                return "Error: Please select a .zip file.", gr.update()
 
             try:
-                # Handle zip archives
-                if path_obj.suffix == ".zip":
-                    temp_dir = load_temp_dir(str(path_obj))
-                else:
-                    # It's a directory - check if it contains a zip or is an extracted dir
-                    if path_obj.is_dir():
-                        # Look for a zip file inside or use the directory directly
-                        zip_files = list(path_obj.glob("*.zip"))
-                        if zip_files:
-                            temp_dir = load_temp_dir(str(zip_files[0]))
-                        else:
-                            # Assume it's an extracted directory - set it up directly
-                            from utils import get_chapters_dir_from_saved
-                            chapters_dir = get_chapters_dir_from_saved(path)
-                            temp_dir = str(chapters_dir.parent)
-                    else:
-                        temp_dir = load_temp_dir(str(path_obj))
+                print(f"[DEBUG] Calling load_temp_dir with: {path}")
+                temp_dir = load_temp_dir(str(path_obj))
+                print(f"[DEBUG] load_temp_dir returned: {temp_dir}")
 
                 if temp_dir:
-                    return f"Loaded: {temp_dir}\nNote: Refresh page to see restored state."
-                return "Failed to load archive."
+                    # Get the chapters directory for display
+                    from utils import get_chapters_dir_from_saved
+                    chapters_dir = get_chapters_dir_from_saved(temp_dir)
+                    msg = f"Loaded: {chapters_dir}\n\nIMPORTANT: Refresh the page to restore your session state. The files are loaded but the UI needs a refresh to detect them."
+                    # Return updated temp_dir_display to show the loaded path
+                    return msg, gr.update(value=str(chapters_dir))
+                return "Failed to load archive.", gr.update()
             except Exception as e:
-                return f"Error loading: {str(e)}"
+                import traceback
+                return f"Error loading: {str(e)}\n{traceback.format_exc()}", gr.update()
 
+        # Load temp from file picker - trigger on both file change and button click
+        def load_temp_from_file(path):
+            """Load from a selected zip file (triggered by file selection)."""
+            return load_temp_handler(path)
+
+        # Trigger on file selection change
+        load_temp_path_input.change(
+            fn=load_temp_from_file,
+            inputs=load_temp_path_input,
+            outputs=[log_output, temp_dir_display],
+        )
+
+        # Also allow manual button click
         load_temp_btn.click(
             fn=load_temp_handler,
             inputs=load_temp_path_input,
-            outputs=temp_dir_display,
-        )
-
-        # Dropdown for available saved audiobooks
-        saved_audiobooks_dropdown = gr.Dropdown(
-            label="Saved Audiobooks",
-            choices=[],
-            interactive=True,
-            info="Select a saved audiobook to restore"
-        )
-
-        # Refresh saved audiobooks button
-        refresh_btn = gr.Button("Refresh", variant="secondary", scale=0, min_width=80)
-
-        # Update dropdown on load
-        demo.load(
-            fn=refresh_saved_audiobooks,
-            inputs=None,
-            outputs=saved_audiobooks_dropdown
+            outputs=[log_output, temp_dir_display],
         )
 
         # Initialize UI state on load (shows restored state if available)
@@ -1308,6 +1335,54 @@ def create_interface(
             return (current_log, gr.update(),
                     *[gr.update() for _ in range(7)])
 
+        def check_and_restore_state(current_log):
+            """Check if there's a loaded state from a previous load_temp_dir call and restore it."""
+            print(f"[DEBUG] check_and_restore_state: saved_temp_dir={saved_temp_dir}")
+            print(f"[DEBUG] get_chapters_dir._temp_dir={getattr(get_chapters_dir, '_temp_dir', None)}")
+
+            # First check for file-based persistence (survives page refreshes)
+            from utils import get_loaded_temp_dir
+            file_loaded_temp = get_loaded_temp_dir()
+            if file_loaded_temp:
+                print(f"[DEBUG] Found loaded temp dir from file: {file_loaded_temp}")
+                # Set the in-memory attribute from file
+                get_chapters_dir._temp_dir = file_loaded_temp
+                get_chapters_dir._chapters_dir = Path(file_loaded_temp) / "chapters"
+
+            # Check if get_chapters_dir has a loaded temp dir (from load_temp_dir or file)
+            if hasattr(get_chapters_dir, "_temp_dir") and get_chapters_dir._temp_dir:
+                loaded_temp_dir = get_chapters_dir._temp_dir
+                chapters_dir_path = Path(loaded_temp_dir) / "chapters"
+                print(f"[DEBUG] Checking for restored state at: {loaded_temp_dir}")
+                print(f"[DEBUG] Chapters path: {chapters_dir_path}")
+                print(f"[DEBUG] Chapters exists: {chapters_dir_path.exists()}")
+
+                # Check if this is a restored state (not the initial saved_temp_dir)
+                if not saved_temp_dir:
+                    # There's a loaded state - restore it
+                    restored_state, restore_msg = restore_pipeline_state(loaded_temp_dir)
+                    print(f"[DEBUG] Restored state pipeline_state: {restored_state.pipeline_state if restored_state else None}")
+                    if restored_state:
+                        # Update button visibility (6 buttons: parse, label, describe, voices, generate_char, tts)
+                        button_updates = update_button_visibility_from_state(restored_state)
+                        # Update character table
+                        char_table = update_character_table_from_state(restored_state)
+                        new_log = f"=== Session Restored from loaded archive ===\n{restore_msg}\n{current_log}"
+                        return (new_log, gr.update(value=restored_state), char_table, *button_updates)
+
+            # No restored state - just return current log
+            return (current_log, gr.update(), gr.update(),
+                    *[gr.update() for _ in range(6)])
+
+        # Always check for restored state on page load
+        demo.load(
+            fn=check_and_restore_state,
+            inputs=[log_output],
+            outputs=[log_output, pipeline_state_obj, character_table,
+                     parse_btn, label_btn, describe_btn, voice_samples_btn, generate_char_btn, tts_btn]
+        )
+
+        # Also initialize from saved_temp_dir if provided (CLI --resume_from)
         if saved_temp_dir:
             demo.load(
                 fn=initialize_ui,
@@ -1337,24 +1412,6 @@ def create_interface(
             except Exception as e:
                 return f"Error loading: {str(e)}"
 
-        # Load button for selected audiobook
-        load_selected_btn = gr.Button("Load Selected", variant="primary", scale=1)
-
-        load_selected_btn.click(
-            fn=load_selected_audiobook,
-            inputs=saved_audiobooks_dropdown,
-            outputs=log_output,
-        ).then(
-            fn=refresh_saved_audiobooks,
-            inputs=None,
-            outputs=saved_audiobooks_dropdown
-        )
-
-        refresh_btn.click(
-            fn=refresh_saved_audiobooks,
-            inputs=None,
-            outputs=saved_audiobooks_dropdown
-        )
 
     # Initialize temp directory if saved_temp_dir was provided
     if saved_temp_dir:
@@ -1379,7 +1436,16 @@ def restore_pipeline_state(saved_temp_dir: str) -> Tuple[PipelineState, str]:
     from utils import get_chapters_dir_from_saved
 
     chapters_dir = get_chapters_dir_from_saved(saved_temp_dir)
+    print(f"[DEBUG] restore_pipeline_state: chapters_dir={chapters_dir}")
+    print(f"[DEBUG] restore_pipeline_state: chapters_dir exists={chapters_dir.exists()}")
+
+    # Check for chapter files
+    chapter_files = sorted(chapters_dir.glob("chapter_*.txt"))
+    print(f"[DEBUG] restore_pipeline_state: found {len(chapter_files)} chapter files")
+
     state = PipelineState(str(chapters_dir))
+    print(f"[DEBUG] PipelineState.chapters_dir={state.chapters_dir}")
+    print(f"[DEBUG] PipelineState.chapters_dir exists={state.chapters_dir.exists()}")
 
     log_msg = f"Restoring state from: {saved_temp_dir}\n"
 

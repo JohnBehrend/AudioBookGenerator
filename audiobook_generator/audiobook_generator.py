@@ -1025,7 +1025,7 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
                             llm_port: str = None, gradio_port: int = None,
                             num_attempts: int = 2, max_chapters: int = 10,
                             seed_voice_map: str = None, epub_file: str = None,
-                            saved_temp_dir: str = None) -> None:
+                            saved_temp_dir: str = None, tts_engine: str = None) -> None:
     """Create and launch the Gradio interface for the audiobook pipeline.
 
     This function launches the Gradio interface imported from the package's
@@ -1041,7 +1041,11 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         seed_voice_map: Path to existing voices_map.json to seed voices
         epub_file: Path to EPUB file to pre-load in the interface
         saved_temp_dir: Optional path to a saved temp directory to restore from
+        tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss')
     """
+    # Set TTS_ENGINE environment variable for Gradio UI
+    if tts_engine:
+        os.environ['TTS_ENGINE'] = tts_engine
     try:
         from gradio_ui import create_interface, cleanup_temp_dir
         import gradio as gr
@@ -1059,6 +1063,9 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
             seed_voice_map_path = os.path.abspath(seed_voice_map)
             if not os.path.exists(seed_voice_map_path):
                 print(f"Warning: Seed voice map file not found: {seed_voice_map_path}")
+            else:
+                # Set environment variable for MCP tools to access
+                os.environ['SEED_VOICE_MAP'] = seed_voice_map_path
 
         # Handle EPUB file - copy to output_dir if provided for Gradio to access
         epub_path_default = None
@@ -1076,10 +1083,11 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
             max_chapters_default=max_chapters,
             seed_voice_map_default=seed_voice_map_path,
             epub_path_default=epub_path_default,
-            saved_temp_dir=saved_temp_dir
+            saved_temp_dir=saved_temp_dir,
+            tts_engine_default=tts_engine
         )
 
-        demo.launch(share=False, theme=gr.themes.Soft(), server_port=effective_gradio_port, server_name="0.0.0.0")
+        demo.launch(share=False, theme=gr.themes.Soft(), server_port=effective_gradio_port, server_name="0.0.0.0", mcp_server=True)
 
     except ImportError as e:
         print(f"Error: Could not import gradio_ui module")

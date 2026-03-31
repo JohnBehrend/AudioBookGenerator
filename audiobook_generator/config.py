@@ -35,7 +35,7 @@ LLM_SETTINGS = {
 AUDIO_SETTINGS = {
     "default_device": "cuda:0",
     "alt_device": "cuda:1",
-    "default_tts_engine": "kugelaudio",
+    "default_tts_engine": "moss",
     "supported_audio_extensions": [".wav", ".mp3", ".flac"],
     "gradio_port": 7860,
 }

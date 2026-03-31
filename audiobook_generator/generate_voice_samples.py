@@ -177,7 +177,8 @@ def generate_voice_samples(
     verbose: bool = False,
     progress=None,
     seed_characters: Dict[str, str] = None,
-    tts_engine: str = None
+    tts_engine: str = None,
+    force_regenerate: bool = False
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters via VoiceMapper.
 
@@ -194,6 +195,7 @@ def generate_voice_samples(
         progress: Gradio progress bar to update during generation
         seed_characters: Dict mapping character names to existing voice paths from seed voices_map
         tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss')
+        force_regenerate: If True, regenerate voices even if they already exist
 
     Returns:
         Tuple of (status_message, character_voice_paths)
@@ -258,19 +260,20 @@ def generate_voice_samples(
                         print(f"    Skipped - already generated")
                     continue
 
-                # Check for existing voice file in output_dir
-                voice_found = False
-                for ext in [".wav", ".mp3", ".flac"]:
-                    test_path = os.path.join(output_dir, f"{char_name}{ext}")
-                    if os.path.exists(test_path):
-                        generated[char_name] = test_path
-                        if verbose:
-                            print(f"    Found existing voice: {test_path}")
-                        voice_found = True
-                        break
+                # Check for existing voice file in output_dir (skip if exists, unless force_regenerate)
+                if not force_regenerate:
+                    voice_found = False
+                    for ext in [".wav", ".mp3", ".flac"]:
+                        test_path = os.path.join(output_dir, f"{char_name}{ext}")
+                        if os.path.exists(test_path):
+                            generated[char_name] = test_path
+                            if verbose:
+                                print(f"    Found existing voice: {test_path}")
+                            voice_found = True
+                            break
 
-                if voice_found:
-                    continue
+                    if voice_found:
+                        continue
 
                 success, output_file, duration = generate_voice_sample(
                     character_name=char_name,

@@ -224,6 +224,13 @@ def generate_tts_for_line(
         Returns:
         Tuple of (success: bool, ratio: float)
     """
+    # Skip empty text (e.g., lines with only "Line 28:" prefix and no content)
+    # This prevents infinite loops in validation when Whisper can't transcribe empty content
+    if not text or not text.strip():
+        if verbose:
+            print(f"  Skipping line {line_idx} (empty text: '{text}')")
+        return (True, 1.0)  # Return success to avoid blocking the pipeline
+
     end_characters = ["?", ".", "-", ";", ",", "!"]
 
     full_script = str(text[0].upper() + text[1:])

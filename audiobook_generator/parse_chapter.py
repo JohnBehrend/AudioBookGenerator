@@ -133,7 +133,7 @@ def cleanup_text(txt):
     txt = txt.replace("   ", " ")
     txt = txt.replace("  ", " ")
     # Strip "Line N:" prefix if present (from saved chapter files)
-    txt = re.sub(r"^Line \d+: ", "", txt)
+    txt = re.sub(r"^Line \d+: ?", "", txt, flags=re.IGNORECASE)
     return txt
 
 def write_chapters_to_txt(chapters, output_dir, prefix="chapter_"):

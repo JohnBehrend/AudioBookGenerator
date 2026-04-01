@@ -94,18 +94,25 @@ from voice_mapper import VoiceMapper
 # ============================================================================
 
 
-def setup_validation_model(device: str) -> WhisperModel:
+def setup_validation_model(device: str, alt_gpu: bool = False) -> WhisperModel:
     """Setup the Whisper validation model for audio transcription.
 
     Args:
         device: Device to run the model on (e.g., 'cuda', 'cuda:0', 'cuda:1', 'cpu')
+        alt_gpu: If True, use CPU with float32 instead of GPU with float16
 
     Returns:
         WhisperModel instance for audio validation
     """
     model_name = DEFAULTS["validation_model_name"]
-    # Use GPU for Whisper for faster transcription
-    return WhisperModel(model_name, device=device, compute_type="float16")
+    if alt_gpu:
+        # Use CPU with float32 for alternate GPU mode
+        return WhisperModel(model_name, device="cpu", compute_type="float32")
+    else:
+        # Normalize device for Whisper: faster-whisper only supports 'cuda', not 'cuda:0', 'cuda:1', etc.
+        whisper_device = "cuda" if device.startswith("cuda") else device
+        # Use GPU for Whisper for faster transcription
+        return WhisperModel(model_name, device=whisper_device, compute_type="float16")
 
 
 def get_non_silent_audio_from_wavs(wav_filepath_list, min_silence_len=1250, silence_thresh=-60):
@@ -475,7 +482,8 @@ def generate_audiobook_from_chapters(
     progress: Optional[callable] = None,
     duplicate_replacement_map: Dict[str, str] = None,
     seed_voice_map: str = None,
-    whisper_device: str = None
+    whisper_device: str = None,
+    whisper_alt_gpu: bool = False
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -512,7 +520,7 @@ def generate_audiobook_from_chapters(
         with ProgressHandler(progress=progress, total=len(chapters_to_process), desc="Audiobook Generation") as progress_handler:
             # Setup validation model
             whisper_device = whisper_device if whisper_device is not None else device
-            validation_model = setup_validation_model(whisper_device)
+            validation_model = setup_validation_model(whisper_device, alt_gpu=whisper_alt_gpu)
             # This avoids crashes from faster-whisper dependencies if validation_model is None
             # Initialize VoiceMapper with output_dir so it looks in the correct location
             voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=tts_engine, duplicate_replacement_map=duplicate_replacement_map)
@@ -798,7 +806,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       tts_engine: str = "kugelaudio", turbo: bool = False,
                       device: str = AUDIO_SETTINGS["default_device"], seed_voice_map: str = None,
                       num_llm_attempts: int = DEFAULTS["num_llm_attempts"],
-                      resume: bool = False, whisper_device: str = None) -> str:
+                      resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -945,47 +953,68 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         state.get_characters()
 
     # Stage 3: Describe Characters with progress
-    if verbose:
-        print(f"[STAGE 3] Describing {len(state.characters)} characters...")
+    descriptions_file = state.output_dir / "characters_descriptions.json"
+    descriptions_exist = descriptions_file.exists()
 
-    with ProgressHandler(progress=None, use_tqdm=True, total=1, desc="Describing characters") as handler:
-        result_msg, character_descriptions = describe_characters(
-            output_dir=str(state.output_dir),
-            chapters_dir=str(state.output_dir),
-            api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
-            port=llm_port or str(LLM_SETTINGS["port"]),
-            verbose=verbose,
-            seed_characters=seed_characters,
-            progress_callback=handler.update
-        )
-
+    if resume and descriptions_exist:
         if verbose:
-            print(f"  {result_msg}")
-
-        handler.update(1, desc="Character descriptions complete")
+            print(f"[STAGE 3] Skipping - character descriptions already exist")
         state.load_character_descriptions()
+        if verbose:
+            print(f"[STAGE 3] Loaded {len(state.character_descriptions)} character descriptions")
+    else:
+        if verbose:
+            print(f"[STAGE 3] Describing {len(state.characters)} characters...")
+
+        with ProgressHandler(progress=None, use_tqdm=True, total=1, desc="Describing characters") as handler:
+            result_msg, character_descriptions = describe_characters(
+                output_dir=str(state.output_dir),
+                chapters_dir=str(state.output_dir),
+                api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
+                port=llm_port or str(LLM_SETTINGS["port"]),
+                verbose=verbose,
+                seed_characters=seed_characters,
+                progress_callback=handler.update
+            )
+
+            if verbose:
+                print(f"  {result_msg}")
+
+            handler.update(1, desc="Character descriptions complete")
+            state.load_character_descriptions()
 
     # Stage 4: Generate Voice Samples with progress
-    if verbose:
-        print(f"[STAGE 4] Generating voice samples...")
+    # Check for existing voice samples (resume mode)
+    wav_files = list(state.chapters_dir.glob("*.wav"))
+    voice_samples_exist = len(wav_files) > 0
 
-    num_characters = len(state.character_descriptions)
-    with ProgressHandler(progress=None, use_tqdm=True, total=num_characters, desc="Generating voice samples") as handler:
-        result_msg, generated_voices = gen_voice_samples(
-            descriptions=state.character_descriptions,
-            output_dir=str(state.output_dir),
-            device=device,
-            verbose=verbose,
-            progress=None,  # CLI mode, no gr.Progress
-            seed_characters=seed_characters,
-            tts_engine=tts_engine
-        )
-
+    if resume and voice_samples_exist:
         if verbose:
-            print(f"  {result_msg}")
-
-        handler.update(num_characters, desc="Voice samples complete")
+            print(f"[STAGE 4] Skipping - voice samples already exist ({len(wav_files)} files found)")
         state.load_voice_map()
+        if verbose:
+            print(f"[STAGE 4] Loaded {len(state.voice_map)} voice mappings")
+    else:
+        if verbose:
+            print(f"[STAGE 4] Generating voice samples...")
+
+        num_characters = len(state.character_descriptions)
+        with ProgressHandler(progress=None, use_tqdm=True, total=num_characters, desc="Generating voice samples") as handler:
+            result_msg, generated_voices = gen_voice_samples(
+                descriptions=state.character_descriptions,
+                output_dir=str(state.output_dir),
+                device=device,
+                verbose=verbose,
+                progress=None,  # CLI mode, no gr.Progress
+                seed_characters=seed_characters,
+                tts_engine=tts_engine
+            )
+
+            if verbose:
+                print(f"  {result_msg}")
+
+            handler.update(num_characters, desc="Voice samples complete")
+            state.load_voice_map()
 
     # Stage 5: Generate Audiobook with progress
     if verbose:
@@ -1015,7 +1044,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             verbose=verbose,
             progress=None,
             duplicate_replacement_map=duplicate_replacement_map,
-            seed_voice_map=seed_voice_map)
+            seed_voice_map=seed_voice_map,
+            whisper_alt_gpu=whisper_alt_gpu)
 
         if verbose:
             print(f"  {status}")
@@ -1171,7 +1201,7 @@ Examples:
                         help="TTS engine to use")
     parser.add_argument("--turbo", action="store_true", help="Use KugelAudio turbo model (kugel-1-turbo)")
     parser.add_argument("-device", default=AUDIO_SETTINGS["default_device"], help="CUDA device to use")
-    parser.add_argument("--whisper_alt_gpu", action="store_true", help="Use alternate GPU (cuda:1) for Whisper validation model")
+    parser.add_argument("--whisper_alt_gpu", action="store_true", help="Use CPU with float32 for Whisper validation model (instead of GPU with float16)")
     parser.add_argument("--gradio", action="store_true", help="Launch Gradio interface instead of CLI")
     parser.add_argument("-num_llm_attempts", type=int, default=DEFAULTS["num_llm_attempts"], help="Number of LLM attempts for speaker labeling")
     parser.add_argument("-gradio_port", type=int, default=None, help="Port for Gradio web interface")
@@ -1226,7 +1256,8 @@ Examples:
             sys.exit(1)
 
         # Determine whisper device
-        whisper_device = "cuda:1" if args.whisper_alt_gpu else args.device
+        whisper_device = args.device
+        whisper_alt_gpu = args.whisper_alt_gpu
 
         # Use temp directory by default, or user-specified output_dir if provided
         used_temp_dir = False
@@ -1257,7 +1288,8 @@ Examples:
                     seed_voice_map=args.seed_voice_map,
                     num_llm_attempts=args.num_llm_attempts,
                     resume=(saved_temp_dir is not None),
-                    whisper_device=whisper_device
+                    whisper_device=whisper_device,
+                    whisper_alt_gpu=whisper_alt_gpu
                 )
                 return status, False
             except KeyboardInterrupt:

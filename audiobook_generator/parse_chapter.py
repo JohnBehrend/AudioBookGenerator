@@ -6,6 +6,7 @@ import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
 import argparse
+import re
 
 class ChapterObj:
     def __init__(self, has_quotes: bool, text: str, line_num: int):
@@ -131,6 +132,8 @@ def parse_epub_to_chapters(epub_path, max_chapters=None):
 def cleanup_text(txt):
     txt = txt.replace("   ", " ")
     txt = txt.replace("  ", " ")
+    # Strip "Line N:" prefix if present (from saved chapter files)
+    txt = re.sub(r"^Line \d+: ", "", txt)
     return txt
 
 def write_chapters_to_txt(chapters, output_dir, prefix="chapter_"):
@@ -181,7 +184,10 @@ def load_chapters_from_txt(output_dir: str, max_chapters: int = None, prefix: st
 
     chapters = []
     pattern = os.path.join(output_dir, f"{prefix}*.txt")
-    chapter_files = sorted(glob.glob(pattern))
+    all_files = sorted(glob.glob(pattern))
+    # Filter to only match exact chapter files (chapter_N.txt), not .prompt.txt or .result.*.txt
+    chapter_files = [f for f in all_files if re.match(rf"^{re.escape(prefix)}\d+\.txt$", os.path.basename(f))]
+    chapter_files = sorted(chapter_files)
 
     if max_chapters is not None:
         chapter_files = chapter_files[:max_chapters]

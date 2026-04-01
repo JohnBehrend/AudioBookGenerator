@@ -388,6 +388,9 @@ def generate_tts_for_line(
                     end_times.append(word.end)
 
             detected_string = distill_string(" ".join(segments))
+            if verbose:
+                print(f"  [STT] Original text: {input_string}")
+                print(f"  [STT] Whisper transcribed: {detected_string}")
             ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=distill_string(short_text_postfix))
 
         # Clipping based on postfix detection (only when validation is available)

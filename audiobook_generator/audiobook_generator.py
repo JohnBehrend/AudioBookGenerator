@@ -352,30 +352,103 @@ def generate_tts_for_line(
             if voice_path is None:
                 raise Exception(f"No voice path found for '{voice_name}'")
 
-            # Prepare text prompt - Echo TTS expects speaker tags like [S1]
-            text_prompt = f"[S1] {full_script}"
-
             # Load echo-tts if not already loaded
             if not hasattr(tts_model, '_loaded') or tts_model._loaded is False:
                 tts_model.load()
 
-            # Generate audio using Echo TTS pipeline
-            audio_out, _ = tts_model.sample_pipeline(
-                model=tts_model.echo_model,
-                fish_ae=tts_model.fish_ae,
-                pca_state=tts_model.pca_state,
-                sample_fn=tts_model.sampler,
-                text_prompt=text_prompt,
-                speaker_audio=None,  # No speaker reference - generates generic voice
-                rng_seed=42,
-            )
+            # Load speaker audio for voice cloning
+            # After tts_model.load(), the inference module is available in sys.modules
+            import sys
+            inference_module = sys.modules.get('inference')
+            if inference_module is None:
+                import importlib
+                inference_module = importlib.import_module('inference')
+            speaker_audio_tensor = inference_module.load_audio(voice_path).to(tts_model.echo_model.device)
 
-            if audio_out is None or audio_out.numel() == 0:
-                raise Exception("Empty Echo TTS generation")
+            # Split text into chunks for Echo TTS (max ~500 chars per chunk to stay under 640 token limit)
+            # Echo TTS has a sequence_length limit of 640 tokens (~30 seconds of audio)
+            def split_text_for_echo_tts(text: str, max_chunk_size: int = 500) -> list:
+                """Split text into chunks that fit within Echo TTS token limits."""
+                if len(text) <= max_chunk_size:
+                    return [text]
+
+                chunks = []
+                remaining = text
+
+                while remaining:
+                    if len(remaining) <= max_chunk_size:
+                        chunks.append(remaining)
+                        break
+
+                    # Find the best split point (sentence boundary)
+                    split_point = max_chunk_size
+
+                    # Look for sentence endings first
+                    for sep in ['. ', '! ', '? ', '.\n', '!\n', '?\n']:
+                        idx = remaining[:max_chunk_size].rfind(sep)
+                        if idx > max_chunk_size // 2:  # Must be past the middle
+                            split_point = idx + len(sep)
+                            break
+
+                    # If no sentence boundary, look for comma
+                    if split_point == max_chunk_size:
+                        for sep in [', ', '; ']:
+                            idx = remaining[:max_chunk_size].rfind(sep)
+                            if idx > max_chunk_size // 2:
+                                split_point = idx + len(sep)
+                                break
+
+                    # If still no good split, split at word boundary
+                    if split_point == max_chunk_size:
+                        last_space = remaining[:max_chunk_size].rfind(' ')
+                        if last_space > max_chunk_size // 2:
+                            split_point = last_space
+
+                    chunks.append(remaining[:split_point].strip())
+                    remaining = remaining[split_point:].strip()
+
+                return chunks
+
+            # Split text into chunks
+            text_chunks = split_text_for_echo_tts(full_script)
+
+            # Generate audio for each chunk and concatenate
+            import torch
+            audio_chunks = []
+
+            for i, chunk in enumerate(text_chunks):
+                text_prompt = f"[S1] {chunk}"
+
+                audio_out, _ = tts_model.sample_pipeline(
+                    model=tts_model.echo_model,
+                    fish_ae=tts_model.fish_ae,
+                    pca_state=tts_model.pca_state,
+                    sample_fn=tts_model.sampler,
+                    text_prompt=text_prompt,
+                    speaker_audio=speaker_audio_tensor,  # Use speaker reference for voice cloning
+                    rng_seed=42 + i,  # Different seed for each chunk
+                )
+
+                if audio_out is None or audio_out.numel() == 0:
+                    raise Exception(f"Empty Echo TTS generation for chunk {i}")
+
+                audio_chunks.append(audio_out[0])
+
+            # Concatenate all audio chunks
+            if len(audio_chunks) == 1:
+                audio_final = audio_chunks[0]
+            else:
+                # Concatenate with a small silence between chunks
+                # Use the device and shape from the first audio chunk
+                # audio_chunks are 2D: (1, samples), so silence needs same shape
+                silence = torch.zeros(1, 2205, device=audio_chunks[0].device)  # ~0.05 seconds of silence at 44100 Hz
+                audio_final = audio_chunks[0]
+                for chunk in audio_chunks[1:]:
+                    audio_final = torch.cat([audio_final, silence, chunk], dim=1)
 
             # Save audio
             sr = 44100
-            torchaudio.save(output_path, audio_out[0].cpu(), sr)
+            torchaudio.save(output_path, audio_final.cpu(), sr)
 
         else:
             # KugelAudio and VibeVoice use processor inputs
@@ -625,9 +698,11 @@ def generate_audiobook_from_chapters(
                         progress_handler.update((j + 1)/ len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j}")
                         if voice != chapter_obj.get_speaker():
                             continue
-                        if j in already_generated:
+                        # Use chapter_obj.line_num for file naming (not enumerate index j)
+                        line_num = chapter_obj.line_num
+                        if line_num in already_generated:
                             if verbose:
-                                print(f"Skipping chapter {i}.{j} (already generated)")
+                                print(f"Skipping chapter {i}.{line_num} (already generated)")
                             continue
 
                         # Get the voice path for this character
@@ -662,7 +737,7 @@ def generate_audiobook_from_chapters(
                         # Generate TTS for this line
                         success, ratio = generate_tts_for_line(
                             chapter_idx=i,
-                            line_idx=j,
+                            line_idx=line_num,
                             text=chapter_obj.text,
                             voice_name=voice,
                             tts_model=tts_model_read_chapters,

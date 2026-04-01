@@ -43,7 +43,8 @@ AUDIO_SETTINGS = {
 # TTS Model paths for each engine
 TTS_MODEL_PATHS = {
     "kugelaudio": {
-        "base": "kugelaudio/kugelaudio-0-open",
+        "base": "kugelaudio/kugel-2",
+        "old": "kugelaudio/kugelaudio-0-open",
         "turbo": "kugel-1-turbo",
     },
     "vibevoice": "Jmica/VibeVoice7B",

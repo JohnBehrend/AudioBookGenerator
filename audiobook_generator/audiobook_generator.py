@@ -104,8 +104,8 @@ def setup_validation_model(device: str) -> WhisperModel:
         WhisperModel instance for audio validation
     """
     model_name = DEFAULTS["validation_model_name"]
-    # Use CPU for Whisper to save VRAM - it's faster to transfer audio than to keep 1-2GB on GPU
-    return WhisperModel(model_name, device="cpu", compute_type="float32")
+    # Use GPU for Whisper for faster transcription
+    return WhisperModel(model_name, device="cuda", compute_type="float16")
 
 
 def get_non_silent_audio_from_wavs(wav_filepath_list, min_silence_len=1250, silence_thresh=-60):

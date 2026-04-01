@@ -984,10 +984,10 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     # Generate TTS for all chapters
     try:
         # Count chapters for progress
-        num_chapters_to_process = len(chapters) if chapters else 0
+        num_chapters_to_process = len(state.chapters) if state.chapters else 0
 
         status, processed = generate_audiobook_from_chapters(
-            chapters=chapters,
+            chapters=state.chapters,
             chapter_maps=state.chapter_maps,
             voices_map=state.voice_map,
             output_dir=str(state.chapters_dir),

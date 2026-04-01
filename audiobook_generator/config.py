@@ -49,6 +49,7 @@ TTS_MODEL_PATHS = {
     },
     "vibevoice": "Jmica/VibeVoice7B",
     "moss": "OpenMOSS-Team/MOSS-TTS-Local-Transformer",
+    "echo-tts": "jordand/echo-tts-base",
 }
 
 # Voice samples directory
@@ -154,10 +155,10 @@ def validate() -> list[str]:
         warnings.append(f"Voice samples directory not found: {VOICE_SAMPLES_DIR}")
 
     # Check TTS engine is valid
-    if AUDIO_SETTINGS["default_tts_engine"] not in ["kugelaudio", "vibevoice", "moss"]:
+    if AUDIO_SETTINGS["default_tts_engine"] not in ["kugelaudio", "vibevoice", "moss", "echo-tts"]:
         warnings.append(
             f"Unknown TTS engine: {AUDIO_SETTINGS['default_tts_engine']}. "
-            "Using 'kugelaudio', 'vibevoice', or 'moss' is recommended."
+            "Using 'kugelaudio', 'vibevoice', 'moss', or 'echo-tts' is recommended."
         )
 
     return warnings

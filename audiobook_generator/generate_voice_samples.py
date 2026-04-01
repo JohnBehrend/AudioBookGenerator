@@ -121,7 +121,7 @@ def main():
     parser.add_argument(
         "--tts-engine",
         default=AUDIO_SETTINGS.get("default_tts_engine", "moss"),
-        help="TTS engine to use ('kugelaudio', 'vibevoice', 'moss')"
+        help="TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts')"
     )
 
     args = parser.parse_args()
@@ -195,7 +195,7 @@ def generate_voice_samples(
         verbose: Print verbose output
         progress: Gradio progress bar to update during generation
         seed_characters: Dict mapping character names to existing voice paths from seed voices_map
-        tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss')
+        tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts')
         force_regenerate: If True, regenerate voices even if they already exist
 
     Returns:

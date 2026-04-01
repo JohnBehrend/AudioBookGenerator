@@ -49,7 +49,7 @@ class VoiceMapper:
         Args:
             output_dir: Directory to save/load voice samples and maps
             device: Device to run TTS models ('cuda:0', 'cuda:1', etc.)
-            tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss')
+            tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts')
                        Defaults to AUDIO_SETTINGS['default_tts_engine']
             duplicate_replacement_map: Optional dict mapping duplicate character names to canonical names
         """
@@ -265,6 +265,22 @@ class VoiceMapper:
             self.tts_models[engine_key] = result
             return result
 
+        elif self.tts_engine == "echo-tts":
+            # Use the EchoTTSLoader from the echo_tts module
+            # Import using absolute path to work when running as script
+            import importlib.util
+            echo_tts_path = Path(__file__).parent / "echo_tts" / "__init__.py"
+            spec = importlib.util.spec_from_file_location("echo_tts_module", echo_tts_path)
+            echo_tts_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(echo_tts_module)
+            EchoTTSLoader = echo_tts_module.EchoTTSLoader
+
+            model_path = TTS_MODEL_PATHS["echo-tts"]
+            loader = EchoTTSLoader(self.device, model_path)
+            result = (loader, None, model_path, None)
+            self.tts_models[engine_key] = result
+            return result
+
         else:
             raise ValueError(f"Unknown TTS engine: {self.tts_engine}")
 
@@ -332,7 +348,8 @@ class VoiceMapper:
                 character_name, description, output_dir, max_new_tokens, verbose
             )
         else:
-            # For kugelaudio and vibevoice, generate from a reference text
+            # For kugelaudio, vibevoice, and echo-tts, generate from a reference text
+            # Note: echo-tts is only used for voice cloning in stage 5, not for initial voice generation
             return self._generate_voice_sample_generic(
                 character_name, description, output_dir, max_new_tokens, verbose
             )
@@ -433,6 +450,100 @@ class VoiceMapper:
         except Exception as e:
             print(f"    Error generating voice: {e}")
             return False, None, 0
+
+    def _generate_voice_sample_echo_tts(
+        self,
+        character_name: str,
+        description: str,
+        output_dir: str = None,
+        max_new_tokens: int = None,
+        verbose: bool = False
+    ) -> Tuple[bool, Optional[str], float]:
+        """Generate a voice sample for a character using Echo TTS.
+
+        Echo TTS uses speaker reference audio for conditioning. Since we don't
+        have an existing voice to clone, we generate from text with the static
+        voice text as the prompt.
+
+        Args:
+            character_name: Name of the character
+            description: Voice description from LLM (not used directly - Echo TTS uses audio reference)
+            output_dir: Output directory (defaults to self.output_dir)
+            max_new_tokens: Max tokens for generation (ignored for Echo TTS)
+            verbose: Print verbose output
+
+        Returns:
+            Tuple of (success, output_file_path, duration_seconds)
+        """
+        if output_dir is None:
+            output_dir = self.output_dir
+        if max_new_tokens is None:
+            max_new_tokens = DEFAULTS["max_new_tokens"]
+
+        # Reference text for voice generation - uses static text from config
+        sample_text = DEFAULTS["static_voice_text"]
+
+        # Validate description (kept for API compatibility, though not used)
+        if not description or not description.strip():
+            if verbose:
+                print(f"  ERROR: Skipping '{character_name}' due to empty description")
+            return False, None, 0
+
+        # Get Echo TTS models (lazy loader)
+        loader, fish_ae, pca_state, sample_fn, model_path = self.setup_tts_engine()
+
+        try:
+            # Load echo-tts models (this is where the heavy import happens)
+            loader.load()
+
+            # Prepare text prompt - Echo TTS expects speaker tags like [S1]
+            # Since we're generating a base voice without reference, we use [S1]
+            text_prompt = f"[S1] {sample_text}"
+
+            if verbose:
+                print(f"  Generating with text: {text_prompt[:50]}...")
+
+            # Generate audio using Echo TTS pipeline
+            # No speaker reference audio (speaker_audio=None) - generates generic voice
+            audio_out, _ = loader.sample_fn(
+                model=loader.echo_model,
+                fish_ae=loader.fish_ae,
+                pca_state=loader.pca_state,
+                text_prompt=text_prompt,
+                speaker_audio=None,  # No speaker reference - generates generic voice
+                rng_seed=0,
+            )
+
+            if audio_out is None or audio_out.numel() == 0:
+                print(f"    ERROR: No audio generated")
+                return False, None, 0
+
+            # Save output
+            os.makedirs(output_dir, exist_ok=True)
+            output_file = os.path.join(output_dir, f"{character_name}.wav")
+
+            # Echo TTS outputs at 44100 Hz
+            sr = 44100
+            import torchaudio
+            torchaudio.save(output_file, audio_out[0].cpu(), sr)
+
+            duration = len(audio_out[0]) / sr
+            self.add_voice_path(character_name, output_file)
+
+            if verbose:
+                print(f"    Generated: {duration:.2f}s -> {output_file}")
+
+            return True, output_file, duration
+
+        except Exception as e:
+            print(f"    Error generating voice with Echo TTS: {e}")
+            print(f"    Exception type: {type(e).__name__}")
+            traceback.print_exc()
+            return False, None, 0
+
+    # Note: _generate_voice_sample_echo_tts removed - echo-tts is only used for
+    # voice cloning in stage 5 (audiobook generation), not for initial voice generation.
+    # Initial voice samples always use MOSS-TTS.
 
     def _generate_voice_sample_moss(
         self,

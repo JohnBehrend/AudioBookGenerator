@@ -9,8 +9,8 @@ classifiers = [
     "Programming Language :: Python :: 3.11"
 ]
 dependencies = [
-    "torch",
-    "torchaudio>=2.8.0",
+    "torch>=2.9.1",
+    "torchaudio>=2.9.1",
     "torchvision>=0.20.0",
     "transformers>=5.0.0",
     "tokenizers>=0.13",
@@ -41,7 +41,7 @@ dependencies = [
     # numba>=0.57.0 needed to get llvmlite>=0.40 which supports Python 3.10
     "numba>=0.57.0",
     "ffmpeg-python==0.2.0",
-    "torchcodec==0.9.1"
+    "torchcodec>=0.11.0"
 ]
 
 [project.scripts]
@@ -57,7 +57,7 @@ package = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["audiobook_generator*"]
+include = ["audiobook_generator*", "audiobook_generator.echo_tts*"]
 
 [dependency-groups]
 dev = [

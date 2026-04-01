@@ -341,6 +341,42 @@ def generate_tts_for_line(
             else:
                 raise Exception("Empty MOSS-TTS generation for chapter text")
 
+        elif tts_engine == 'echo-tts':
+            # Echo TTS generates audio directly without processor
+            import torchaudio
+            from functools import partial
+
+            # Get voice path
+            if voice_path is None:
+                voice_path = voice_mapper.get_voice_path(voice_name)
+            if voice_path is None:
+                raise Exception(f"No voice path found for '{voice_name}'")
+
+            # Prepare text prompt - Echo TTS expects speaker tags like [S1]
+            text_prompt = f"[S1] {full_script}"
+
+            # Load echo-tts if not already loaded
+            if not hasattr(tts_model, '_loaded') or tts_model._loaded is False:
+                tts_model.load()
+
+            # Generate audio using Echo TTS pipeline
+            audio_out, _ = tts_model.sample_pipeline(
+                model=tts_model.echo_model,
+                fish_ae=tts_model.fish_ae,
+                pca_state=tts_model.pca_state,
+                sample_fn=tts_model.sampler,
+                text_prompt=text_prompt,
+                speaker_audio=None,  # No speaker reference - generates generic voice
+                rng_seed=42,
+            )
+
+            if audio_out is None or audio_out.numel() == 0:
+                raise Exception("Empty Echo TTS generation")
+
+            # Save audio
+            sr = 44100
+            torchaudio.save(output_path, audio_out[0].cpu(), sr)
+
         else:
             # KugelAudio and VibeVoice use processor inputs
             for k, v in inputs.items():
@@ -816,7 +852,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         verbose: Print verbose output
         api_key: LLM API key for speaker labeling and character descriptions
         llm_port: LLM endpoint port (e.g., LM Studio)
-        tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss')
+        tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts')
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         device: CUDA device (e.g., 'cuda', 'cuda:1')
         seed_voice_map: Path to existing voices_map.json to seed voices
@@ -1090,7 +1126,7 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         seed_voice_map: Path to existing voices_map.json to seed voices
         epub_file: Path to EPUB file to pre-load in the interface
         saved_temp_dir: Optional path to a saved temp directory to restore from
-        tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss')
+        tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts')
     """
     # Set TTS_ENGINE environment variable for Gradio UI
     if tts_engine:
@@ -1197,7 +1233,7 @@ Examples:
     parser.add_argument("--verbose", "-v", action="store_true", help="Print verbose output")
     parser.add_argument("-api_key", help="LLM API key for speaker labeling")
     parser.add_argument("-llm_port", default=str(LLM_SETTINGS["port"]), help="LLM endpoint port (for LM Studio)")
-    parser.add_argument("-tts_engine", default=AUDIO_SETTINGS["default_tts_engine"], choices=["kugelaudio", "vibevoice", "moss"],
+    parser.add_argument("-tts_engine", default=AUDIO_SETTINGS["default_tts_engine"], choices=["kugelaudio", "vibevoice", "moss", "echo-tts"],
                         help="TTS engine to use")
     parser.add_argument("--turbo", action="store_true", help="Use KugelAudio turbo model (kugel-1-turbo)")
     parser.add_argument("-device", default=AUDIO_SETTINGS["default_device"], help="CUDA device to use")

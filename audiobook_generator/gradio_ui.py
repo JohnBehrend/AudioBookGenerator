@@ -546,6 +546,7 @@ def generate_tts_audio(
     max_chapters: Optional[int],
     turbo: bool = False,
     seed_voice_map: str = None,
+    whisper_alt_gpu: bool = False,
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 5.1: Generate TTS audio for each line/voice.
@@ -636,7 +637,11 @@ def generate_tts_audio(
         # Determine device (use CUDA if available, default to cuda:0)
         import torch
         device = AUDIO_SETTINGS["default_device"] if torch.cuda.is_available() else "cpu"
+        # Use alternate GPU for Whisper if requested
+        whisper_device = "cuda:1" if whisper_alt_gpu else device
         log_output += f"\nUsing device: {device}"
+        if whisper_alt_gpu:
+            log_output += f"\nWhisper will use alternate GPU (cuda:1)"
 
         # Use the unified generate_audiobook_from_chapters function from package
         verbose = True
@@ -665,7 +670,8 @@ def generate_tts_audio(
             verbose=verbose,
             progress=progress,
             duplicate_replacement_map=duplicate_replacement_map,
-            seed_voice_map=seed_voice_map
+            seed_voice_map=seed_voice_map,
+            whisper_device=whisper_device
         )
 
         log_output += f"\n{status}"
@@ -687,6 +693,7 @@ def generate_full_audiobook(
     max_chapters: Optional[int],
     turbo: bool = False,
     seed_voice_map: str = None,
+    whisper_alt_gpu: bool = False,
 ) -> Tuple[str, PipelineState]:
     """Stage 5: Generate full audiobook using generate_audiobook_from_chapters().
 
@@ -696,12 +703,13 @@ def generate_full_audiobook(
         max_chapters: Maximum number of chapters to process
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         seed_voice_map: Path to seed voices_map.json for reusing existing voices
+        whisper_alt_gpu: Use alternate GPU (cuda:1) for Whisper
     """
     log_output += "\n\n=== Stage 5: Full Audiobook Generation ==="
 
     try:
         # Use the unified generate_audiobook_from_chapters function
-        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters, turbo, seed_voice_map)
+        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters, turbo, seed_voice_map, whisper_alt_gpu)
 
         # Update state to audiobook complete (MP3s are created during generate_audiobook_from_chapters)
         log_output += f"\n\n=== Stage 5 Complete: Full Audiobook Generation === State: {pipeline_state.pipeline_state}"
@@ -1311,6 +1319,12 @@ def create_interface(
                     label="Max Chapters",
                     scale=2,
                 )
+            with gr.Row():
+                whisper_alt_gpu_checkbox = gr.Checkbox(
+                    label="Use Alt GPU for Whisper (cuda:1)",
+                    value=False,
+                    scale=4
+                )
 
             # EPUB upload - use the provided path as default if it exists
             # If epub_path_default is a string path, convert it to a tuple for Gradio's File component
@@ -1651,7 +1665,7 @@ def create_interface(
         # Generate Full Audiobook - Stage 5
         tts_btn.click(
             fn=generate_full_audiobook,
-            inputs=[pipeline_state_obj, log_output, max_chapters_slider, seed_voice_map_input],
+            inputs=[pipeline_state_obj, log_output, max_chapters_slider, seed_voice_map_input, whisper_alt_gpu_checkbox],
             outputs=[log_output, pipeline_state_obj],
         ).then(
             fn=update_button_visibility_from_state,

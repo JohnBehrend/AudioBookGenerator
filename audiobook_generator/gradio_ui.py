@@ -448,9 +448,6 @@ def generate_voice_samples(
             return log_output, pipeline_state
         log_output += f"\nFound {num_characters} characters to process. (temp: {chapters_dir.parent})"
 
-        # Voice generation always uses MOSS TTS engine
-        tts_engine = "moss"
-
         # Call generate_voice_samples from package
         progress(0, desc=f"Generating voice samples for {num_characters} characters with TTS engine '{tts_engine}'... (temp: {chapters_dir.parent})")
         result_msg, generated_voices = gen_voice_samples(
@@ -459,7 +456,7 @@ def generate_voice_samples(
             verbose=False,
             progress=progress,
             seed_characters=load_seed_characters(seed_voice_map),
-            tts_engine=tts_engine
+            tts_engine="moss" # Voice generation always uses MOSS TTS engine
         )
 
         log_output += f"\n{result_msg}"

@@ -791,7 +791,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         verbose: Print verbose output
         api_key: LLM API key for speaker labeling and character descriptions
         llm_port: LLM endpoint port (e.g., LM Studio)
-        tts_engine: 'kugelaudio' or 'vibevoice'
+        tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss')
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         device: CUDA device (e.g., 'cuda', 'cuda:1')
         seed_voice_map: Path to existing voices_map.json to seed voices

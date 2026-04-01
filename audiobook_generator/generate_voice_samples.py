@@ -55,7 +55,8 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
     # Kept for API compatibility but not validated
 
     # Create VoiceMapper and generate voice sample
-    engine = tts_engine or AUDIO_SETTINGS.get("default_tts_engine", "kugelaudio")
+    # Stage 4 always uses MOSS - ignore any TTS_ENGINE env var or config override
+    engine = "moss"
     voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=engine)
 
     try:

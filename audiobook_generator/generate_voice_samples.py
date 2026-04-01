@@ -120,7 +120,7 @@ def main():
     )
     parser.add_argument(
         "--tts-engine",
-        default=AUDIO_SETTINGS.get("default_tts_engine", "kugelaudio"),
+        default=AUDIO_SETTINGS.get("default_tts_engine", "moss"),
         help="TTS engine to use ('kugelaudio', 'vibevoice', 'moss')"
     )
 

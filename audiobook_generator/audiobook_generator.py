@@ -71,6 +71,7 @@ from utils import (
     get_temp_dir,
     cleanup_temp_dir,
     load_temp_dir,
+    save_temp_dir,
     get_chapters_dir_from_saved,
     ProgressHandler,
     copy_mp3_files_to_chapters,
@@ -1087,7 +1088,34 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
             tts_engine_default=tts_engine
         )
 
-        demo.launch(share=False, theme=gr.themes.Soft(), server_port=effective_gradio_port, server_name="0.0.0.0", mcp_server=True)
+        try:
+            demo.launch(share=False, theme=gr.themes.Soft(), server_port=effective_gradio_port, server_name="0.0.0.0", mcp_server=True)
+        except KeyboardInterrupt:
+            print("\n\nGradio server stopped by user (Ctrl-C)")
+            # Offer to save temp directory before cleanup
+            if saved_temp_dir:
+                print(f"\nTemp directory: {saved_temp_dir}")
+                print("\nOptions before cleanup:")
+                print("  's' - Save temp directory as zip archive for later resume")
+                print("  'd' - Discard and clean up temp directory")
+
+                try:
+                    choice = input("\nPress 's' to save or 'd' to discard: ").strip().lower()
+                    if choice == 's':
+                        saved_path = save_temp_dir(saved_temp_dir)
+                        print(f"\nSaved to: {saved_path}")
+                        print("To resume later: --resume_from " + saved_path)
+                    elif choice == 'd':
+                        print("\nDiscarding temp directory...")
+                    else:
+                        print(f"\nUnknown choice '{choice}'. Defaulting to discard.")
+                except (EOFError, KeyboardInterrupt):
+                    print("\nNo input received. Discarding...")
+
+                # Clean up after offering save option
+                cleanup_temp_dir()
+            else:
+                print("No temp directory to clean up.")
 
     except ImportError as e:
         print(f"Error: Could not import gradio_ui module")
@@ -1190,34 +1218,64 @@ Examples:
                 output_dir = str(get_chapters_dir())
                 print(f"Using temporary directory: {get_temp_dir()}")
 
-        status = run_full_pipeline(
-            epub_path=args.epub_file,
-            output_dir=output_dir,
-            max_chapters=args.max_chapters,
-            verbose=args.verbose,
-            api_key=args.api_key,
-            llm_port=args.llm_port,
-            tts_engine=args.tts_engine,
-            turbo=args.turbo,
-            device=args.device,
-            seed_voice_map=args.seed_voice_map,
-            num_llm_attempts=args.num_llm_attempts,
-            resume=(saved_temp_dir is not None)
-        )
+        # Wrap pipeline execution to handle Ctrl-C during processing
+        def run_pipeline_with_interrupt():
+            """Run pipeline and return (status, interrupted) tuple."""
+            try:
+                status = run_full_pipeline(
+                    epub_path=args.epub_file,
+                    output_dir=output_dir,
+                    max_chapters=args.max_chapters,
+                    verbose=args.verbose,
+                    api_key=args.api_key,
+                    llm_port=args.llm_port,
+                    tts_engine=args.tts_engine,
+                    turbo=args.turbo,
+                    device=args.device,
+                    seed_voice_map=args.seed_voice_map,
+                    num_llm_attempts=args.num_llm_attempts,
+                    resume=(saved_temp_dir is not None)
+                )
+                return status, False
+            except KeyboardInterrupt:
+                print("\n\nInterrupted by user (Ctrl-C)")
+                return None, True
 
-        print(status)
+        status, interrupted = run_pipeline_with_interrupt()
 
-        # Handle temp directory cleanup
-        if used_temp_dir:
-            if args.keep_temp:
-                print(f"\nTemp directory kept: {output_dir}")
-                print(f"Use --resume_from {output_dir} to resume from this directory.")
-            else:
+        if not interrupted:
+            print(status)
+
+        # Handle temp directory cleanup - offer to save before cleaning up
+        if used_temp_dir and not args.keep_temp:
+            # Offer to save temp directory before cleanup
+            print(f"\nTemp directory: {output_dir}")
+            print("\nOptions before cleanup:")
+            print("  's' - Save temp directory as zip archive for later resume")
+            print("  anything else (or Ctrl-C) - Discard and clean up")
+
+            try:
+                choice = input("\nPress 's' to save or any other key to discard: ").strip().lower()
+                if choice == 's':
+                    saved_path = save_temp_dir(output_dir)
+                    print(f"\nSaved to: {saved_path}")
+                    print("To resume later: --resume_from " + saved_path)
+                else:
+                    print("\nDiscarding temp directory...")
+            except (EOFError, KeyboardInterrupt):
+                print("\nDiscarding temp directory...")
+
+            # Clean up after offering save option
+            cleanup_temp_dir()
+        elif used_temp_dir and args.keep_temp:
+            print(f"\nTemp directory kept: {output_dir}")
+            print(f"Use --resume_from {output_dir} to resume from this directory.")
+        elif not used_temp_dir:
+            # Not using temp dir - just copy files if we have an output_dir
+            if output_dir:
                 copy_mp3_files_to_chapters(output_dir)
                 print(f"\nMP3 files have been copied to ./chapters/ directory.")
-                print(f"Temporary directory will be cleaned up on exit.")
 
 
 if __name__ == "__main__":
     main()
-    input("Press any key to cleanup directory and close.")

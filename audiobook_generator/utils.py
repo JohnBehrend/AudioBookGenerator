@@ -638,15 +638,16 @@ def distill_string(input_str: str) -> str:
         input_str: Input string to distill
 
     Returns:
-        Lowercase string with punctuation removed (?, ., -, ;, ,, !)
+        Lowercase string with punctuation removed (?, ., -, ;, ,, !) and normalized whitespace
     """
-    return (input_str.lower()
+    import re
+    return re.sub(r'\s+', ' ', (input_str.lower()
             .replace("?", "")
             .replace(".", "")
             .replace("-", "")
             .replace(";", "")
             .replace(",", "")
-            .replace("!", ""))
+            .replace("!", ""))).strip()
 
 
 def transcribe_audio_with_whisper(validation_model, audio_path: str) -> Tuple[str, list, list]:

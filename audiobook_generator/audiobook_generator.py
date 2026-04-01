@@ -372,7 +372,7 @@ def generate_tts_for_line(
         end_times = []
         last_valid_token = None
 
-        if short_text_postfix and (validation_model is not None):
+        if validation_model is not None:
             # Use faster-whisper for validation with word timestamps for token-level matching
             segments_list, info = validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
 
@@ -391,11 +391,13 @@ def generate_tts_for_line(
             if verbose:
                 print(f"  [STT] Original text: {input_string}")
                 print(f"  [STT] Whisper transcribed: {detected_string}")
-            ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=distill_string(short_text_postfix))
+            postfix_for_score = distill_string(short_text_postfix) if short_text_postfix else ""
+            ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=postfix_for_score)
 
-        # Clipping based on postfix detection (only when validation is available)
-        if short_text_postfix and (validation_model is not None):
-            if (distill_string(short_text_postfix) in detected_string) and (postfix_detect_token in segments):
+        # Clipping based on validation results (only when validation model is available)
+        if validation_model is not None:
+            # Postfix-specific clipping (only when postfix is configured)
+            if short_text_postfix and (distill_string(short_text_postfix) in detected_string) and (postfix_detect_token in segments):
                 if detected_string.startswith(distill_string(short_text_postfix)):
                     if verbose:
                         print("\nERROR: POSTFIX DETECTED BUT ONLY POSTFIX! -> Ratio 0\n")
@@ -412,7 +414,8 @@ def generate_tts_for_line(
                     audio = pydub.AudioSegment.from_wav(output_path)
                     trimmed_audio = audio[0:((clip_end1 + clip_end2) * 500)]
                     trimmed_audio.export(output_path, format="wav")
-            else:
+            elif short_text_postfix:
+                # Postfix not detected - clip to last valid token
                 if ((last_valid_token is None) or (last_valid_token == "")):
                     if verbose:
                         print("\nERROR: POSTFIX UN-DETECTED and INVALID VALUES. SKIP.\n")
@@ -427,6 +430,7 @@ def generate_tts_for_line(
                 else:
                     if verbose:
                         print(f"\nERROR: POSTFIX UN-DETECTED even though last_valid_token = {last_valid_token} should be in {segments}\n")
+            # When short_text_postfix is empty, no clipping is needed - the ratio determines if retry is needed
 
         if ratio > max_ratio:
             max_ratio = ratio

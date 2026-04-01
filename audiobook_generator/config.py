@@ -81,12 +81,12 @@ if os.environ.get("GRADIO_PORT"):
 DEFAULTS = {
     "num_llm_attempts": 1,
     "max_chapters": 1,
-    "max_new_tokens": 384,
+    "max_new_tokens": 19200,  # 384 * 50
     "sample_text_length": 150,
     "description_length": 400,
     # Audio generation defaults
     "cfg_scale": 1.30,
-    "short_text_postfix": "and also with you?",
+    "short_text_postfix": "",#and also with you?",
     # Static text for voice generation - 10 seconds, high emotional range
     "static_voice_text": "I cannot believe it! After all these years, it's finally here for us to bask in the warm glow of the future.",
     "validation_model_name": "large-v2",

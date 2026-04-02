@@ -592,7 +592,8 @@ def generate_audiobook_from_chapters(
     duplicate_replacement_map: Dict[str, str] = None,
     seed_voice_map: str = None,
     whisper_device: str = None,
-    whisper_alt_gpu: bool = False
+    whisper_alt_gpu: bool = False,
+    debug_tts: bool = False
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -703,6 +704,11 @@ def generate_audiobook_from_chapters(
                         if line_num in already_generated:
                             if verbose:
                                 print(f"Skipping chapter {i}.{line_num} (already generated)")
+                            continue
+
+                        # Debug TTS mode: print instead of generate
+                        if debug_tts:
+                            print(f"Chapter {i}, Line {line_num}, Speaker {voice}")
                             continue
 
                         # Get the voice path for this character
@@ -1153,6 +1159,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             tts_engine=tts_engine,
             turbo=turbo,
             verbose=verbose,
+            debug_tts=args.debug_tts,
             progress=None,
             duplicate_replacement_map=duplicate_replacement_map,
             seed_voice_map=seed_voice_map,
@@ -1319,6 +1326,7 @@ Examples:
     parser.add_argument("-seed_voice_map", help="Path to existing voices_map.json to seed voices")
     parser.add_argument("--keep_temp", action="store_true", help="Keep temp directory on exit (don't clean up or copy to ./chapters/)")
     parser.add_argument("--resume_from", help="Resume from a specific temp directory path")
+    parser.add_argument("--debug_tts", action="store_true", help="Print Chapter C, Line L, Speaker S instead of generating audio; skips validation")
 
     args = parser.parse_args()
 

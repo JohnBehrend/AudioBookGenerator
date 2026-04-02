@@ -128,9 +128,10 @@ class VoiceMapper:
                 return str(path)
 
         # Try partial match (case-insensitive) on canonical name
+        # Only check files with supported audio extensions
         canonical_name_lower = canonical_name.lower()
         for file_path in self.output_dir.iterdir():
-            if file_path.is_file():
+            if file_path.is_file() and file_path.suffix.lower() in self.supported_extensions:
                 stem_lower = file_path.stem.lower()
                 if canonical_name_lower in stem_lower:
                     self.voice_paths[character_name] = str(file_path)

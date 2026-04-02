@@ -671,12 +671,15 @@ def generate_audiobook_from_chapters(
 
                 # Assign speakers based on line map
                 for cobj in chapter:
-                    if cobj.line_num in line_map:
-                        # Line is explicitly mapped to a speaker
+                    if not cobj.has_quotes:
+                        # Unquoted lines always use narrator, overriding any LLM mapping
+                        cobj.set_speaker("narrator")
+                    elif cobj.line_num in line_map:
+                        # Quoted line is explicitly mapped to a speaker
                         char_name = line_to_character_map.get(cobj.line_num, "narrator")
                         cobj.set_speaker(char_name)
                     else:
-                        # Line not in map - default to narrator
+                        # Quoted line not in map - default to narrator
                         cobj.set_speaker("narrator")
 
                 # Get unique voices used in this chapter

@@ -51,8 +51,8 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
     if device is None:
         device = AUDIO_SETTINGS["default_device"]
 
-    # Description no longer used - voice generation uses static string from config
-    # Kept for API compatibility but not validated
+    # Description is used as the voice instruction for MOSS-TTS
+    # The static_voice_text is what gets spoken; description controls the voice style
 
     # Create VoiceMapper and generate voice sample
     # Stage 4 always uses MOSS - ignore any TTS_ENGINE env var or config override

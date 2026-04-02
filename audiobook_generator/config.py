@@ -87,7 +87,7 @@ DEFAULTS = {
     "description_length": 400,
     # Audio generation defaults
     "cfg_scale": 1.30,
-    "short_text_postfix": "and also with you?",
+    "short_text_postfix": "",#and also with you?
     # Static text for voice generation - 10 seconds, high emotional range
     "static_voice_text": "I cannot believe it! After all these years, it's finally here for us to bask in the warm glow of the future.",
     "validation_model_name": "large-v2",
@@ -95,7 +95,7 @@ DEFAULTS = {
     "silence_thresh": -60,
     # Reference text for TTS voice cloning
     # MOSS-VoiceGenerator hyperparameters (per model card recommendations) for Stage 1 voice design
-    "moss_voicegen_temperature": 1.5,
+    "moss_voicegen_temperature": 1.75,
     "moss_voicegen_top_p": 0.6,
     "moss_voicegen_top_k": 50,
     "moss_voicegen_repetition_penalty": 1.1,

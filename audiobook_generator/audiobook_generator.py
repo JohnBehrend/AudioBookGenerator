@@ -259,7 +259,7 @@ def generate_tts_for_line(
     input_string = distill_string(full_script)
     
     set_seed(42)
-    while ratio < 0.85 and retries < 5:
+    while ratio < 0.85 and retries < 2:
         set_seed(42 + retries)
         inputs = None
         outputs = None

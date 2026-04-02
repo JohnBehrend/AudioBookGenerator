@@ -7,6 +7,7 @@ from ebooklib import epub
 from bs4 import BeautifulSoup
 import argparse
 import re
+from utils import natural_sort_key
 
 class ChapterObj:
     def __init__(self, has_quotes: bool, text: str, line_num: int):
@@ -184,10 +185,10 @@ def load_chapters_from_txt(output_dir: str, max_chapters: int = None, prefix: st
 
     chapters = []
     pattern = os.path.join(output_dir, f"{prefix}*.txt")
-    all_files = sorted(glob.glob(pattern))
+    all_files = sorted(glob.glob(pattern), key=natural_sort_key)
     # Filter to only match exact chapter files (chapter_N.txt), not .prompt.txt or .result.*.txt
     chapter_files = [f for f in all_files if re.match(rf"^{re.escape(prefix)}\d+\.txt$", os.path.basename(f))]
-    chapter_files = sorted(chapter_files)
+    chapter_files = sorted(chapter_files, key=natural_sort_key)
 
     if max_chapters is not None:
         chapter_files = chapter_files[:max_chapters]

@@ -156,7 +156,7 @@ def cleanup_temp_dir() -> None:
     if hasattr(get_chapters_dir, "_temp_dir") and get_chapters_dir._temp_dir:
         temp_chapters_dir = get_chapters_dir._temp_dir
         # Find and copy any MP3 files from temp directory to ./chapters/
-        mp3_files = sorted(glob.glob(os.path.join(temp_chapters_dir, "chapter_*.mp3")))
+        mp3_files = sorted(glob.glob(os.path.join(temp_chapters_dir, "chapter_*.mp3")), key=natural_sort_key)
         if mp3_files:
             os.makedirs("chapters", exist_ok=True)
             for mp3_path in mp3_files:
@@ -435,7 +435,8 @@ def get_characters_from_map_files(chapters_dir: Path) -> list:
     characters = set()
 
     map_files = sorted([f for f in chapters_dir.glob("*.map.json")
-                       if re.match(r"^chapter_\d+\.map\.json$", f.name)])
+                       if re.match(r"^chapter_\d+\.map\.json$", f.name)],
+                      key=natural_sort_key)
     for map_file in map_files:
         try:
             with open(map_file, "r", encoding="utf-8") as f:
@@ -555,7 +556,7 @@ def copy_mp3_files_to_chapters(source_dir: str) -> int:
     Returns:
         Number of files copied
     """
-    mp3_files = sorted(glob.glob(os.path.join(source_dir, "chapter_*.mp3")))
+    mp3_files = sorted(glob.glob(os.path.join(source_dir, "chapter_*.mp3")), key=natural_sort_key)
 
     if not mp3_files:
         return 0
@@ -726,10 +727,11 @@ def get_chapter_map_files(chapters_dir: Path) -> list:
         chapters_dir: Path to the chapters directory
 
     Returns:
-        Sorted list of map file paths
+        Sorted list of map file paths (naturally sorted)
     """
     return sorted([f for f in chapters_dir.glob("*.map.json")
-                   if re.match(r"^chapter_\d+\.map\.json$", f.name)])
+                   if re.match(r"^chapter_\d+\.map\.json$", f.name)],
+                  key=natural_sort_key)
 
 
 def extract_characters_from_maps(chapters_dir: Path) -> list:
@@ -805,3 +807,26 @@ def count_lines_per_character(chapters_dir: Path) -> Dict[str, int]:
             character_lines["narrator"] = character_lines.get("narrator", 0) + narrator_lines
 
     return character_lines
+
+
+def natural_sort_key(filename: str):
+    """Generate a sort key for natural (human) sorting of filenames.
+
+    This ensures that chapter_10.txt comes after chapter_2.txt (not before).
+    Used for sorting chapter files, map files, etc.
+
+    Args:
+        filename: The filename to generate a sort key for
+
+    Returns:
+        A tuple of (prefix, number, suffix) where number is an integer,
+        allowing proper numerical sorting of filenames like chapter_1.txt,
+        chapter_2.txt, chapter_10.txt, etc.
+    """
+    # Match pattern like "chapter_123.txt" -> ("chapter_", 123, ".txt")
+    match = re.match(r"^(.*?)(\d+)(.*?)$", os.path.basename(filename))
+    if match:
+        prefix, num, suffix = match.groups()
+        return (prefix, int(num), suffix)
+    # If no number found, just return the filename
+    return (filename, 0, "")

@@ -16,7 +16,7 @@ from openai import OpenAI
 from functools import lru_cache
 
 from config import LLM_SETTINGS, OUTPUT_DIR
-from utils import get_llm_client, compare_characters, get_characters_from_map_files
+from utils import get_llm_client, compare_characters, get_characters_from_map_files, natural_sort_key
 
 
 # Default prompt for character description
@@ -161,7 +161,7 @@ def _load_chapter_texts_cached(chapters_dir_str: str) -> Tuple[List[str], Tuple[
         Tuple of (list of chapter texts, tuple of chapter file paths)
     """
     chapters_dir = Path(chapters_dir_str)
-    chapter_files = tuple(sorted(chapters_dir.glob("chapter_*.txt")))
+    chapter_files = tuple(sorted(chapters_dir.glob("chapter_*.txt"), key=natural_sort_key))
     chapter_texts = [load_chapter_text(str(f)) for f in chapter_files]
     return chapter_texts, chapter_files
 
@@ -228,7 +228,8 @@ def extract_character_dialogue(chapters_dir: Path, character_name: str, max_exam
 
     # Get all map files sorted
     map_files = sorted([f for f in chapters_dir.glob("*.map.json")
-                       if re.match(r"^chapter_\d+\.map\.json$", f.name)])
+                       if re.match(r"^chapter_\d+\.map\.json$", f.name)],
+                      key=natural_sort_key)
 
     for map_file in map_files:
         try:
@@ -515,7 +516,7 @@ def main() -> None:
     chapter_texts = []
     chapter_files = []
     if chapters_dir.is_dir():
-        chapter_files = sorted(chapters_dir.glob("chapter_*.txt"))
+        chapter_files = sorted(chapters_dir.glob("chapter_*.txt"), key=natural_sort_key)
         for chapter_file in chapter_files:
             chapter_texts.append(load_chapter_text(str(chapter_file)))
         if args.verbose:

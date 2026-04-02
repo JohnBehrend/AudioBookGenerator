@@ -12,7 +12,7 @@ from collections import Counter
 from openai import OpenAI
 
 from config import LLM_SETTINGS, DEFAULTS
-from utils import get_llm_client, merge_line_maps, compare_characters
+from utils import get_llm_client, merge_line_maps, compare_characters, natural_sort_key
 
 def normalize_key_value_pairs(json_str):
     """Normalize JSON by ensuring all keys and string values are properly quoted.
@@ -671,7 +671,7 @@ def load_all_previous_chapter_maps(chapter_file_base) -> Dict[str, str] | None:
     chapters_dir = chapter_path.parent
 
     # Find all map.json files in the directory
-    map_files = sorted(chapters_dir.glob("chapter_*.map.json"))
+    map_files = sorted(chapters_dir.glob("chapter_*.map.json"), key=natural_sort_key)
 
     # Extract chapter number from current file to filter previous chapters
     chapter_match = re.search(r'chapter[_\s]?(\d+)', str(chapter_file_base), re.IGNORECASE)

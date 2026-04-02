@@ -48,6 +48,7 @@ from llm_label_speakers import label_speakers  # Clean public function
 from llm_describe_character import describe_characters as describe_chars  # Clean public function
 from generate_voice_samples import generate_voice_samples as gen_voice_samples
 from utils import (
+    natural_sort_key,
     get_chapters_dir,
     get_temp_dir,
     cleanup_temp_dir,
@@ -140,7 +141,7 @@ def parse_epub_to_file(
         state = PipelineState(str(chapters_dir))
 
         # Check if EPUB is already parsed (resume from existing state)
-        existing_chapter_files = sorted(chapters_dir.glob("chapter_*.txt"))
+        existing_chapter_files = sorted(chapters_dir.glob("chapter_*.txt"), key=natural_sort_key)
         if existing_chapter_files:
             # EPUB already parsed - preserve existing progress
             log_msg = f"=== Stage 1: EPUB already parsed ({len(existing_chapter_files)} chapters found) ===\n"
@@ -236,7 +237,8 @@ def process_chapters_for_labels(
         return log_output, pipeline_state
 
     chapter_files = sorted([f for f in chapters_dir.glob("chapter_*.txt")
-                           if re.match(r"^chapter_\d+\.txt$", f.name)])
+                           if re.match(r"^chapter_\d+\.txt$", f.name)],
+                          key=natural_sort_key)
 
     if not chapter_files:
         progress(1.0, desc="No chapter files found. Please run Stage 1 (Parse EPUB) first.")
@@ -992,11 +994,12 @@ def update_chapter_progress_from_state(pipeline_state: PipelineState) -> gr.HTML
 
     # Get chapter text files (only chapter_N.txt format, exclude intermediate files)
     import re
-    chapter_txt_files = sorted([f for f in chapters_dir.glob("chapter_*.txt") if re.match(r'chapter_\d+\.txt$', f.name)])
+    chapter_txt_files = sorted([f for f in chapters_dir.glob("chapter_*.txt") if re.match(r'chapter_\d+\.txt$', f.name)],
+                              key=natural_sort_key)
     # Get chapter map files (speaker labeled)
-    chapter_map_files = sorted(chapters_dir.glob("chapter_*.map.json"))
+    chapter_map_files = sorted(chapters_dir.glob("chapter_*.map.json"), key=natural_sort_key)
     # Get chapter audio files
-    chapter_mp3_files = sorted(chapters_dir.glob("chapter_*.mp3"))
+    chapter_mp3_files = sorted(chapters_dir.glob("chapter_*.mp3"), key=natural_sort_key)
 
     if not chapter_txt_files:
         return gr.HTML(value="<div style='color: #888; padding: 20px; text-align: center;'>Chapters will appear here after EPUB parsing.</div>")
@@ -1916,7 +1919,7 @@ def restore_pipeline_state(saved_temp_dir: str) -> Tuple[PipelineState, str]:
     chapters_dir = get_chapters_dir_from_saved(saved_temp_dir)
 
     # Check for chapter files
-    chapter_files = sorted(chapters_dir.glob("chapter_*.txt"))
+    chapter_files = sorted(chapters_dir.glob("chapter_*.txt"), key=natural_sort_key)
 
     state = PipelineState(str(chapters_dir))
 
@@ -1928,7 +1931,7 @@ def restore_pipeline_state(saved_temp_dir: str) -> Tuple[PipelineState, str]:
 
     # Load existing data based on state
     # Always load chapters if they exist (applies to all non-initial states)
-    chapter_files = sorted(chapters_dir.glob("chapter_*.txt"))
+    chapter_files = sorted(chapters_dir.glob("chapter_*.txt"), key=natural_sort_key)
     if chapter_files and state.pipeline_state != "initial":
         state.chapters = parse_chapter.load_chapters_from_txt(str(chapters_dir))
         log_msg += f"Loaded {len(state.chapters)} chapter(s)\n"

@@ -43,6 +43,9 @@ def _get_attn_implementation() -> Optional[str]:
 # Import config for default values
 from config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
 
+# Import natural sort helper
+from utils import natural_sort_key
+
 # Text to speech generation - imports moved to setup_tts_engine() for lazy loading
 TTS_ENGINE = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
 
@@ -668,13 +671,12 @@ def generate_audiobook_from_chapters(
 
                 # Assign speakers based on line map
                 for cobj in chapter:
-                    if cobj.has_quotes:
-                        if cobj.line_num in line_map:
-                            char_name = line_to_character_map.get(cobj.line_num, "narrator")
-                            cobj.set_speaker(char_name)
-                        else:
-                            cobj.set_speaker("narrator")
+                    if cobj.line_num in line_map:
+                        # Line is explicitly mapped to a speaker
+                        char_name = line_to_character_map.get(cobj.line_num, "narrator")
+                        cobj.set_speaker(char_name)
                     else:
+                        # Line not in map - default to narrator
                         cobj.set_speaker("narrator")
 
                 # Get unique voices used in this chapter
@@ -764,7 +766,7 @@ def generate_audiobook_from_chapters(
 
                 # Assemble chapter MP3 from WAV files
                 progress_handler.update(1, desc=f"Assembling Chapters")
-                wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")))
+                wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")), key=natural_sort_key)
                 if wav_files:
                     audio = get_non_silent_audio_from_wavs(wav_files)
                     mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
@@ -826,7 +828,8 @@ class PipelineState:
         self.chapter_maps = {}
         # Only match map files with simple numeric names (chapter_X.map.json, not chapter_X.result.N.map.json)
         map_files = sorted([f for f in self.chapters_dir.glob("*.map.json")
-                           if re.match(r"^chapter_\d+\.map\.json$", f.name)])
+                           if re.match(r"^chapter_\d+\.map\.json$", f.name)],
+                          key=natural_sort_key)
 
         for map_file in map_files:
             try:
@@ -881,12 +884,12 @@ class PipelineState:
     def get_pipeline_state(self) -> str:
         """Determine current pipeline state based on existing files."""
         # Check for Stage 1 completion (chapter text files)
-        chapter_files = sorted(self.chapters_dir.glob("chapter_*.txt"))
+        chapter_files = sorted(self.chapters_dir.glob("chapter_*.txt"), key=natural_sort_key)
         if not chapter_files:
             return "initial"
 
         # Check for Stage 2 completion (map files)
-        map_files = sorted(self.chapters_dir.glob("*.map.json"))
+        map_files = sorted(self.chapters_dir.glob("*.map.json"), key=natural_sort_key)
         if not map_files:
             return "epub_parsed"
 
@@ -901,7 +904,7 @@ class PipelineState:
             return "characters_described"
 
         # Check for Stage 5 completion (final audiobook)
-        mp3_files = sorted(self.chapters_dir.glob("chapter_*.mp3"))
+        mp3_files = sorted(self.chapters_dir.glob("chapter_*.mp3"), key=natural_sort_key)
         if not mp3_files:
             return "voice_samples_complete"
 
@@ -923,7 +926,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       tts_engine: str = "kugelaudio", turbo: bool = False,
                       device: str = AUDIO_SETTINGS["default_device"], seed_voice_map: str = None,
                       num_llm_attempts: int = DEFAULTS["num_llm_attempts"],
-                      resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False) -> str:
+                      resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
+                      debug_tts: bool = False) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -991,7 +995,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 print(f"[SEED] No characters found in seed file: {seed_voice_map}")
 
     # Check if EPUB is already parsed (for resume mode)
-    chapter_files = sorted(state.chapters_dir.glob("chapter_*.txt"))
+    chapter_files = sorted(state.chapters_dir.glob("chapter_*.txt"), key=natural_sort_key)
     epub_parsed = len(chapter_files) > 0
 
     # Store chapters in state for reuse (avoid re-parsing)
@@ -1029,11 +1033,12 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     if verbose:
         print(f"[STAGE 2] Labeling speakers...")
     chapter_files = sorted([f for f in state.chapters_dir.glob("chapter_*.txt")
-                           if re.match(r"^chapter_\d+\.txt$", f.name)])
+                           if re.match(r"^chapter_\d+\.txt$", f.name)],
+                          key=natural_sort_key)
     num_chapters = len(chapter_files)
 
     # Check if speakers are already labeled (for resume mode)
-    map_files = sorted(state.chapters_dir.glob("*.map.json"))
+    map_files = sorted(state.chapters_dir.glob("*.map.json"), key=natural_sort_key)
     speakers_labeled = len(map_files) > 0
 
     if resume and speakers_labeled:
@@ -1159,7 +1164,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             tts_engine=tts_engine,
             turbo=turbo,
             verbose=verbose,
-            debug_tts=args.debug_tts,
+            debug_tts=debug_tts,
             progress=None,
             duplicate_replacement_map=duplicate_replacement_map,
             seed_voice_map=seed_voice_map,
@@ -1169,7 +1174,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             print(f"  {status}")
 
         # MP3 files are created during generate_audiobook_from_chapters
-        mp3_files = sorted(glob.glob(str(state.chapters_dir / "chapter_*.mp3")))
+        mp3_files = sorted(glob.glob(str(state.chapters_dir / "chapter_*.mp3")), key=natural_sort_key)
 
         if verbose:
             print(f"[STAGE 5] Generated {len(mp3_files)} chapter MP3 files")
@@ -1408,7 +1413,8 @@ Examples:
                     num_llm_attempts=args.num_llm_attempts,
                     resume=(saved_temp_dir is not None),
                     whisper_device=whisper_device,
-                    whisper_alt_gpu=whisper_alt_gpu
+                    whisper_alt_gpu=whisper_alt_gpu,
+                    debug_tts=args.debug_tts
                 )
                 return status, False
             except KeyboardInterrupt:

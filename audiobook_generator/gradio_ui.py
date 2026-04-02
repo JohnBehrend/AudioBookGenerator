@@ -1385,10 +1385,16 @@ def create_interface(
                 with gr.Row(visible=False) as active_character_row:
                     with gr.Column(scale=1):
                         active_char_name = gr.Markdown("### Character")
-                        active_char_desc = gr.Markdown("Description")
+                        active_char_desc = gr.Textbox(
+                            label="Description (editable)",
+                            lines=4,
+                            value="Description"
+                        )
                         active_char_lines = gr.Markdown("**Lines spoken:** 0")
                         character_audio = gr.Audio(label="Voice Sample", type="filepath", visible=True)
-                        generate_char_btn = gr.Button("Regenerate Voice", variant="secondary")
+                        with gr.Row():
+                            save_desc_btn = gr.Button("Save Description", variant="secondary", size="sm")
+                            generate_char_btn = gr.Button("Regenerate Voice", variant="secondary", size="sm")
 
                 # Hidden component to store selected character from gallery
                 selected_char_gallery = gr.Textbox(
@@ -1631,6 +1637,52 @@ def create_interface(
             fn=on_gallery_select,
             inputs=[character_gallery, pipeline_state_obj],
             outputs=[active_character_row, active_char_name, active_char_desc, active_char_lines, character_audio, generate_char_btn],
+        )
+
+        # Save character description
+        def on_save_description(pipeline_state_obj, description_text, log_output):
+            """Save the edited character description to the descriptions file."""
+            if not pipeline_state_obj:
+                log_output += "\nError: Pipeline state not initialized."
+                return log_output
+
+            character_name = pipeline_state_obj.selected_character
+            if not character_name:
+                log_output += "\nNo character selected."
+                return log_output
+
+            try:
+                descriptions_file = get_characters_descriptions_file()
+                if not descriptions_file or not descriptions_file.exists():
+                    log_output += f"\nError: Descriptions file not found: {descriptions_file}"
+                    return log_output
+
+                # Load existing descriptions
+                with open(descriptions_file, "r", encoding="utf-8") as f:
+                    descriptions = json.load(f)
+
+                # Update the description for the selected character
+                descriptions[character_name] = description_text
+
+                # Save back to file
+                with open(descriptions_file, "w", encoding="utf-8") as f:
+                    json.dump(descriptions, f, indent=2, ensure_ascii=False)
+
+                # Update pipeline state
+                pipeline_state_obj.character_descriptions = descriptions
+                pipeline_state_obj.selected_character = character_name
+
+                log_output += f"\nSaved description for '{character_name}'."
+                return log_output
+
+            except Exception as e:
+                log_output += f"\nError saving description: {str(e)}"
+                return log_output
+
+        save_desc_btn.click(
+            fn=on_save_description,
+            inputs=[pipeline_state_obj, active_char_desc, log_output],
+            outputs=[log_output],
         )
 
         # Regenerate voice sample for selected character

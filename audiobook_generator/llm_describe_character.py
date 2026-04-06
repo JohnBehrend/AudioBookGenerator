@@ -20,20 +20,20 @@ from utils import get_llm_client, compare_characters, get_characters_from_map_fi
 
 
 # Default prompt for character description
-CHARACTER_DESCRIPTION_PROMPT = """You are an expert voice actor. Create VERY SHORT voice profiles.
+CHARACTER_DESCRIPTION_PROMPT = """You are an expert voice actor. Create VERY SHORT voice profiles in English.
 
 RULES:
-- Output ONLY a single line of plain text in Mandarin Chinese (15-25 words max)
+- Output ONLY a single line of plain text in English (15-25 words max)
 - NO markdown, NO headers, NO sections, NO bullet points
-- NO English translations, NO parentheses with extra info
+- NO translations, NO parentheses with extra info
 - Just one concise sentence describing the voice
 
-Format: 声调特征 + 性别 + 角色类型
+Format: Voice quality + Gender + Character type
 
 Examples:
-- 沉稳大气的男声旁白，语调从容，富有故事感。
-- 温暖柔和的女声，语速中等，发音清晰甜美。
-- 苍凉悲怆的男声，前期深情，后期绝望嘶吼。
+- A calm, commanding male narrator with a relaxed tone and storytelling quality.
+- A warm, soft female voice with moderate pace and clear, sweet pronunciation.
+- A desolate, tragic male voice, deeply affectionate at first, then screaming in despair.
 """
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)

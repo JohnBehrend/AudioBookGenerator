@@ -50,7 +50,7 @@ VOICE_VALIDATION = {
     "port": 8081,
     "model": "gemma4-model",
     "threshold": 0.7,
-    "prompt": "Print YES if the voice matches the text and the description, and NO if it does not.",
+    "prompt": "You will hear a voice sample. The spoken text is: \"{sample_text}\"\n\nThe intended voice description is: \"{description}\"\n\nAnalyze the voice and output JSON with these fields:\n{{\n  \"gender_match\": true/false,\n  \"age_match\": true/false,\n  \"tone_match\": true/false,\n  \"emotion_match\": true/false,\n  \"clarity_match\": true/false,\n  \"overall_match\": true/false,\n  \"reasons\": \"brief explanation of any mismatches\"\n}}",
 }
 
 # TTS Model paths for each engine

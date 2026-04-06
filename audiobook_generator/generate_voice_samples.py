@@ -48,7 +48,8 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
         validation_client: OpenAI client for validation (created if None)
 
     Returns:
-        Tuple of (success, output_file_path, duration_seconds)
+        Tuple of (success, output_file_path, duration_seconds, is_valid, validation_msg)
+        When validate=True, is_valid indicates if the voice passed validation.
     """
     if max_new_tokens is None:
         max_new_tokens = DEFAULTS["max_new_tokens"]
@@ -67,6 +68,9 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
             max_new_tokens=max_new_tokens,
             verbose=verbose
         )
+
+        is_valid = True  # Default: no validation = accepted
+        validation_msg = ""
 
         if success and output_file and validate:
             if verbose:
@@ -90,13 +94,13 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
 
         voice_mapper.cleanup_tts_models()
 
-        return success, output_file, duration
+        return success, output_file, duration, is_valid, validation_msg
 
     except Exception as e:
         print(f"    Error: {e}", file=sys.stderr)
         print(f"    Exception type: {type(e).__name__}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
-        return False, None, 0
+        return False, None, 0, False, "Exception during generation"
 
 
 def main():
@@ -303,27 +307,76 @@ def generate_voice_samples(
                             break
 
                     if voice_found:
+                        # Validate existing voice if --validate is enabled
+                        if validate and validation_client is None:
+                            validation_client = get_validation_client()
+                        if validate and validation_client is not None:
+                            if verbose:
+                                print(f"    Validating existing voice...")
+                            sample_text = DEFAULTS.get("static_voice_text", "")
+                            is_valid, validation_msg = VoiceMapper.validate_voice_with_llm(
+                                voice_path=generated[char_name],
+                                description=char_desc,
+                                sample_text=sample_text,
+                                client=validation_client,
+                                verbose=verbose
+                            )
+                            if not is_valid:
+                                if verbose:
+                                    print(f"    Validation failed: {validation_msg}, regenerating...")
+                                # Remove failed voice and continue to regeneration
+                                del generated[char_name]
+                                voice_found = False
+                            else:
+                                if verbose:
+                                    print(f"    Validation passed for existing voice")
+                        if voice_found:
+                            continue
+
+                # Generate and validate voice, retrying on validation failure
+                max_retries = 50
+                voice_accepted = False
+                retry_count = 0
+
+                while not voice_accepted and retry_count < max_retries:
+                    if retry_count > 0:
+                        if verbose:
+                            print(f"    Retrying generation (attempt {retry_count + 1}/{max_retries})...")
+
+                    success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
+                        character_name=char_name,
+                        description=char_desc,
+                        output_dir=output_dir,
+                        device=device,
+                        max_new_tokens=max_tokens,
+                        verbose=verbose,
+                        validate=validate,
+                        validation_client=validation_client
+                    )
+
+                    if not success:
+                        retry_count += 1
                         continue
 
-                success, output_file, duration = generate_voice_sample(
-                    character_name=char_name,
-                    description=char_desc,
-                    output_dir=output_dir,
-                    device=device,
-                    max_new_tokens=max_tokens,
-                    verbose=verbose,
-                    validate=validate,
-                    validation_client=validation_client
-                )
+                    # Check validation result (already validated in generate_voice_sample)
+                    # When validate=False, is_valid defaults to True (accepted)
+                    if is_valid:
+                        voice_accepted = True
+                        generated[char_name] = output_file
+                        if verbose:
+                            print(f"    Accepted after {retry_count + 1} attempt(s)")
+                    else:
+                        if verbose:
+                            print(f"    Validation failed: {validation_msg}")
+                        # Delete failed voice and retry
+                        if output_file and os.path.exists(output_file):
+                            os.remove(output_file)
+                        retry_count += 1
 
-                if success:
-                    generated[char_name] = output_file
-                    if verbose:
-                        print(f"    Generated: {duration:.2f}s -> {output_file}")
-                else:
+                if not voice_accepted:
                     failed.append(char_name)
                     if verbose:
-                        print(f"    Failed")
+                        print(f"    Failed after {max_retries} attempts")
         except Exception as e:
             return f"Error generating voices: {str(e)}\n{traceback.format_exc()}", {}
 
@@ -343,3 +396,5 @@ def generate_voice_samples(
         if verbose:
             print(error_msg)
         return error_msg, {}
+if __name__ == "__main__":
+    main()

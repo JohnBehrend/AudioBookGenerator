@@ -631,7 +631,7 @@ def generate_audiobook_from_chapters(
         # Create unified progress handler for both Gradio and CLI
         # Using context manager for proper cleanup
         with ProgressHandler(progress=progress, total=len(chapters_to_process), desc="Audiobook Generation") as progress_handler:
-            # Setup validation model
+            # Setup validation model (Whisper always runs)
             whisper_device = whisper_device if whisper_device is not None else device
             validation_model = setup_validation_model(whisper_device, alt_gpu=whisper_alt_gpu)
             # This avoids crashes from faster-whisper dependencies if validation_model is None
@@ -930,7 +930,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       device: str = AUDIO_SETTINGS["default_device"], seed_voice_map: str = None,
                       num_llm_attempts: int = DEFAULTS["num_llm_attempts"],
                       resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
-                      debug_tts: bool = False) -> str:
+                      debug_tts: bool = False, validate: bool = False) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -947,6 +947,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         num_llm_attempts: Number of LLM attempts for speaker labeling
         resume: If True, detect existing state and resume from where it left off
         whisper_device: Device for Whisper validation model (defaults to device if None)
+        validate: If True, enable LLM validation (port 8081) for voice sample generation
 
     Returns:
         Status message
@@ -1132,7 +1133,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 verbose=verbose,
                 progress=None,  # CLI mode, no gr.Progress
                 seed_characters=seed_characters,
-                tts_engine=tts_engine
+                tts_engine=tts_engine,
+                validate=validate
             )
 
             if verbose:
@@ -1335,6 +1337,8 @@ Examples:
     parser.add_argument("--keep_temp", action="store_true", help="Keep temp directory on exit (don't clean up or copy to ./chapters/)")
     parser.add_argument("--resume_from", help="Resume from a specific temp directory path")
     parser.add_argument("--debug_tts", action="store_true", help="Print Chapter C, Line L, Speaker S instead of generating audio; skips validation")
+    parser.add_argument("--validate", action="store_true",
+                        help="Enable LLM validation (port 8081) to judge generated audio quality")
 
     args = parser.parse_args()
 
@@ -1417,7 +1421,8 @@ Examples:
                     resume=(saved_temp_dir is not None),
                     whisper_device=whisper_device,
                     whisper_alt_gpu=whisper_alt_gpu,
-                    debug_tts=args.debug_tts
+                    debug_tts=args.debug_tts,
+                    validate=args.validate
                 )
                 return status, False
             except KeyboardInterrupt:

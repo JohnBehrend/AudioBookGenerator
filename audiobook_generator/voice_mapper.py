@@ -24,6 +24,7 @@ from config import DEFAULTS, AUDIO_SETTINGS, TTS_MODEL_PATHS, VOICE_VALIDATION
 # Import utility for validation client
 from utils import get_validation_client
 
+
 # Helper to check if flash-attn is available
 def _get_attn_implementation() -> Optional[str]:
     """Return flash_attention_2 if available, otherwise None."""
@@ -335,11 +336,19 @@ class VoiceMapper:
         if threshold is None:
             threshold = VOICE_VALIDATION["threshold"]
 
-        file_url = f"file://{voice_path}"
+        # Convert to absolute path for file:// URL
+        abs_voice_path = os.path.abspath(voice_path)
+        file_url = f"file://{abs_voice_path}"
         validation_prompt = VOICE_VALIDATION["prompt"]
 
         # Format the description for the prompt
         description_text = description.strip() if description else "unknown voice"
+
+        # Format the prompt with sample text and description
+        formatted_prompt = validation_prompt.format(
+            sample_text=sample_text,
+            description=description_text
+        )
 
         try:
             response = client.chat.completions.create(
@@ -354,7 +363,7 @@ class VoiceMapper:
                             },
                             {
                                 "type": "text",
-                                "text": f"{validation_prompt} Description: {description_text}"
+                                "text": formatted_prompt
                             }
                         ]
                     }
@@ -363,13 +372,36 @@ class VoiceMapper:
             )
 
             result = response.choices[0].message.content.strip()
-            is_valid = "YES" in result.upper()
 
-            if verbose:
-                print(f"    Validation result: {result}")
-                print(f"    Voice {'passed' if is_valid else 'failed'} validation")
+            # Parse JSON result
+            try:
+                import json as json_module
+                validation_data = json_module.loads(result)
 
-            return is_valid, result
+                is_valid = validation_data.get("overall_match", False)
+
+                if verbose:
+                    print(f"    Validation Results:")
+                    print(f"      Gender match: {validation_data.get('gender_match', 'N/A')}")
+                    print(f"      Age match: {validation_data.get('age_match', 'N/A')}")
+                    print(f"      Tone match: {validation_data.get('tone_match', 'N/A')}")
+                    print(f"      Emotion match: {validation_data.get('emotion_match', 'N/A')}")
+                    print(f"      Clarity match: {validation_data.get('clarity_match', 'N/A')}")
+                    print(f"      Overall: {'PASS' if is_valid else 'FAIL'}")
+                    if validation_data.get('reasons'):
+                        print(f"      Reasons: {validation_data['reasons']}")
+
+                return is_valid, result
+
+            except json_module.JSONDecodeError:
+                # Fallback: check for YES/NO in plain text response
+                is_valid = "YES" in result.upper() or "true" in result.lower()
+
+                if verbose:
+                    print(f"    Validation result: {result}")
+                    print(f"    Voice {'passed' if is_valid else 'failed'} validation")
+
+                return is_valid, result
 
         except Exception as e:
             error_msg = f"Validation error: {str(e)}"
@@ -667,7 +699,9 @@ class VoiceMapper:
         model, processor, _, _ = self.setup_tts_engine()
 
         try:
-            voice_instruction = f"{description} voice"
+            # Build structured voice instruction for MOSS-TTS
+            # Explicit format improves model's ability to follow voice style directions
+            voice_instruction = f"Generate speech with this voice: {description}. Speak the following text in this voice style."
 
             if verbose:
                 print(f"  Character: {character_name}")

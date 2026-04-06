@@ -336,6 +336,7 @@ def generate_voice_samples(
                 # Generate and validate voice, retrying on validation failure
                 max_retries = 50
                 voice_accepted = False
+                voice_temporarily_saved = False  # Track if we saved a "good enough" voice
                 retry_count = 0
 
                 while not voice_accepted and retry_count < max_retries:
@@ -358,7 +359,7 @@ def generate_voice_samples(
                         retry_count += 1
                         continue
 
-                    # Check validation result (already validated in generate_voice_sample)
+                    # Parse validation result to check individual dimensions
                     # When validate=False, is_valid defaults to True (accepted)
                     if is_valid:
                         voice_accepted = True
@@ -366,17 +367,83 @@ def generate_voice_samples(
                         if verbose:
                             print(f"    Accepted after {retry_count + 1} attempt(s)")
                     else:
-                        if verbose:
-                            print(f"    Validation failed: {validation_msg}")
-                        # Delete failed voice and retry
-                        if output_file and os.path.exists(output_file):
+                        # Check if this is a "good enough" voice (gender, age, clarity match)
+                        # Save it temporarily and keep trying for better tone/emotion match
+                        should_save_temporarily = False
+                        has_tone_match = False
+                        if validate and validation_msg:
+                            try:
+                                import json as json_module
+                                validation_data = json_module.loads(validation_msg)
+                                # Check core attributes: gender, age, clarity
+                                gender_match = validation_data.get("gender_match", False)
+                                age_match = validation_data.get("age_match", False)
+                                clarity_match = validation_data.get("clarity_match", False)
+                                has_tone_match = validation_data.get("tone_match", False)
+
+                                if gender_match and age_match and clarity_match:
+                                    should_save_temporarily = True
+                                    if verbose:
+                                        print(f"    Core attributes match (gender, age, clarity) - saving temporarily")
+                                        print(f"    Tone match: {has_tone_match}, Emotion match: {validation_data.get('emotion_match')}")
+                                        print(f"    Continuing search for better tone/emotion match...")
+                            except (json_module.JSONDecodeError, KeyError):
+                                if verbose:
+                                    print(f"    Validation failed: {validation_msg}")
+
+                        if should_save_temporarily:
+                            # Save with .temp.wav extension
+                            # If we already have a temp voice, only replace if this one has tone match
+                            # (previous temp didn't have tone match)
+                            temp_output_file = output_file.replace(".wav", ".temp.wav")
+                            import shutil
+
+                            # Check if we should replace existing temp (this one has better match)
+                            should_replace_temp = not voice_temporarily_saved or has_tone_match
+
+                            if should_replace_temp:
+                                shutil.move(output_file, temp_output_file)
+                                generated[char_name] = temp_output_file
+                                voice_temporarily_saved = True
+                                if verbose:
+                                    if has_tone_match:
+                                        print(f"    Saved improved voice (4/5 match - has tone): {temp_output_file}")
+                                    else:
+                                        print(f"    Saved temporary voice: {temp_output_file}")
+
+                        # Delete failed voice and retry (unless we saved it temporarily)
+                        if output_file and os.path.exists(output_file) and not should_save_temporarily:
                             os.remove(output_file)
                         retry_count += 1
 
                 if not voice_accepted:
-                    failed.append(char_name)
-                    if verbose:
-                        print(f"    Failed after {max_retries} attempts")
+                    if voice_temporarily_saved:
+                        # Rename temp file to final .wav
+                        temp_file = generated[char_name]
+                        final_file = temp_file.replace(".temp.wav", ".wav")
+                        if os.path.exists(temp_file):
+                            os.rename(temp_file, final_file)
+                            generated[char_name] = final_file
+                            if verbose:
+                                print(f"    Using best available voice: {final_file}")
+                    else:
+                        # Clean up any leftover .temp.wav file for this character
+                        temp_file = os.path.join(output_dir, f"{char_name}.temp.wav")
+                        if os.path.exists(temp_file):
+                            os.remove(temp_file)
+                            if verbose:
+                                print(f"    Cleaned up orphaned temp file: {temp_file}")
+
+                        # Fallback: use existing narrator voice if available
+                        narrator_voice = voice_mapper.get_voice_path("narrator")
+                        if narrator_voice and os.path.exists(narrator_voice):
+                            generated[char_name] = narrator_voice
+                            if verbose:
+                                print(f"    Using narrator voice as fallback: {narrator_voice}")
+                        else:
+                            failed.append(char_name)
+                            if verbose:
+                                print(f"    Failed: no valid voice found and no narrator voice available")
         except Exception as e:
             return f"Error generating voices: {str(e)}\n{traceback.format_exc()}", {}
 

@@ -20,27 +20,20 @@ from utils import get_llm_client, compare_characters, get_characters_from_map_fi
 
 
 # Default prompt for character description
-CHARACTER_DESCRIPTION_PROMPT = """
-You are an expert voice actor. Create concise voice profiles for characters.
+CHARACTER_DESCRIPTION_PROMPT = """You are an expert voice actor. Create VERY SHORT voice profiles.
 
-Focus on distinctive traits a voice actor would use:
-- Gender and age (e.g., "Man, early 30s")
-- Speech speed and rhythm (e.g., "Fast-paced" or "Slow, deliberate")
-- Volume and projection (e.g., "Loud and projecting" or "Soft whisper")
-- Clarity and articulation (e.g., "Crisp diction" or "Slurred speech")
-- Tone and emotion (e.g., "Warm and inviting" or "Cold and detached")
-- Vocal texture (e.g., "Raspy" or "Smooth and silky")
+RULES:
+- Output ONLY a single line of plain text in Mandarin Chinese (15-25 words max)
+- NO markdown, NO headers, NO sections, NO bullet points
+- NO English translations, NO parentheses with extra info
+- Just one concise sentence describing the voice
 
-CRITICAL: This description is used as a prompt for MOSS-TTS voice generation. Be specific about:
-- **Emotion**: Emotional quality (e.g., "warm and reassuring," "cold and menacing")
-- **Speed**: Pacing (e.g., "rapid-fire," "measured and deliberate")
-- **Pitch**: Vocal register (e.g., "deep baritone," "high-pitched")
-- **Characteristics**: Unique qualities (e.g., "gravelly texture," "breathy quality")
+Format: 声调特征 + 性别 + 角色类型
 
-Example:
-A middle-aged man with a deep, resonant baritone. Confident and urgent delivery with warm, reassuring tone. Crisp articulation, commanding presence. Emotion shifts from calm to passionate.
-
-Keep under 50 words, focusing on distinctive features.
+Examples:
+- 沉稳大气的男声旁白，语调从容，富有故事感。
+- 温暖柔和的女声，语速中等，发音清晰甜美。
+- 苍凉悲怆的男声，前期深情，后期绝望嘶吼。
 """
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)

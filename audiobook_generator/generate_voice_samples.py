@@ -13,9 +13,11 @@ import sys
 import shutil
 import traceback
 from typing import Optional
+from openai import OpenAI
 
 # Import config for default values
 from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
+from utils import get_validation_client
 
 # Import VoiceMapper for centralized TTS management
 from voice_mapper import VoiceMapper
@@ -29,7 +31,7 @@ def load_character_descriptions(descriptions_file):
 
 def generate_voice_sample(character_name: str, description: str, output_dir: str,
                           device: str = None, max_new_tokens: int = None, verbose: bool = False,
-                          tts_engine: str = None) -> tuple:
+                          validate: bool = False, validation_client: OpenAI = None) -> tuple:
     """Generate a short voice sample for a character using VoiceDesign model via VoiceMapper.
 
     Uses voice design with an instruct prompt to generate speech
@@ -42,6 +44,8 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
         device: CUDA device (uses config default if not specified)
         max_new_tokens: Max tokens for generation
         verbose: Print verbose output
+        validate: If True, validate the generated voice with LLM
+        validation_client: OpenAI client for validation (created if None)
 
     Returns:
         Tuple of (success, output_file_path, duration_seconds)
@@ -51,11 +55,7 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
     if device is None:
         device = AUDIO_SETTINGS["default_device"]
 
-    # Description is used as the voice instruction for MOSS-TTS
-    # The static_voice_text is what gets spoken; description controls the voice style
-
-    # Create VoiceMapper and generate voice sample
-    # Stage 4 always uses MOSS - ignore any TTS_ENGINE env var or config override
+    # Stage 4 always uses MOSS TTS engine
     engine = "moss"
     voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=engine)
 
@@ -68,7 +68,26 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
             verbose=verbose
         )
 
-        # Cleanup model from GPU memory
+        if success and output_file and validate:
+            if verbose:
+                print(f"    Validating voice sample...")
+
+            sample_text = DEFAULTS.get("static_voice_text", "")
+
+            if validation_client is None:
+                validation_client = get_validation_client()
+
+            is_valid, validation_msg = VoiceMapper.validate_voice_with_llm(
+                voice_path=output_file,
+                description=description,
+                sample_text=sample_text,
+                client=validation_client,
+                verbose=verbose
+            )
+
+            if not is_valid:
+                print(f"    Warning: Voice validation failed: {validation_msg}")
+
         voice_mapper.cleanup_tts_models()
 
         return success, output_file, duration
@@ -123,6 +142,11 @@ def main():
         default=AUDIO_SETTINGS.get("default_tts_engine", "moss"),
         help="TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts')"
     )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Enable LLM validation to verify generated voices match character descriptions"
+    )
 
     args = parser.parse_args()
 
@@ -153,7 +177,8 @@ def main():
         single_character=args.single_character,
         verbose=args.verbose,
         seed_characters=seed_characters,
-        tts_engine=args.tts_engine
+        tts_engine=args.tts_engine,
+        validate=args.validate
     )
 
     print(status)
@@ -179,7 +204,8 @@ def generate_voice_samples(
     progress=None,
     seed_characters: Dict[str, str] = None,
     tts_engine: str = None,
-    force_regenerate: bool = False
+    force_regenerate: bool = False,
+    validate: bool = False
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters via VoiceMapper.
 
@@ -195,13 +221,16 @@ def generate_voice_samples(
         verbose: Print verbose output
         progress: Gradio progress bar to update during generation
         seed_characters: Dict mapping character names to existing voice paths from seed voices_map
-        tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts')
+        tts_engine: TTS engine to use (ignored - always uses 'moss' for voice generation)
         force_regenerate: If True, regenerate voices even if they already exist
+        validate: If True, validate generated voices with LLM
 
     Returns:
         Tuple of (status_message, character_voice_paths)
     """
     try:
+        # Create validation client once if needed (efficiency - avoid creating per-voice)
+        validation_client = get_validation_client() if validate else None
         if single_character:
             if single_character not in descriptions:
                 return f"Character '{single_character}' not found in descriptions.", {}
@@ -283,7 +312,8 @@ def generate_voice_samples(
                     device=device,
                     max_new_tokens=max_tokens,
                     verbose=verbose,
-                    tts_engine=tts_engine
+                    validate=validate,
+                    validation_client=validation_client
                 )
 
                 if success:

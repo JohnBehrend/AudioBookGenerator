@@ -40,6 +40,19 @@ AUDIO_SETTINGS = {
     "gradio_port": 7860,
 }
 
+# ============================================================================
+# VOICE VALIDATION SETTINGS
+# ============================================================================
+
+VOICE_VALIDATION = {
+    "enable": False,
+    "endpoint": "http://localhost:8081/v1",
+    "port": 8081,
+    "model": "gemma4-model",
+    "threshold": 0.7,
+    "prompt": "Print YES if the voice matches the text and the description, and NO if it does not.",
+}
+
 # TTS Model paths for each engine
 TTS_MODEL_PATHS = {
     "kugelaudio": {
@@ -66,13 +79,24 @@ if os.environ.get("LLM_MODEL"):
     LLM_SETTINGS["default_model"] = os.environ["LLM_MODEL"]
 
 # Environment variable overrides for AUDIO settings
-
 if os.environ.get("TTS_ENGINE"):
     AUDIO_SETTINGS["default_tts_engine"] = os.environ["TTS_ENGINE"]
 if os.environ.get("AUDIO_DEVICE"):
     AUDIO_SETTINGS["default_device"] = os.environ["AUDIO_DEVICE"]
 if os.environ.get("GRADIO_PORT"):
     AUDIO_SETTINGS["gradio_port"] = int(os.environ["GRADIO_PORT"])
+
+# Environment variable overrides for VOICE VALIDATION settings
+if os.environ.get("ENABLE_VOICE_VALIDATION"):
+    VOICE_VALIDATION["enable"] = os.environ["ENABLE_VOICE_VALIDATION"].lower() in ("true", "1", "yes")
+if os.environ.get("VALIDATION_ENDPOINT"):
+    VOICE_VALIDATION["endpoint"] = os.environ["VALIDATION_ENDPOINT"]
+if os.environ.get("VALIDATION_PORT"):
+    VOICE_VALIDATION["port"] = int(os.environ["VALIDATION_PORT"])
+if os.environ.get("VALIDATION_MODEL"):
+    VOICE_VALIDATION["model"] = os.environ["VALIDATION_MODEL"]
+if os.environ.get("VALIDATION_THRESHOLD"):
+    VOICE_VALIDATION["threshold"] = float(os.environ["VALIDATION_THRESHOLD"])
 
 
 # ============================================================================
@@ -87,7 +111,8 @@ DEFAULTS = {
     "description_length": 400,
     # Audio generation defaults
     "cfg_scale": 1.30,
-    "short_text_postfix": "",#and also with you?
+    "short_text_postfix": "and also with you?",
+    "short_text_prefix_pause_ms": 500,
     # Static text for voice generation - 10 seconds, high emotional range
     "static_voice_text": "I cannot believe it! After all these years, it's finally here for us to bask in the warm glow of the future.",
     "validation_model_name": "large-v2",

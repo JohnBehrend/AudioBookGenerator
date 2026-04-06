@@ -527,6 +527,16 @@ def get_llm_client(api_key: str, port: str) -> OpenAI:
     return OpenAI(base_url=f"http://localhost:{port}/v1", api_key=api_key)
 
 
+def get_validation_client() -> OpenAI:
+    """Create an OpenAI client for voice validation using validation settings.
+
+    Returns:
+        OpenAI client configured for validation LLM
+    """
+    from config import VOICE_VALIDATION
+    return OpenAI(base_url=VOICE_VALIDATION["endpoint"], api_key="EMPTY")
+
+
 # ============================================================================
 # FILE OPERATIONS
 # ============================================================================

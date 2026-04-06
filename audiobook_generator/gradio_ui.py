@@ -399,6 +399,7 @@ def generate_voice_samples(
     log_output: str,
     seed_voice_map: str = None,
     tts_engine: str = None,
+    validate_voice: bool = False,
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 4: Generate voice samples for each character."""
@@ -458,7 +459,8 @@ def generate_voice_samples(
             verbose=False,
             progress=progress,
             seed_characters=load_seed_characters(seed_voice_map),
-            tts_engine="moss" # Voice generation always uses MOSS TTS engine
+            tts_engine="moss",  # Voice generation always uses MOSS TTS engine
+            validate=validate_voice
         )
 
         log_output += f"\n{result_msg}"
@@ -1326,7 +1328,13 @@ def create_interface(
                 whisper_alt_gpu_checkbox = gr.Checkbox(
                     label="Use Alt GPU for Whisper (cuda:1)",
                     value=False,
-                    scale=4
+                    scale=3
+                )
+                validate_voice_checkbox = gr.Checkbox(
+                    label="Validate Voices with LLM",
+                    value=False,
+                    scale=3,
+                    info="Use LLM to verify voices match character descriptions"
                 )
 
             # EPUB upload - use the provided path as default if it exists
@@ -1513,7 +1521,7 @@ def create_interface(
         # Generate All Voice Samples - Stage 4
         voice_samples_btn.click(
             fn=generate_voice_samples,
-            inputs=[pipeline_state_obj, log_output, seed_voice_map_input],
+            inputs=[pipeline_state_obj, log_output, seed_voice_map_input, validate_voice_checkbox],
             outputs=[log_output, pipeline_state_obj],
         ).then(
             fn=update_button_visibility_from_state,

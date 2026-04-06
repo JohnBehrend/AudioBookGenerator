@@ -16,9 +16,13 @@ import traceback
 import torch
 from typing import Dict, Tuple, Optional, Any
 from pathlib import Path
+from openai import OpenAI
 
 # Import config for default values
-from config import DEFAULTS, AUDIO_SETTINGS, TTS_MODEL_PATHS
+from config import DEFAULTS, AUDIO_SETTINGS, TTS_MODEL_PATHS, VOICE_VALIDATION
+
+# Import utility for validation client
+from utils import get_validation_client
 
 # Helper to check if flash-attn is available
 def _get_attn_implementation() -> Optional[str]:
@@ -297,6 +301,82 @@ class VoiceMapper:
         self.tts_models.clear()
         gc.collect()
         torch.cuda.empty_cache()
+
+    @staticmethod
+    def validate_voice_with_llm(
+        voice_path: str,
+        description: str,
+        sample_text: str,
+        client: Optional[OpenAI] = None,
+        model: str = None,
+        threshold: float = None,
+        verbose: bool = False
+    ) -> Tuple[bool, str]:
+        """Validate a generated voice sample using LLM audio analysis.
+
+        Args:
+            voice_path: Path to the generated voice .wav file
+            description: Voice description (e.g., "male. middle aged. high")
+            sample_text: The text that was spoken in the voice sample
+            client: OpenAI client for the validation LLM
+            model: Model name for validation (defaults to VOICE_VALIDATION["model"])
+            threshold: Confidence threshold (YES/NO response interpreted as pass/fail)
+            verbose: Print verbose output
+
+        Returns:
+            Tuple of (is_valid, validation_message)
+        """
+        if client is None:
+            client = get_validation_client()
+
+        if model is None:
+            model = VOICE_VALIDATION["model"]
+
+        if threshold is None:
+            threshold = VOICE_VALIDATION["threshold"]
+
+        file_url = f"file://{voice_path}"
+        validation_prompt = VOICE_VALIDATION["prompt"]
+
+        # Format the description for the prompt
+        description_text = description.strip() if description else "unknown voice"
+
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "audio_url",
+                                "audio_url": {"url": file_url}
+                            },
+                            {
+                                "type": "text",
+                                "text": f"{validation_prompt} Description: {description_text}"
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=512
+            )
+
+            result = response.choices[0].message.content.strip()
+            is_valid = "YES" in result.upper()
+
+            if verbose:
+                print(f"    Validation result: {result}")
+                print(f"    Voice {'passed' if is_valid else 'failed'} validation")
+
+            return is_valid, result
+
+        except Exception as e:
+            error_msg = f"Validation error: {str(e)}"
+            if verbose:
+                print(f"    {error_msg}")
+            # On error, return True to allow generation to continue
+            return True, error_msg
 
     def unload_model(self, model_name: str) -> None:
         """Unload a specific model by name.
@@ -587,9 +667,15 @@ class VoiceMapper:
         model, processor, _, _ = self.setup_tts_engine()
 
         try:
-            # Build conversation with text only - MOSS-TTS generates directly from text
+            voice_instruction = f"{description} voice"
+
+            if verbose:
+                print(f"  Character: {character_name}")
+                print(f"  Voice instruction: {voice_instruction[:200]}...")
+                print(f"  Sample text: {sample_text}")
+
             conversations = [
-                processor.build_user_message(text=sample_text, instruction=description)
+                processor.build_user_message(text=sample_text, instruction=voice_instruction)
             ]
 
             # Prepare batch for generation

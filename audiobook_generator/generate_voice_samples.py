@@ -16,8 +16,8 @@ from typing import Optional
 from openai import OpenAI
 
 # Import config for default values
-from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
-from utils import get_validation_client
+from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR, VOICE_GENDER_CORRECTION
+from utils import get_validation_client, correct_voice_gender
 
 # Import VoiceMapper for centralized TTS management
 from voice_mapper import VoiceMapper
@@ -371,6 +371,7 @@ def generate_voice_samples(
                         # Save it temporarily and keep trying for better tone/emotion match
                         should_save_temporarily = False
                         has_tone_match = False
+                        gender_match = False  # Default to False
                         if validate and validation_msg:
                             try:
                                 import json as json_module
@@ -390,6 +391,50 @@ def generate_voice_samples(
                             except (json_module.JSONDecodeError, KeyError):
                                 if verbose:
                                     print(f"    Validation failed: {validation_msg}")
+
+                        # Try gender correction if gender mismatch is the issue
+                        if not gender_match and VOICE_GENDER_CORRECTION.get("enable", True):
+                            if verbose:
+                                print(f"    Gender mismatch detected, attempting correction...")
+                            correction_success, correction_msg = correct_voice_gender(
+                                audio_path=output_file,
+                                description=char_desc,
+                                threshold_hz=VOICE_GENDER_CORRECTION.get("pitch_threshold_hz", 160.0),
+                                male_target_pitch_hz=VOICE_GENDER_CORRECTION.get("male_target_pitch_hz", 130.0),
+                                female_target_pitch_hz=VOICE_GENDER_CORRECTION.get("female_target_pitch_hz", 220.0),
+                                verbose=verbose
+                            )
+
+                            if correction_success:
+                                if verbose:
+                                    print(f"    Gender correction: {correction_msg}")
+                                # Re-validate the corrected voice
+                                if validation_client is None:
+                                    validation_client = get_validation_client()
+                                is_valid, validation_msg = VoiceMapper.validate_voice_with_llm(
+                                    voice_path=output_file,
+                                    description=char_desc,
+                                    sample_text=DEFAULTS.get("static_voice_text", ""),
+                                    client=validation_client,
+                                    verbose=verbose
+                                )
+                                if is_valid:
+                                    voice_accepted = True
+                                    generated[char_name] = output_file
+                                    if verbose:
+                                        print(f"    Voice accepted after gender correction")
+                                    continue  # Move to next character
+                                else:
+                                    if verbose:
+                                        print(f"    Corrected voice still failed validation, continuing retries...")
+                            else:
+                                # Check if this is an extreme pitch case that needs regeneration
+                                if "Could not detect pitch" in correction_msg or "beyond correction range" in correction_msg.lower():
+                                    if verbose:
+                                        print(f"    Extreme pitch detected - skipping correction, will regenerate")
+                                else:
+                                    if verbose:
+                                        print(f"    Gender correction failed: {correction_msg}")
 
                         if should_save_temporarily:
                             # Save with .temp.wav extension

@@ -937,3 +937,173 @@ def natural_sort_key(filename: str):
         return (prefix, int(num), suffix)
     # If no number found, just return the filename
     return (filename, 0, "")
+
+
+# ============================================================================
+# VOICE GENDER CORRECTION
+# ============================================================================
+
+
+def extract_gender_from_description(description: str) -> Optional[str]:
+    """Extract gender from a voice description string.
+
+    Args:
+        description: Voice description (e.g., "A calm, commanding male narrator")
+
+    Returns:
+        "male" or "female" if found, None otherwise
+    """
+    desc_lower = description.lower()
+    # Check for "female" first to avoid matching "male" in "female"
+    if "female" in desc_lower:
+        return "female"
+    if "woman" in desc_lower:
+        return "female"
+    if "male" in desc_lower:
+        return "male"
+    if "man" in desc_lower:
+        return "male"
+    return None
+
+
+def detect_gender_from_audio(audio_path: str, threshold_hz: float = 160.0) -> Optional[str]:
+    """Detect gender from audio file using pitch analysis.
+
+    Uses librosa.pyin for pitch estimation. Gender is determined by average pitch:
+    - Above threshold_hz: female
+    - Below threshold_hz: male
+
+    Args:
+        audio_path: Path to the audio file
+        threshold_hz: Pitch threshold in Hz (default: 160Hz)
+
+    Returns:
+        "male" or "female" based on average pitch, None if detection fails
+    """
+    try:
+        import librosa
+        import numpy as np
+
+        # Load audio
+        y, sr = librosa.load(audio_path, sr=None)
+
+        # Estimate pitch using pyin
+        # librosa.pyin returns (f0, magnitude, confidence) in newer versions
+        # or (f0, magnitude, confidence, times) in older versions
+        pyin_result = librosa.pyin(y, sr=sr, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7"))
+        f0 = pyin_result[0]
+
+        # Filter out unmuted frames (f0 == 0)
+        voiced_f0 = f0[f0 > 0]
+
+        if len(voiced_f0) == 0:
+            return None
+
+        # Calculate average pitch
+        avg_pitch = np.mean(voiced_f0)
+
+        # Determine gender based on threshold
+        if avg_pitch > threshold_hz:
+            return "female"
+        else:
+            return "male"
+
+    except Exception as e:
+        print(f"    Gender detection error: {e}")
+        return None
+
+
+def correct_voice_gender(
+    audio_path: str,
+    description: str,
+    threshold_hz: float = 160.0,
+    male_target_pitch_hz: float = 130.0,
+    female_target_pitch_hz: float = 220.0,
+    verbose: bool = False
+) -> Tuple[bool, str]:
+    """Correct voice gender by pitch shifting if needed.
+
+    Detects current gender from audio pitch and compares to target gender
+    extracted from description. If they don't match, applies pitch shift
+    using TD-PSOLA algorithm to move toward the target gender's typical pitch range.
+
+    Args:
+        audio_path: Path to the audio file (will be overwritten if correction applied)
+        description: Voice description containing target gender (e.g., "male voice")
+        threshold_hz: Pitch threshold for gender detection (default: 160Hz)
+        male_target_pitch_hz: Target average pitch for male voices (default: 130Hz)
+        female_target_pitch_hz: Target average pitch for female voices (default: 220Hz)
+        verbose: Print verbose output
+
+    Returns:
+        Tuple of (success, message)
+        - success: True if correction was applied (or not needed), False if failed
+        - message: Description of what was done
+    """
+    try:
+        import librosa
+        from psola import vocode
+        import numpy as np
+
+        # Extract target gender from description
+        target_gender = extract_gender_from_description(description)
+        if target_gender is None:
+            return False, "Could not extract target gender from description"
+
+        # Load audio and estimate pitch
+        y, sr = librosa.load(audio_path, sr=None)
+        pyin_result = librosa.pyin(y, sr=sr, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7"))
+        f0 = pyin_result[0]
+
+        # Filter out unmuted frames
+        voiced_mask = f0 > 0
+        voiced_f0 = f0[voiced_mask]
+
+        if len(voiced_f0) == 0:
+            return False, "Could not detect pitch in audio"
+
+        # Calculate current average pitch
+        current_avg_pitch = np.mean(voiced_f0)
+
+        # Determine current gender
+        current_gender = "female" if current_avg_pitch > threshold_hz else "male"
+
+        if verbose:
+            print(f"    Target gender: {target_gender}, Detected gender: {current_gender} ({current_avg_pitch:.1f}Hz)")
+
+        # If genders match, no correction needed
+        if current_gender == target_gender:
+            return True, f"Gender already correct ({current_gender})"
+
+        # Determine target pitch based on desired gender
+        target_pitch = female_target_pitch_hz if target_gender == "female" else male_target_pitch_hz
+
+        # Calculate shift ratio to reach target pitch
+        shift_ratio = target_pitch / current_avg_pitch
+
+        # Check if shift is beyond reasonable bounds (PSOLA works best within ~0.5-2.0x)
+        # If beyond bounds, return failure so the voice will be regenerated instead
+        if shift_ratio < 0.5 or shift_ratio > 2.0:
+            return False, f"Extreme pitch ({current_avg_pitch:.1f}Hz) beyond correction range - needs regeneration"
+
+        # Calculate percentage for reporting
+        shift_percent = (shift_ratio - 1.0) * 100
+
+        if verbose:
+            print(f"    Applying pitch shift: {shift_percent:+.1f}% ({current_gender} → {target_gender})")
+            print(f"    Current: {current_avg_pitch:.1f}Hz → Target: {target_pitch:.1f}Hz (ratio: {shift_ratio:.2f}x)")
+
+        # Apply pitch shift using PSOLA vocode
+        target_f0 = f0 * shift_ratio
+        y_shifted = vocode(y, sr, target_pitch=target_f0)
+
+        # Save corrected audio back to the same file
+        import soundfile as sf
+        sf.write(audio_path, y_shifted, sr)
+
+        return True, f"Applied pitch shift of {shift_percent:+.1f}% ({current_gender} → {target_gender})"
+
+    except ImportError as e:
+        return False, f"Missing dependency: {e}. Install librosa and psola."
+    except Exception as e:
+        return False, f"Gender correction error: {e}"

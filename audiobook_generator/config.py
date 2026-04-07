@@ -53,6 +53,17 @@ VOICE_VALIDATION = {
     "prompt": "You will hear a voice sample. The spoken text is: \"{sample_text}\"\n\nThe intended voice description is: \"{description}\"\n\nAnalyze the voice and output JSON with these fields:\n{{\n  \"gender_match\": true/false,\n  \"age_match\": true/false,\n  \"tone_match\": true/false,\n  \"emotion_match\": true/false,\n  \"clarity_match\": true/false,\n  \"overall_match\": true/false,\n  \"reasons\": \"brief explanation of any mismatches\"\n}}",
 }
 
+# ============================================================================
+# VOICE GENDER CORRECTION SETTINGS
+# ============================================================================
+
+VOICE_GENDER_CORRECTION = {
+    "enable": True,
+    "pitch_threshold_hz": 160,
+    "male_target_pitch_hz": 130,  # Target average pitch for male voices
+    "female_target_pitch_hz": 220,  # Target average pitch for female voices
+}
+
 # TTS Model paths for each engine
 TTS_MODEL_PATHS = {
     "kugelaudio": {

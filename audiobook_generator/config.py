@@ -58,7 +58,7 @@ VOICE_VALIDATION = {
 # ============================================================================
 
 VOICE_GENDER_CORRECTION = {
-    "enable": True,
+    "enable": False,  # Disabled - pitch shifting causes robotic audio; regenerate instead
     "pitch_threshold_hz": 160,
     "male_target_pitch_hz": 130,  # Target average pitch for male voices
     "female_target_pitch_hz": 220,  # Target average pitch for female voices

@@ -428,9 +428,9 @@ def generate_voice_samples(
             seed_chars = load_seed_characters(seed_voice_map)
             if seed_chars:
                 # Resolve voices_archive path relative to seed_voice_map location
-                seed_map_path = Path(seed_voice_map) if isinstance(seed_voice_map, str) else Path("/home/johnbehrend/Documents/pydev/voices_archive")
-                voices_archive = seed_map_path.parent if seed_map_path.exists() else Path("/home/johnbehrend/Documents/pydev/voices_archive")
-                if voices_archive.exists():
+                seed_map_path = Path(seed_voice_map) if isinstance(seed_voice_map, str) else Path(seed_voice_map.get("name", ""))
+                voices_archive = seed_map_path.parent if seed_map_path.exists() else None
+                if voices_archive:
                     for char_name, voice_file in seed_chars.items():
                         src = voices_archive / voice_file
                         dest = chapters_dir / voice_file

@@ -378,62 +378,37 @@ def generate_voice_samples(
                         retry_count += 1
                         continue
 
-                    # STEP 1: Fix gender algorithmically first - cheaper than regenerating after LLM rejection
-                    if gender_correction_enabled:
+                    # STEP 1: Check gender (detect only, no correction - just regenerate if mismatch)
+                    if verbose:
+                        print(f"    Detecting gender from audio...")
+                    final_gender, confidence, reason = detect_gender_from_audio(
+                        output_file,
+                        threshold_hz=pitch_threshold,
+                        use_ttest=use_ttest,
+                        male_ref_mean=male_ref_mean,
+                        female_ref_mean=female_ref_mean,
+                        alpha=ttest_alpha,
+                        verbose=verbose
+                    )
+
+                    target_gender = extract_gender_from_description(char_desc)
+                    if target_gender is None:
+                        gender_match = final_gender is not None
                         if verbose:
-                            print(f"    Detecting gender from audio...")
-                        correction_success, correction_msg, final_gender, final_pitch, confidence = correct_voice_gender(
-                            audio_path=output_file,
-                            description=char_desc,
-                            threshold_hz=pitch_threshold,
-                            male_target_pitch_hz=male_target_pitch,
-                            female_target_pitch_hz=female_target_pitch,
-                            verbose=verbose,
-                            use_ttest=use_ttest,
-                            alpha=ttest_alpha,
-                            male_ref_mean=male_ref_mean,
-                            female_ref_mean=female_ref_mean,
-                            plot_histogram=plot_histogram,
-                            histogram_dir=output_dir
-                        )
+                            print(f"    No target gender in description, detected={final_gender}, assuming match")
+                    else:
+                        gender_match = (final_gender == target_gender)
+                        if verbose:
+                            print(f"    Gender check: detected={final_gender}, target={target_gender}, match={gender_match}")
 
-                        if not correction_success:
-                            if "Could not detect pitch" in correction_msg or "beyond correction range" in correction_msg.lower():
-                                if verbose:
-                                    print(f"    Gender correction failed: {correction_msg}, regenerating...")
-                                os.remove(output_file)
-                                retry_count += 1
-                                continue
-                            elif "Could not extract target gender" in correction_msg:
-                                if verbose:
-                                    print(f"    Warning: {correction_msg}, skipping gender correction")
-                                gender_match = True  # No target gender means we can't fail on gender
-                            else:
-                                if verbose:
-                                    print(f"    Gender correction failed: {correction_msg}")
-                                os.remove(output_file)
-                                retry_count += 1
-                                continue
+                    if not gender_match:
+                        if verbose:
+                            print(f"    Gender mismatch - regenerating...")
+                        os.remove(output_file)
+                        retry_count += 1
+                        continue
 
-                        # Use the final_gender returned from correct_voice_gender (no need to re-detect)
-                        target_gender = extract_gender_from_description(char_desc)
-                        if target_gender is None:
-                            gender_match = final_gender is not None
-                            if verbose:
-                                print(f"    No target gender in description, detected={final_gender}, assuming match")
-                        else:
-                            gender_match = (final_gender == target_gender)
-                            if verbose:
-                                print(f"    Gender check: detected={final_gender}, target={target_gender}, match={gender_match}")
-
-                        if not gender_match:
-                            if verbose:
-                                print(f"    Gender still doesn't match after correction, regenerating...")
-                            os.remove(output_file)
-                            retry_count += 1
-                            continue
-
-                    # STEP 2: Run LLM validation (now that gender is corrected)
+                    # STEP 2: Run LLM validation
                     if validate and validation_client is not None:
                         if verbose:
                             print(f"    Running LLM validation...")
@@ -454,7 +429,7 @@ def generate_voice_samples(
                                 clarity_match = validation_data.get("clarity_match", False)
                                 has_tone_match = validation_data.get("tone_match", False)
 
-                                # Core attributes: gender (from our check), age, clarity
+                                # Core attributes: gender (already checked), age, clarity
                                 if gender_match and age_match and clarity_match:
                                     should_save_temporarily = True
                                     if verbose:

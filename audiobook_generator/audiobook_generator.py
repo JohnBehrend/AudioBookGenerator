@@ -688,7 +688,8 @@ def generate_audiobook_from_chapters(
                     character_map, line_map = chapter_map
                     character_map = {int(k): v for k, v in character_map.items()}
                     line_map = {int(k): v for k, v in line_map.items()}
-                    line_to_character_map = {k: character_map[v] for k, v in line_map.items()}
+                    # Use .get() with fallback to "narrator" for invalid character references
+                    line_to_character_map = {k: character_map.get(v, "narrator") for k, v in line_map.items()}
                 else:
                     # Fallback: assume narrator for all lines
                     line_to_character_map = {}

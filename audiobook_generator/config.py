@@ -62,6 +62,15 @@ VOICE_GENDER_CORRECTION = {
     "pitch_threshold_hz": 160,
     "male_target_pitch_hz": 130,  # Target average pitch for male voices
     "female_target_pitch_hz": 220,  # Target average pitch for female voices
+    # Statistical t-test settings for robust gender classification
+    "use_ttest": True,  # Use one-sample t-test instead of simple threshold
+    "ttest_alpha": 0.05,  # Significance level for t-test
+    # Reference distributions based on physiological ranges:
+    # Male: 90-155 Hz, Female: 165-255 Hz
+    "male_ref_mean_hz": 122.5,  # Midpoint of male range (90-155 Hz)
+    "female_ref_mean_hz": 210.0,  # Midpoint of female range (165-255 Hz)
+    "ref_std_hz": 30.0,  # Standard deviation for reference population
+    "plot_histogram": False,  # Generate pitch distribution histograms (disable during normal generation)
 }
 
 # TTS Model paths for each engine

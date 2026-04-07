@@ -8,6 +8,8 @@ import os
 import re
 import tempfile
 import atexit
+from scipy import stats
+import numpy as np
 import glob
 import shutil
 import zipfile
@@ -966,51 +968,244 @@ def extract_gender_from_description(description: str) -> Optional[str]:
     return None
 
 
-def detect_gender_from_audio(audio_path: str, threshold_hz: float = 160.0) -> Optional[str]:
-    """Detect gender from audio file using pitch analysis.
+def classify_gender_statistical(
+    voiced_f0: "np.ndarray",
+    male_ref_mean: float = 122.5,
+    female_ref_mean: float = 210.0,
+    alpha: float = 0.05,
+    verbose: bool = False
+) -> Tuple[str, float, str]:
+    """Classify gender using one-sample t-test against reference distributions.
 
-    Uses librosa.pyin for pitch estimation. Gender is determined by average pitch:
-    - Above threshold_hz: female
-    - Below threshold_hz: male
+    Performs two one-sample t-tests to determine if the pitch distribution
+    is statistically consistent with male or female reference distributions.
+
+    Reference distributions based on physiological ranges:
+    - Male: 90-155 Hz (mean ~122.5 Hz)
+    - Female: 165-255 Hz (mean ~210 Hz)
+
+    Args:
+        voiced_f0: Array of voiced pitch values in Hz (from librosa.pyin)
+        male_ref_mean: Reference mean pitch for male voices (default: 122.5 Hz)
+        female_ref_mean: Reference mean pitch for female voices (default: 210 Hz)
+        alpha: Significance level for t-test (default: 0.05)
+        verbose: Print detailed analysis
+
+    Returns:
+        Tuple of (gender, confidence, reason)
+        - gender: 'male' or 'female'
+        - confidence: 0.0-1.0 confidence score (higher = more certain)
+        - reason: Human-readable explanation of classification
+    """
+    sample_mean = np.mean(voiced_f0)
+    sample_std = np.std(voiced_f0, ddof=1) if len(voiced_f0) > 1 else 0
+    sample_size = len(voiced_f0)
+
+    if verbose:
+        print(f"    Pitch distribution: n={sample_size}, mean={sample_mean:.1f}Hz, std={sample_std:.1f}Hz")
+        print(f"    Reference: male={male_ref_mean}Hz, female={female_ref_mean}Hz")
+
+    # Perform one-sample t-tests against each reference
+    t_stat_male, p_value_male = stats.ttest_1samp(voiced_f0, male_ref_mean)
+    t_stat_female, p_value_female = stats.ttest_1samp(voiced_f0, female_ref_mean)
+
+    if verbose:
+        print(f"    T-test vs male ref: t={t_stat_male:.3f}, p={p_value_male:.4f}")
+        print(f"    T-test vs female ref: t={t_stat_female:.3f}, p={p_value_female:.4f}")
+
+    # Classification logic:
+    # - If p_male > alpha (consistent with male) AND p_female < alpha (not female) -> male
+    # - If p_female > alpha (consistent with female) AND p_male < alpha (not male) -> female
+    # - Otherwise -> use distance-based classification
+
+    is_male = p_value_male > alpha
+    is_female = p_value_female > alpha
+
+    if is_male and not is_female:
+        confidence = min(1.0, p_value_male)
+        return "male", confidence, f"Statistically consistent with male distribution (p={p_value_male:.3f})"
+
+    if is_female and not is_male:
+        confidence = min(1.0, p_value_female)
+        return "female", confidence, f"Statistically consistent with female distribution (p={p_value_female:.3f})"
+
+    # Both tests pass or both fail - use distance-based classification
+    dist_to_male = abs(sample_mean - male_ref_mean)
+    dist_to_female = abs(sample_mean - female_ref_mean)
+
+    if dist_to_male < dist_to_female:
+        confidence = 0.5 + (dist_to_female - dist_to_male) / (dist_to_female + dist_to_male) * 0.3
+        reason = "ambiguous" if is_male and is_female else "unusual distribution"
+        return "male", min(1.0, confidence), f"{reason.capitalize()} - closer to male (mean={sample_mean:.1f}Hz)"
+    else:
+        confidence = 0.5 + (dist_to_male - dist_to_female) / (dist_to_male + dist_to_female) * 0.3
+        reason = "ambiguous" if is_male and is_female else "unusual distribution"
+        return "female", min(1.0, confidence), f"{reason.capitalize()} - closer to female (mean={sample_mean:.1f}Hz)"
+
+
+def plot_pitch_histogram(
+    voiced_f0: "np.ndarray",
+    detected_gender: str,
+    output_path: str,
+    male_ref_mean: float = 122.5,
+    female_ref_mean: float = 210.0,
+    ref_std: float = 30.0,
+    confidence: float = None,
+    reason: str = None
+):
+    """Generate histogram of pitch distribution with reference overlays.
+
+    Creates a visualization showing:
+    - Histogram of detected pitch values
+    - Overlaid male and female reference distributions
+    - Sample mean and reference means marked
+
+    Args:
+        voiced_f0: Array of voiced pitch values in Hz
+        detected_gender: 'male', 'female', or 'ambiguous'
+        output_path: Path to save the plot (PNG or PDF)
+        male_ref_mean: Reference mean for male distribution
+        female_ref_mean: Reference mean for female distribution
+        ref_std: Standard deviation for reference distributions
+        confidence: Confidence score (0-1) if available
+        reason: Classification reason text if available
+    """
+    try:
+        import matplotlib
+        matplotlib.use('Agg')  # Non-interactive backend
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from scipy import stats as scipy_stats
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        # Plot histogram of detected pitches
+        ax.hist(voiced_f0, bins=30, alpha=0.7, color='steelblue', edgecolor='black',
+                label=f'Detected pitches (n={len(voiced_f0)}, mean={np.mean(voiced_f0):.1f}Hz)')
+
+        # Create x-axis range for reference distributions
+        x = np.linspace(60, 280, 500)
+
+        # Plot male reference distribution
+        male_pdf = scipy_stats.norm.pdf(x, male_ref_mean, ref_std)
+        ax.plot(x, male_pdf * len(voiced_f0) * 0.3, 'r--', linewidth=2,
+                label=f'Male ref (μ={male_ref_mean}Hz)')
+        ax.axvline(male_ref_mean, color='red', linestyle='--', alpha=0.5, linewidth=1)
+
+        # Plot female reference distribution
+        female_pdf = scipy_stats.norm.pdf(x, female_ref_mean, ref_std)
+        ax.plot(x, female_pdf * len(voiced_f0) * 0.3, 'm--', linewidth=2,
+                label=f'Female ref (μ={female_ref_mean}Hz)')
+        ax.axvline(female_ref_mean, color='magenta', linestyle='--', alpha=0.5, linewidth=1)
+
+        # Mark sample mean
+        sample_mean = np.mean(voiced_f0)
+        ax.axvline(sample_mean, color='green', linestyle='-', linewidth=2,
+                   label=f'Sample mean ({sample_mean:.1f}Hz)')
+
+        # Threshold line
+        threshold = (male_ref_mean + female_ref_mean) / 2
+        ax.axvline(threshold, color='gray', linestyle=':', linewidth=1.5,
+                   label=f'Threshold ({threshold:.1f}Hz)')
+
+        # Labels and title
+        ax.set_xlabel('Pitch (Hz)', fontsize=12)
+        ax.set_ylabel('Count', fontsize=12)
+        title = f'Pitch Distribution - Detected: {detected_gender.upper()}'
+        if confidence is not None:
+            title += f' (confidence: {confidence:.2f})'
+        ax.set_title(title, fontsize=14)
+
+        ax.legend(loc='upper right', fontsize=10)
+        ax.set_xlim(60, 280)
+        ax.grid(True, alpha=0.3)
+
+        # Add reason text if provided
+        if reason:
+            ax.text(0.02, 0.02, reason, transform=ax.transAxes, fontsize=9,
+                    verticalalignment='bottom', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+
+    except ImportError:
+        print("    matplotlib not available - skipping histogram generation")
+    except Exception as e:
+        print(f"    Histogram generation error: {e}")
+
+
+def extract_pitch_from_audio(audio_path: str) -> Tuple["np.ndarray", "np.ndarray"]:
+    """Load audio and extract pitch using librosa.pyin.
 
     Args:
         audio_path: Path to the audio file
-        threshold_hz: Pitch threshold in Hz (default: 160Hz)
 
     Returns:
-        "male" or "female" based on average pitch, None if detection fails
+        Tuple of (f0, voiced_f0) where:
+        - f0: Full pitch contour (includes 0 for unvoiced frames)
+        - voiced_f0: Only voiced pitch values (f0 > 0)
+
+    Raises:
+        Exception: If audio cannot be loaded or pitch cannot be estimated
+    """
+    import librosa
+    import numpy as np
+
+    y, sr = librosa.load(audio_path, sr=None)
+    pyin_result = librosa.pyin(y, sr=sr, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7"))
+    f0 = pyin_result[0]
+    voiced_f0 = f0[f0 > 0]
+    return f0, voiced_f0
+
+
+def detect_gender_from_audio(audio_path: str, threshold_hz: float = 160.0, use_ttest: bool = True,
+                             male_ref_mean: float = 122.5, female_ref_mean: float = 210.0,
+                             alpha: float = 0.05, verbose: bool = False) -> Tuple[Optional[str], Optional[float], Optional[str]]:
+    """Detect gender from audio file using pitch analysis.
+
+    Uses librosa.pyin for pitch estimation. By default, uses statistical t-test
+    for robust classification against reference distributions. Falls back to
+    simple threshold comparison if t-test is disabled.
+
+    Args:
+        audio_path: Path to the audio file
+        threshold_hz: Pitch threshold in Hz for simple comparison (default: 160Hz)
+        use_ttest: Use statistical t-test instead of simple threshold (default: True)
+        male_ref_mean: Reference mean for male distribution (default: 122.5 Hz)
+        female_ref_mean: Reference mean for female distribution (default: 210 Hz)
+        alpha: Significance level for t-test (default: 0.05)
+        verbose: Print detailed analysis
+
+    Returns:
+        Tuple of (gender, confidence, reason)
+        - gender: "male" or "female" based on pitch, None if detection fails
+        - confidence: 0.0-1.0 confidence score (None if using simple threshold)
+        - reason: Human-readable explanation (None if using simple threshold)
     """
     try:
-        import librosa
         import numpy as np
 
-        # Load audio
-        y, sr = librosa.load(audio_path, sr=None)
-
-        # Estimate pitch using pyin
-        # librosa.pyin returns (f0, magnitude, confidence) in newer versions
-        # or (f0, magnitude, confidence, times) in older versions
-        pyin_result = librosa.pyin(y, sr=sr, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7"))
-        f0 = pyin_result[0]
-
-        # Filter out unmuted frames (f0 == 0)
-        voiced_f0 = f0[f0 > 0]
+        f0, voiced_f0 = extract_pitch_from_audio(audio_path)
 
         if len(voiced_f0) == 0:
-            return None
+            return None, None, None
 
-        # Calculate average pitch
-        avg_pitch = np.mean(voiced_f0)
-
-        # Determine gender based on threshold
-        if avg_pitch > threshold_hz:
-            return "female"
+        if use_ttest and len(voiced_f0) >= 3:
+            gender, confidence, reason = classify_gender_statistical(
+                voiced_f0, male_ref_mean, female_ref_mean, alpha, verbose
+            )
+            return gender, confidence, reason
         else:
-            return "male"
+            avg_pitch = np.mean(voiced_f0)
+            if verbose:
+                print(f"    Using threshold method: avg_pitch={avg_pitch:.1f}Hz, threshold={threshold_hz}Hz")
+            return ("female", None, None) if avg_pitch > threshold_hz else ("male", None, None)
 
     except Exception as e:
-        print(f"    Gender detection error: {e}")
-        return None
+        if verbose:
+            print(f"    Gender detection error: {e}")
+        return None, None, None
 
 
 def correct_voice_gender(
@@ -1019,61 +1214,95 @@ def correct_voice_gender(
     threshold_hz: float = 160.0,
     male_target_pitch_hz: float = 130.0,
     female_target_pitch_hz: float = 220.0,
-    verbose: bool = False
-) -> Tuple[bool, str]:
+    verbose: bool = False,
+    use_ttest: bool = True,
+    alpha: float = 0.05,
+    male_ref_mean: float = 122.5,
+    female_ref_mean: float = 210.0,
+    plot_histogram: bool = False,
+    histogram_dir: str = None
+) -> Tuple[bool, str, Optional[str], Optional[float], Optional[float]]:
     """Correct voice gender by pitch shifting if needed.
 
     Detects current gender from audio pitch and compares to target gender
     extracted from description. If they don't match, applies pitch shift
     using TD-PSOLA algorithm to move toward the target gender's typical pitch range.
 
+    By default, uses statistical t-test for robust gender classification against
+    reference distributions. Falls back to simple threshold comparison if t-test
+    is disabled or sample size is too small.
+
     Args:
         audio_path: Path to the audio file (will be overwritten if correction applied)
         description: Voice description containing target gender (e.g., "male voice")
-        threshold_hz: Pitch threshold for gender detection (default: 160Hz)
+        threshold_hz: Pitch threshold for simple gender detection (default: 160Hz)
         male_target_pitch_hz: Target average pitch for male voices (default: 130Hz)
         female_target_pitch_hz: Target average pitch for female voices (default: 220Hz)
         verbose: Print verbose output
+        use_ttest: Use statistical t-test for gender classification (default: True)
+        alpha: Significance level for t-test (default: 0.05)
+        male_ref_mean: Reference mean for male distribution (default: 122.5 Hz)
+        female_ref_mean: Reference mean for female distribution (default: 210 Hz)
+        plot_histogram: Generate pitch distribution histogram (default: False)
+        histogram_dir: Directory to save histograms (default: same as audio file)
 
     Returns:
-        Tuple of (success, message)
+        Tuple of (success, message, final_gender, final_pitch_hz, confidence)
         - success: True if correction was applied (or not needed), False if failed
         - message: Description of what was done
+        - final_gender: "male" or "female" based on final pitch, None if detection failed
+        - final_pitch_hz: Average pitch in Hz after any correction, None if detection failed
+        - confidence: 0.0-1.0 confidence score from t-test, None if using threshold method
     """
     try:
         import librosa
         from psola import vocode
         import numpy as np
+        from pathlib import Path
 
         # Extract target gender from description
         target_gender = extract_gender_from_description(description)
         if target_gender is None:
-            return False, "Could not extract target gender from description"
+            return False, "Could not extract target gender from description", None, None, None
 
-        # Load audio and estimate pitch
+        # Load audio and estimate pitch using shared helper
         y, sr = librosa.load(audio_path, sr=None)
-        pyin_result = librosa.pyin(y, sr=sr, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7"))
-        f0 = pyin_result[0]
-
-        # Filter out unmuted frames
-        voiced_mask = f0 > 0
-        voiced_f0 = f0[voiced_mask]
+        f0, voiced_f0 = extract_pitch_from_audio(audio_path)
 
         if len(voiced_f0) == 0:
-            return False, "Could not detect pitch in audio"
+            return False, "Could not detect pitch in audio", None, None, None
 
-        # Calculate current average pitch
         current_avg_pitch = np.mean(voiced_f0)
 
-        # Determine current gender
-        current_gender = "female" if current_avg_pitch > threshold_hz else "male"
+        # Determine current gender using statistical method or threshold
+        if use_ttest and len(voiced_f0) >= 3:
+            current_gender, confidence, reason = classify_gender_statistical(
+                voiced_f0, male_ref_mean, female_ref_mean, alpha, verbose
+            )
+            if verbose:
+                print(f"    Target gender: {target_gender}, Detected gender: {current_gender} "
+                      f"({current_avg_pitch:.1f}Hz, confidence: {confidence:.2f})")
+                print(f"    Reason: {reason}")
+        else:
+            current_gender = "female" if current_avg_pitch > threshold_hz else "male"
+            confidence = None
+            if verbose:
+                print(f"    Target gender: {target_gender}, Detected gender: {current_gender} ({current_avg_pitch:.1f}Hz)")
 
-        if verbose:
-            print(f"    Target gender: {target_gender}, Detected gender: {current_gender} ({current_avg_pitch:.1f}Hz)")
+        # Generate histogram if requested
+        if plot_histogram:
+            hist_dir = histogram_dir if histogram_dir else str(Path(audio_path).parent)
+            hist_path = str(Path(hist_dir) / f"{Path(audio_path).stem}_pitch_histogram.png")
+            plot_pitch_histogram(
+                voiced_f0, current_gender, hist_path,
+                male_ref_mean, female_ref_mean, 30.0, confidence, reason if use_ttest else None
+            )
+            if verbose:
+                print(f"    Saved histogram to: {hist_path}")
 
         # If genders match, no correction needed
         if current_gender == target_gender:
-            return True, f"Gender already correct ({current_gender})"
+            return True, f"Gender already correct ({current_gender})", current_gender, current_avg_pitch, confidence
 
         # Determine target pitch based on desired gender
         target_pitch = female_target_pitch_hz if target_gender == "female" else male_target_pitch_hz
@@ -1084,7 +1313,7 @@ def correct_voice_gender(
         # Check if shift is beyond reasonable bounds (PSOLA works best within ~0.5-2.0x)
         # If beyond bounds, return failure so the voice will be regenerated instead
         if shift_ratio < 0.5 or shift_ratio > 2.0:
-            return False, f"Extreme pitch ({current_avg_pitch:.1f}Hz) beyond correction range - needs regeneration"
+            return False, f"Extreme pitch ({current_avg_pitch:.1f}Hz) beyond correction range - needs regeneration", current_gender, current_avg_pitch, confidence
 
         # Calculate percentage for reporting
         shift_percent = (shift_ratio - 1.0) * 100
@@ -1101,9 +1330,14 @@ def correct_voice_gender(
         import soundfile as sf
         sf.write(audio_path, y_shifted, sr)
 
-        return True, f"Applied pitch shift of {shift_percent:+.1f}% ({current_gender} → {target_gender})"
+        # After pitch shift, final gender should match target (that's the point of correction)
+        final_pitch = current_avg_pitch * shift_ratio
+        final_gender = target_gender
+        final_confidence = confidence  # Confidence remains similar after deterministic shift
+
+        return True, f"Applied pitch shift of {shift_percent:+.1f}% ({current_gender} → {target_gender})", final_gender, final_pitch, final_confidence
 
     except ImportError as e:
-        return False, f"Missing dependency: {e}. Install librosa and psola."
+        return False, f"Missing dependency: {e}. Install librosa and psola.", None, None, None
     except Exception as e:
-        return False, f"Gender correction error: {e}"
+        return False, f"Gender correction error: {e}", None, None, None

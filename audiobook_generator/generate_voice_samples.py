@@ -12,12 +12,13 @@ import os
 import sys
 import shutil
 import traceback
+from pathlib import Path
 from typing import Optional
 from openai import OpenAI
 
 # Import config for default values
 from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR, VOICE_GENDER_CORRECTION
-from utils import get_validation_client, correct_voice_gender
+from utils import get_validation_client, correct_voice_gender, extract_gender_from_description
 
 # Import VoiceMapper for centralized TTS management
 from voice_mapper import VoiceMapper
@@ -245,6 +246,13 @@ def generate_voice_samples(
             if verbose:
                 print(f"Found {len(descriptions)} characters")
 
+        # Ensure narrator voice is included (it's always needed as fallback)
+        # Add narrator with a default description if not already present
+        if "narrator" not in descriptions:
+            descriptions["narrator"] = "A neutral, clear narrator voice suitable for audiobook narration"
+            if verbose:
+                print("Added narrator voice to generation list (fallback voice)")
+
         # Filter out seed characters
         if seed_characters:
             initial_count = len(descriptions)
@@ -339,6 +347,17 @@ def generate_voice_samples(
                 voice_temporarily_saved = False  # Track if we saved a "good enough" voice
                 retry_count = 0
 
+                # Cache config values to avoid repeated dict lookups in the loop
+                gender_correction_enabled = VOICE_GENDER_CORRECTION.get("enable", True)
+                pitch_threshold = VOICE_GENDER_CORRECTION.get("pitch_threshold_hz", 160.0)
+                male_target_pitch = VOICE_GENDER_CORRECTION.get("male_target_pitch_hz", 130.0)
+                female_target_pitch = VOICE_GENDER_CORRECTION.get("female_target_pitch_hz", 220.0)
+                use_ttest = VOICE_GENDER_CORRECTION.get("use_ttest", True)
+                ttest_alpha = VOICE_GENDER_CORRECTION.get("ttest_alpha", 0.05)
+                male_ref_mean = VOICE_GENDER_CORRECTION.get("male_ref_mean_hz", 122.5)
+                female_ref_mean = VOICE_GENDER_CORRECTION.get("female_ref_mean_hz", 210.0)
+                plot_histogram = VOICE_GENDER_CORRECTION.get("plot_histogram", True)
+
                 while not voice_accepted and retry_count < max_retries:
                     if retry_count > 0:
                         if verbose:
@@ -351,7 +370,7 @@ def generate_voice_samples(
                         device=device,
                         max_new_tokens=max_tokens,
                         verbose=verbose,
-                        validate=validate,
+                        validate=False,  # Disable LLM validation here - we do our own checks below
                         validation_client=validation_client
                     )
 
@@ -359,107 +378,118 @@ def generate_voice_samples(
                         retry_count += 1
                         continue
 
-                    # Parse validation result to check individual dimensions
-                    # When validate=False, is_valid defaults to True (accepted)
-                    if is_valid:
-                        voice_accepted = True
-                        generated[char_name] = output_file
+                    # STEP 1: Fix gender algorithmically first - cheaper than regenerating after LLM rejection
+                    if gender_correction_enabled:
                         if verbose:
-                            print(f"    Accepted after {retry_count + 1} attempt(s)")
-                    else:
-                        # Check if this is a "good enough" voice (gender, age, clarity match)
-                        # Save it temporarily and keep trying for better tone/emotion match
-                        should_save_temporarily = False
-                        has_tone_match = False
-                        gender_match = False  # Default to False
-                        if validate and validation_msg:
+                            print(f"    Detecting gender from audio...")
+                        correction_success, correction_msg, final_gender, final_pitch, confidence = correct_voice_gender(
+                            audio_path=output_file,
+                            description=char_desc,
+                            threshold_hz=pitch_threshold,
+                            male_target_pitch_hz=male_target_pitch,
+                            female_target_pitch_hz=female_target_pitch,
+                            verbose=verbose,
+                            use_ttest=use_ttest,
+                            alpha=ttest_alpha,
+                            male_ref_mean=male_ref_mean,
+                            female_ref_mean=female_ref_mean,
+                            plot_histogram=plot_histogram,
+                            histogram_dir=output_dir
+                        )
+
+                        if not correction_success:
+                            if "Could not detect pitch" in correction_msg or "beyond correction range" in correction_msg.lower():
+                                if verbose:
+                                    print(f"    Gender correction failed: {correction_msg}, regenerating...")
+                                os.remove(output_file)
+                                retry_count += 1
+                                continue
+                            elif "Could not extract target gender" in correction_msg:
+                                if verbose:
+                                    print(f"    Warning: {correction_msg}, skipping gender correction")
+                                gender_match = True  # No target gender means we can't fail on gender
+                            else:
+                                if verbose:
+                                    print(f"    Gender correction failed: {correction_msg}")
+                                os.remove(output_file)
+                                retry_count += 1
+                                continue
+
+                        # Use the final_gender returned from correct_voice_gender (no need to re-detect)
+                        target_gender = extract_gender_from_description(char_desc)
+                        if target_gender is None:
+                            gender_match = final_gender is not None
+                            if verbose:
+                                print(f"    No target gender in description, detected={final_gender}, assuming match")
+                        else:
+                            gender_match = (final_gender == target_gender)
+                            if verbose:
+                                print(f"    Gender check: detected={final_gender}, target={target_gender}, match={gender_match}")
+
+                        if not gender_match:
+                            if verbose:
+                                print(f"    Gender still doesn't match after correction, regenerating...")
+                            os.remove(output_file)
+                            retry_count += 1
+                            continue
+
+                    # STEP 2: Run LLM validation (now that gender is corrected)
+                    if validate and validation_client is not None:
+                        if verbose:
+                            print(f"    Running LLM validation...")
+                        is_valid, validation_msg = VoiceMapper.validate_voice_with_llm(
+                            voice_path=output_file,
+                            description=char_desc,
+                            sample_text=DEFAULTS.get("static_voice_text", ""),
+                            client=validation_client,
+                            verbose=verbose
+                        )
+
+                        if not is_valid:
+                            should_save_temporarily = False
+                            has_tone_match = False
                             try:
-                                import json as json_module
-                                validation_data = json_module.loads(validation_msg)
-                                # Check core attributes: gender, age, clarity
-                                gender_match = validation_data.get("gender_match", False)
+                                validation_data = json.loads(validation_msg)
                                 age_match = validation_data.get("age_match", False)
                                 clarity_match = validation_data.get("clarity_match", False)
                                 has_tone_match = validation_data.get("tone_match", False)
 
+                                # Core attributes: gender (from our check), age, clarity
                                 if gender_match and age_match and clarity_match:
                                     should_save_temporarily = True
                                     if verbose:
                                         print(f"    Core attributes match (gender, age, clarity) - saving temporarily")
                                         print(f"    Tone match: {has_tone_match}, Emotion match: {validation_data.get('emotion_match')}")
                                         print(f"    Continuing search for better tone/emotion match...")
-                            except (json_module.JSONDecodeError, KeyError):
+                            except (json.JSONDecodeError, KeyError):
                                 if verbose:
                                     print(f"    Validation failed: {validation_msg}")
 
-                        # Try gender correction if gender mismatch is the issue
-                        if not gender_match and VOICE_GENDER_CORRECTION.get("enable", True):
-                            if verbose:
-                                print(f"    Gender mismatch detected, attempting correction...")
-                            correction_success, correction_msg = correct_voice_gender(
-                                audio_path=output_file,
-                                description=char_desc,
-                                threshold_hz=VOICE_GENDER_CORRECTION.get("pitch_threshold_hz", 160.0),
-                                male_target_pitch_hz=VOICE_GENDER_CORRECTION.get("male_target_pitch_hz", 130.0),
-                                female_target_pitch_hz=VOICE_GENDER_CORRECTION.get("female_target_pitch_hz", 220.0),
-                                verbose=verbose
-                            )
-
-                            if correction_success:
-                                if verbose:
-                                    print(f"    Gender correction: {correction_msg}")
-                                # Re-validate the corrected voice
-                                if validation_client is None:
-                                    validation_client = get_validation_client()
-                                is_valid, validation_msg = VoiceMapper.validate_voice_with_llm(
-                                    voice_path=output_file,
-                                    description=char_desc,
-                                    sample_text=DEFAULTS.get("static_voice_text", ""),
-                                    client=validation_client,
-                                    verbose=verbose
-                                )
-                                if is_valid:
-                                    voice_accepted = True
-                                    generated[char_name] = output_file
+                            if should_save_temporarily:
+                                temp_output_file = str(Path(output_file).with_suffix(".temp.wav"))
+                                should_replace_temp = not voice_temporarily_saved or has_tone_match
+                                if should_replace_temp:
+                                    shutil.move(output_file, temp_output_file)
+                                    generated[char_name] = temp_output_file
+                                    voice_temporarily_saved = True
                                     if verbose:
-                                        print(f"    Voice accepted after gender correction")
-                                    continue  # Move to next character
-                                else:
-                                    if verbose:
-                                        print(f"    Corrected voice still failed validation, continuing retries...")
-                            else:
-                                # Check if this is an extreme pitch case that needs regeneration
-                                if "Could not detect pitch" in correction_msg or "beyond correction range" in correction_msg.lower():
-                                    if verbose:
-                                        print(f"    Extreme pitch detected - skipping correction, will regenerate")
-                                else:
-                                    if verbose:
-                                        print(f"    Gender correction failed: {correction_msg}")
+                                        if has_tone_match:
+                                            print(f"    Saved improved voice (4/5 match - has tone): {temp_output_file}")
+                                        else:
+                                            print(f"    Saved temporary voice: {temp_output_file}")
+                                retry_count += 1
+                                continue
 
-                        if should_save_temporarily:
-                            # Save with .temp.wav extension
-                            # If we already have a temp voice, only replace if this one has tone match
-                            # (previous temp didn't have tone match)
-                            temp_output_file = output_file.replace(".wav", ".temp.wav")
-                            import shutil
-
-                            # Check if we should replace existing temp (this one has better match)
-                            should_replace_temp = not voice_temporarily_saved or has_tone_match
-
-                            if should_replace_temp:
-                                shutil.move(output_file, temp_output_file)
-                                generated[char_name] = temp_output_file
-                                voice_temporarily_saved = True
-                                if verbose:
-                                    if has_tone_match:
-                                        print(f"    Saved improved voice (4/5 match - has tone): {temp_output_file}")
-                                    else:
-                                        print(f"    Saved temporary voice: {temp_output_file}")
-
-                        # Delete failed voice and retry (unless we saved it temporarily)
-                        if output_file and os.path.exists(output_file) and not should_save_temporarily:
+                            # Full failure - delete and retry
                             os.remove(output_file)
-                        retry_count += 1
+                            retry_count += 1
+                            continue
+
+                    # Voice passed all checks (or validation disabled)
+                    voice_accepted = True
+                    generated[char_name] = output_file
+                    if verbose:
+                        print(f"    Accepted after {retry_count + 1} attempt(s)")
 
                 if not voice_accepted:
                     if voice_temporarily_saved:

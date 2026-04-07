@@ -86,6 +86,8 @@ from utils import (
     count_lines_per_character,
     transcribe_audio_with_whisper,
     distill_string,
+    validate_audio_clean,
+    get_validation_client,
 )
 
 # Import VoiceMapper for centralized TTS management
@@ -212,6 +214,8 @@ def generate_tts_for_line(
     validation_model = None,
     verbose: bool = False,
     voice_path: str = None,
+    validation_client = None,
+    validate_clean: bool = False,
 ):
     """Generate TTS audio for a single line.
 
@@ -231,6 +235,8 @@ def generate_tts_for_line(
         short_text_postfix: Postfix for validation
         validation_model: Faster-whisper model for validation
         verbose: Print verbose output
+        validation_client: OpenAI client for clean audio validation (created if None)
+        validate_clean: If True, validate audio contains only clean speech (no music/SFX)
         Returns:
         Tuple of (success: bool, ratio: float)
     """
@@ -520,6 +526,21 @@ def generate_tts_for_line(
             postfix_for_score = distill_string(short_text_postfix) if short_text_postfix else ""
             ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=postfix_for_score)
 
+            # Clean audio validation (when validate_clean is enabled) - outside retry loop to avoid hot-path bloat
+            if validate_clean and validation_client is not None and ratio >= 0.85:
+                is_clean, clean_msg = validate_audio_clean(
+                    audio_path=output_path,
+                    client=validation_client,
+                    verbose=verbose
+                )
+                if not is_clean:
+                    if verbose:
+                        print(f"  [Clean Check] FAILED: {clean_msg}")
+                    ratio = 0  # Force retry by setting ratio to 0
+                else:
+                    if verbose:
+                        print(f"  [Clean Check] PASSED: {clean_msg}")
+
         # Clipping based on validation results (only when validation model is available)
         if validation_model is not None:
             # Postfix-specific clipping (only when postfix is configured)
@@ -596,7 +617,8 @@ def generate_audiobook_from_chapters(
     seed_voice_map: str = None,
     whisper_device: str = None,
     whisper_alt_gpu: bool = False,
-    debug_tts: bool = False
+    debug_tts: bool = False,
+    validate_clean: bool = False
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -618,6 +640,7 @@ def generate_audiobook_from_chapters(
         progress: Optional progress callback (gr.Progress() for Gradio, None for CLI)
         duplicate_replacement_map: Dict mapping duplicate character names to canonical names
         seed_voice_map: Path to existing voices_map.json (if provided)
+        validate_clean: If True, validate audio contains only clean speech (no music/SFX)
 
     Returns:
         Tuple of (status_message, chapters_processed)
@@ -635,6 +658,7 @@ def generate_audiobook_from_chapters(
             whisper_device = whisper_device if whisper_device is not None else device
             validation_model = setup_validation_model(whisper_device, alt_gpu=whisper_alt_gpu)
             # This avoids crashes from faster-whisper dependencies if validation_model is None
+            validation_client = get_validation_client() if validate_clean else None
             # Initialize VoiceMapper with output_dir so it looks in the correct location
             voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=tts_engine, duplicate_replacement_map=duplicate_replacement_map)
             tts_model_read_chapters, processor, _, _ = voice_mapper.setup_tts_engine(turbo=turbo)
@@ -761,7 +785,9 @@ def generate_audiobook_from_chapters(
                             short_text_postfix=(short_text_postfix if (validation_model is not None) else None),
                             validation_model=validation_model,
                             verbose=verbose,
-                            voice_path=voice_path
+                            voice_path=voice_path,
+                            validation_client=validation_client,
+                            validate_clean=validate_clean
                         )
                         progress_handler.update((j + 1)/len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j} Ratio {int(ratio * 100)}")
                         if verbose:
@@ -930,7 +956,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       device: str = AUDIO_SETTINGS["default_device"], seed_voice_map: str = None,
                       num_llm_attempts: int = DEFAULTS["num_llm_attempts"],
                       resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
-                      debug_tts: bool = False, validate: bool = False) -> str:
+                      debug_tts: bool = False, validate: bool = False, validate_clean: bool = False) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -947,7 +973,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         num_llm_attempts: Number of LLM attempts for speaker labeling
         resume: If True, detect existing state and resume from where it left off
         whisper_device: Device for Whisper validation model (defaults to device if None)
-        validate: If True, enable LLM validation (port 8081) for voice sample generation
+        validate: If True, enable LLM validation for voice sample generation
+        validate_clean: If True, validate audio contains only clean speech (no music/SFX)
 
     Returns:
         Status message
@@ -1173,7 +1200,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             progress=None,
             duplicate_replacement_map=duplicate_replacement_map,
             seed_voice_map=seed_voice_map,
-            whisper_alt_gpu=whisper_alt_gpu)
+            whisper_alt_gpu=whisper_alt_gpu,
+            validate_clean=validate_clean)
 
         if verbose:
             print(f"  {status}")
@@ -1338,7 +1366,9 @@ Examples:
     parser.add_argument("--resume_from", help="Resume from a specific temp directory path")
     parser.add_argument("--debug_tts", action="store_true", help="Print Chapter C, Line L, Speaker S instead of generating audio; skips validation")
     parser.add_argument("--validate", action="store_true",
-                        help="Enable LLM validation (port 8081) to judge generated audio quality")
+                        help="Enable LLM validation to judge generated audio quality")
+    parser.add_argument("--validate_clean", action="store_true",
+                        help="Enable clean audio validation (no music/SFX) when --validate is also enabled")
 
     args = parser.parse_args()
 
@@ -1422,7 +1452,8 @@ Examples:
                     whisper_device=whisper_device,
                     whisper_alt_gpu=whisper_alt_gpu,
                     debug_tts=args.debug_tts,
-                    validate=args.validate
+                    validate=args.validate,
+                    validate_clean=args.validate_clean
                 )
                 return status, False
             except KeyboardInterrupt:

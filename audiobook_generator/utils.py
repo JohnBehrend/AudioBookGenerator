@@ -693,6 +693,103 @@ def transcribe_audio_with_whisper(validation_model, audio_path: str) -> Tuple[st
     return detected_string, start_times, end_times
 
 
+def validate_audio_clean(audio_path: str, client: Optional[OpenAI] = None, verbose: bool = False) -> Tuple[bool, str]:
+    """Validate that audio contains only clean speech without music or background effects.
+
+    Uses the LLM at port 8081 to analyze the audio and determine if it contains
+    only clean speech or if there are unwanted sounds like music, sound effects,
+    or background noise.
+
+    Args:
+        audio_path: Path to the audio file (.wav)
+        client: OpenAI client for the validation LLM (created if None)
+        verbose: Print verbose output
+
+    Returns:
+        Tuple of (is_clean, validation_message)
+        - is_clean: True if audio contains only clean speech
+        - validation_message: Description of what was detected
+    """
+    from config import VOICE_VALIDATION
+
+    model = VOICE_VALIDATION.get("model", "default-model")
+
+    # Convert to absolute path for file:// URL
+    abs_audio_path = os.path.abspath(audio_path)
+    file_url = f"file://{abs_audio_path}"
+
+    # Prompt to check for clean speech
+    clean_audio_prompt = """You are an audio quality analyzer. Listen to the audio file and determine if it contains ONLY clean speech.
+
+Respond with a JSON object in this exact format:
+{{
+    "is_clean": true/false,
+    "detected_issues": ["list of any issues detected, empty if clean"],
+    "description": "brief description of what you heard"
+}}
+
+Consider audio CLEAN if it contains:
+- Only human speech/voice
+- Normal speech pauses and breathing
+
+Consider audio NOT CLEAN if it contains:
+- Music or musical sounds
+- Sound effects (doors, footsteps, etc.)
+- Background noise or ambience
+- Non-speech audio elements
+- Distortion or artifacts that aren't natural speech
+
+Respond with ONLY the JSON object, no other text."""
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "audio_url", "audio_url": {"url": file_url}},
+                        {"type": "text", "text": clean_audio_prompt}
+                    ]
+                }
+            ],
+            temperature=0.3,
+            max_tokens=300
+        )
+
+        response_text = response.choices[0].message.content.strip()
+
+        # Parse JSON response
+        import json as json_module
+        try:
+            result = json_module.loads(response_text)
+            is_clean = result.get("is_clean", False)
+            detected_issues = result.get("detected_issues", [])
+            description = result.get("description", "")
+
+            if verbose:
+                print(f"    [Clean Check] Is clean: {is_clean}")
+                if detected_issues:
+                    print(f"    [Clean Check] Issues: {', '.join(detected_issues)}")
+                print(f"    [Clean Check] Description: {description}")
+
+            if not is_clean and detected_issues:
+                return False, f"Audio contains: {', '.join(detected_issues)}"
+            elif not is_clean:
+                return False, description if description else "Audio is not clean speech"
+            return True, "Clean speech detected"
+
+        except json_module.JSONDecodeError:
+            if verbose:
+                print(f"    [Clean Check] Failed to parse LLM response: {response_text}")
+            return False, f"Validation error: could not parse response"
+
+    except Exception as e:
+        if verbose:
+            print(f"    [Clean Check] Error during validation: {e}")
+        return False, f"Validation error: {str(e)}"
+
+
 # ============================================================================
 # MAP FILE PARSING
 # ============================================================================

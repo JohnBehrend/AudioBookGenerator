@@ -20,20 +20,34 @@ from utils import get_llm_client, compare_characters, get_characters_from_map_fi
 
 
 # Default prompt for character description
-CHARACTER_DESCRIPTION_PROMPT = """You are an expert voice actor. Create VERY SHORT voice profiles in English.
+CHARACTER_DESCRIPTION_PROMPT = """You are an expert voice actor. Create VERY SHORT voice profiles optimized for TTS (text-to-speech) synthesis.
+
+CRITICAL: TTS models generate a SINGLE, STATIC voice sample. Focus only on age, gender, and basic voice quality.
 
 RULES:
-- Output ONLY a single line of plain text in English (15-25 words max)
+- Output ONLY a single line of plain text in English (10-20 words max)
 - NO markdown, NO headers, NO sections, NO bullet points
 - NO translations, NO parentheses with extra info
 - Just one concise sentence describing the voice
 
-Format: Voice quality + Gender + Character type
+REQUIRED ELEMENTS (in order):
+- Age: young, middle-aged, elderly, ancient, etc.
+- Gender: male or female
+- Voice quality: smooth, gravelly, warm, deep, soft, etc.
 
-Examples:
-- A calm, commanding male narrator with a relaxed tone and storytelling quality.
-- A warm, soft female voice with moderate pace and clear, sweet pronunciation.
-- A desolate, tragic male voice, deeply affectionate at first, then screaming in despair.
+AVOID:
+- Emotions: "arrogant", "desperate", "screaming", "tragic", "fearful"
+- Dynamic descriptions: "shifting", "oscillating", "from X to Y"
+- Complex tones: "condescending", "manipulative", "seductive"
+
+Format: [Age] [Gender] with [voice quality] voice.
+
+Good Examples (TTS-friendly):
+- A middle-aged male with a smooth, deep voice.
+- A young female with a warm, soft voice.
+- An elderly male with a gravelly voice.
+- A young male with a clear, bright voice.
+- A middle-aged female with a warm voice.
 """
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)

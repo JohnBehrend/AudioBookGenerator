@@ -43,6 +43,7 @@ dependencies = [
     "ffmpeg-python==0.2.0",
     "torchcodec>=0.11.0",
     "psola>=0.0.1",
+    "omnivoice",
 ]
 
 [project.scripts]

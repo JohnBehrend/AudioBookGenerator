@@ -398,8 +398,7 @@ def generate_voice_samples(
     pipeline_state: PipelineState,
     log_output: str,
     seed_voice_map: str = None,
-    tts_engine: str = None,
-    validate_voice: bool = False,
+    voice_engine: str = None,
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 4: Generate voice samples for each character."""
@@ -453,16 +452,20 @@ def generate_voice_samples(
             return log_output, pipeline_state
         log_output += f"\nFound {num_characters} characters to process. (temp: {chapters_dir.parent})"
 
+        # Use provided voice_engine or default to moss
+        if voice_engine is None:
+            voice_engine = "moss"
+
         # Call generate_voice_samples from package
-        progress(0, desc=f"Generating voice samples for {num_characters} characters with TTS engine '{tts_engine}'... (temp: {chapters_dir.parent})")
+        progress(0, desc=f"Generating voice samples for {num_characters} characters with TTS engine '{voice_engine}'... (temp: {chapters_dir.parent})")
         result_msg, generated_voices = gen_voice_samples(
             descriptions=descriptions,
             output_dir=str(chapters_dir),
             verbose=False,
             progress=progress,
             seed_characters=load_seed_characters(seed_voice_map),
-            tts_engine="moss",  # Voice generation always uses MOSS TTS engine
-            validate=validate_voice
+            voice_engine=voice_engine,
+            validate=False
         )
 
         log_output += f"\n{result_msg}"
@@ -510,18 +513,18 @@ def regenerate_voice_sample(
 
         char_description = descriptions[character_name]
 
-        # Voice generation always uses MOSS TTS engine
-        tts_engine = "moss"
+        # Voice generation uses moss by default
+        voice_engine = "moss"
 
         # Call generate_voice_samples from package
-        progress(0, desc=f"Regenerating voice sample for {character_name} with TTS engine 'moss'...")
+        progress(0, desc=f"Regenerating voice sample for {character_name} with TTS engine '{voice_engine}'...")
         result_msg, generated_voices = gen_voice_samples(
             descriptions={character_name: char_description},
             output_dir=str(chapters_dir),
             single_character=character_name,
             verbose=False,
             progress=progress,
-            tts_engine=tts_engine,
+            voice_engine=voice_engine,
             force_regenerate=True
         )
 

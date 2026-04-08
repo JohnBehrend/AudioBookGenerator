@@ -22,32 +22,34 @@ from utils import get_llm_client, compare_characters, get_characters_from_map_fi
 # Default prompt for character description
 CHARACTER_DESCRIPTION_PROMPT = """You are an expert voice actor. Create VERY SHORT voice profiles optimized for TTS (text-to-speech) synthesis.
 
-CRITICAL: TTS models generate a SINGLE, STATIC voice sample. Focus only on age, gender, and basic voice quality.
+CRITICAL: Output MUST be in OmniVoice format - comma-separated attributes only.
+
+OMNIVOICE SUPPORTED ATTRIBUTES:
+- Gender: male, female
+- Age: child, teenager, young adult, middle-aged, elderly
+- Pitch: very low pitch, low pitch, moderate pitch, high pitch, very high pitch
+- Style: whisper
+- English Accents: american accent, british accent, australian accent, canadian accent, indian accent, chinese accent, korean accent, japanese accent, portuguese accent, russian accent
 
 RULES:
-- Output ONLY a single line of plain text in English (10-20 words max)
-- NO markdown, NO headers, NO sections, NO bullet points
-- NO translations, NO parentheses with extra info
-- Just one concise sentence describing the voice
+- Output ONLY comma-separated attributes (no other text)
+- NO markdown, NO sentences, NO "a", NO "with", NO "voice"
+- Use ONLY the supported attributes listed above
+- 2-5 attributes max, comma-separated
 
-REQUIRED ELEMENTS (in order):
-- Age: young, middle-aged, elderly, ancient, etc.
-- Gender: male or female
-- Voice quality: smooth, gravelly, warm, deep, soft, etc.
+Format: <gender>, <age>, <pitch>, <accent>
 
-AVOID:
-- Emotions: "arrogant", "desperate", "screaming", "tragic", "fearful"
-- Dynamic descriptions: "shifting", "oscillating", "from X to Y"
-- Complex tones: "condescending", "manipulative", "seductive"
+Good Examples (OmniVoice format):
+- male, middle-aged, moderate pitch
+- female, young adult, high pitch, british accent
+- male, elderly, low pitch
+- female, young adult, moderate pitch, american accent
+- male, middle-aged, high pitch
 
-Format: [Age] [Gender] with [voice quality] voice.
-
-Good Examples (TTS-friendly):
-- A middle-aged male with a smooth, deep voice.
-- A young female with a warm, soft voice.
+BAD Examples (do NOT use):
+- A middle-aged male with a smooth voice.
+- male. middle aged. high
 - An elderly male with a gravelly voice.
-- A young male with a clear, bright voice.
-- A middle-aged female with a warm voice.
 """
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)

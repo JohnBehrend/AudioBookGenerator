@@ -17,8 +17,8 @@ from typing import Optional
 from openai import OpenAI
 
 # Import config for default values
-from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR, VOICE_GENDER_CORRECTION
-from utils import get_validation_client, correct_voice_gender, extract_gender_from_description
+from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
+from utils import get_validation_client
 
 # Import VoiceMapper for centralized TTS management
 from voice_mapper import VoiceMapper
@@ -32,7 +32,8 @@ def load_character_descriptions(descriptions_file):
 
 def generate_voice_sample(character_name: str, description: str, output_dir: str,
                           device: str = None, max_new_tokens: int = None, verbose: bool = False,
-                          validate: bool = False, validation_client: OpenAI = None) -> tuple:
+                          validate: bool = False, validation_client: OpenAI = None,
+                          voice_engine: str = None) -> tuple:
     """Generate a short voice sample for a character using VoiceDesign model via VoiceMapper.
 
     Uses voice design with an instruct prompt to generate speech
@@ -47,6 +48,7 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
         verbose: Print verbose output
         validate: If True, validate the generated voice with LLM
         validation_client: OpenAI client for validation (created if None)
+        voice_engine: TTS engine for voice generation ('moss', 'omni')
 
     Returns:
         Tuple of (success, output_file_path, duration_seconds, is_valid, validation_msg)
@@ -57,8 +59,8 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
     if device is None:
         device = AUDIO_SETTINGS["default_device"]
 
-    # Stage 4 always uses MOSS TTS engine
-    engine = "moss"
+    # Use provided engine or default to moss
+    engine = voice_engine or "moss"
     voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=engine)
 
     try:
@@ -143,14 +145,9 @@ def main():
         help="Enable verbose printing for debug."
     )
     parser.add_argument(
-        "--tts-engine",
+        "--voice-engine",
         default=AUDIO_SETTINGS.get("default_tts_engine", "moss"),
-        help="TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts')"
-    )
-    parser.add_argument(
-        "--validate",
-        action="store_true",
-        help="Enable LLM validation to verify generated voices match character descriptions"
+        help="TTS engine for voice sample generation ('moss', 'omni')"
     )
 
     args = parser.parse_args()
@@ -182,8 +179,8 @@ def main():
         single_character=args.single_character,
         verbose=args.verbose,
         seed_characters=seed_characters,
-        tts_engine=args.tts_engine,
-        validate=args.validate
+        voice_engine=args.voice_engine,
+        validate=False
     )
 
     print(status)
@@ -208,14 +205,11 @@ def generate_voice_samples(
     verbose: bool = False,
     progress=None,
     seed_characters: Dict[str, str] = None,
-    tts_engine: str = None,
+    voice_engine: str = None,
     force_regenerate: bool = False,
-    validate: bool = False
+    validate: bool = False  # Deprecated - ignored
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters via VoiceMapper.
-
-    This is a simplified interface for calling voice sample generation directly
-    from the Gradio UI without subprocess.
 
     Args:
         descriptions: Dict mapping character names to their descriptions
@@ -226,16 +220,14 @@ def generate_voice_samples(
         verbose: Print verbose output
         progress: Gradio progress bar to update during generation
         seed_characters: Dict mapping character names to existing voice paths from seed voices_map
-        tts_engine: TTS engine to use (ignored - always uses 'moss' for voice generation)
+        voice_engine: TTS engine for voice generation ('moss', 'omni')
         force_regenerate: If True, regenerate voices even if they already exist
-        validate: If True, validate generated voices with LLM
+        validate: Deprecated - ignored
 
     Returns:
         Tuple of (status_message, character_voice_paths)
     """
     try:
-        # Create validation client once if needed (efficiency - avoid creating per-voice)
-        validation_client = get_validation_client() if validate else None
         if single_character:
             if single_character not in descriptions:
                 return f"Character '{single_character}' not found in descriptions.", {}
@@ -315,185 +307,29 @@ def generate_voice_samples(
                             break
 
                     if voice_found:
-                        # Validate existing voice if --validate is enabled
-                        if validate and validation_client is None:
-                            validation_client = get_validation_client()
-                        if validate and validation_client is not None:
-                            if verbose:
-                                print(f"    Validating existing voice...")
-                            sample_text = DEFAULTS.get("static_voice_text", "")
-                            is_valid, validation_msg = VoiceMapper.validate_voice_with_llm(
-                                voice_path=generated[char_name],
-                                description=char_desc,
-                                sample_text=sample_text,
-                                client=validation_client,
-                                verbose=verbose
-                            )
-                            if not is_valid:
-                                if verbose:
-                                    print(f"    Validation failed: {validation_msg}, regenerating...")
-                                # Remove failed voice and continue to regeneration
-                                del generated[char_name]
-                                voice_found = False
-                            else:
-                                if verbose:
-                                    print(f"    Validation passed for existing voice")
-                        if voice_found:
-                            continue
-
-                # Generate and validate voice, retrying on validation failure
-                max_retries = 50
-                voice_accepted = False
-                voice_temporarily_saved = False  # Track if we saved a "good enough" voice
-                retry_count = 0
-
-                # Cache config values to avoid repeated dict lookups in the loop
-                gender_correction_enabled = VOICE_GENDER_CORRECTION.get("enable", True)
-                pitch_threshold = VOICE_GENDER_CORRECTION.get("pitch_threshold_hz", 160.0)
-                male_target_pitch = VOICE_GENDER_CORRECTION.get("male_target_pitch_hz", 130.0)
-                female_target_pitch = VOICE_GENDER_CORRECTION.get("female_target_pitch_hz", 220.0)
-                use_ttest = VOICE_GENDER_CORRECTION.get("use_ttest", True)
-                ttest_alpha = VOICE_GENDER_CORRECTION.get("ttest_alpha", 0.05)
-                male_ref_mean = VOICE_GENDER_CORRECTION.get("male_ref_mean_hz", 122.5)
-                female_ref_mean = VOICE_GENDER_CORRECTION.get("female_ref_mean_hz", 210.0)
-                plot_histogram = VOICE_GENDER_CORRECTION.get("plot_histogram", True)
-
-                while not voice_accepted and retry_count < max_retries:
-                    if retry_count > 0:
-                        if verbose:
-                            print(f"    Retrying generation (attempt {retry_count + 1}/{max_retries})...")
-
-                    success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
-                        character_name=char_name,
-                        description=char_desc,
-                        output_dir=output_dir,
-                        device=device,
-                        max_new_tokens=max_tokens,
-                        verbose=verbose,
-                        validate=False,  # Disable LLM validation here - we do our own checks below
-                        validation_client=validation_client
-                    )
-
-                    if not success:
-                        retry_count += 1
                         continue
 
-                    # STEP 1: Check gender (detect only, no correction - just regenerate if mismatch)
-                    if verbose:
-                        print(f"    Detecting gender from audio...")
-                    final_gender, confidence, reason = detect_gender_from_audio(
-                        output_file,
-                        threshold_hz=pitch_threshold,
-                        use_ttest=use_ttest,
-                        male_ref_mean=male_ref_mean,
-                        female_ref_mean=female_ref_mean,
-                        alpha=ttest_alpha,
-                        verbose=verbose
-                    )
+                # Generate voice
+                success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
+                    character_name=char_name,
+                    description=char_desc,
+                    output_dir=output_dir,
+                    device=device,
+                    max_new_tokens=max_tokens,
+                    verbose=verbose,
+                    validate=False,
+                    validation_client=None,
+                    voice_engine=voice_engine
+                )
 
-                    target_gender = extract_gender_from_description(char_desc)
-                    if target_gender is None:
-                        gender_match = final_gender is not None
-                        if verbose:
-                            print(f"    No target gender in description, detected={final_gender}, assuming match")
-                    else:
-                        gender_match = (final_gender == target_gender)
-                        if verbose:
-                            print(f"    Gender check: detected={final_gender}, target={target_gender}, match={gender_match}")
-
-                    if not gender_match:
-                        if verbose:
-                            print(f"    Gender mismatch - regenerating...")
-                        os.remove(output_file)
-                        retry_count += 1
-                        continue
-
-                    # STEP 2: Run LLM validation
-                    if validate and validation_client is not None:
-                        if verbose:
-                            print(f"    Running LLM validation...")
-                        is_valid, validation_msg = VoiceMapper.validate_voice_with_llm(
-                            voice_path=output_file,
-                            description=char_desc,
-                            sample_text=DEFAULTS.get("static_voice_text", ""),
-                            client=validation_client,
-                            verbose=verbose
-                        )
-
-                        if not is_valid:
-                            should_save_temporarily = False
-                            has_tone_match = False
-                            try:
-                                validation_data = json.loads(validation_msg)
-                                age_match = validation_data.get("age_match", False)
-                                clarity_match = validation_data.get("clarity_match", False)
-                                has_tone_match = validation_data.get("tone_match", False)
-
-                                # Core attributes: gender (already checked), age, clarity
-                                if gender_match and age_match and clarity_match:
-                                    should_save_temporarily = True
-                                    if verbose:
-                                        print(f"    Core attributes match (gender, age, clarity) - saving temporarily")
-                                        print(f"    Tone match: {has_tone_match}, Emotion match: {validation_data.get('emotion_match')}")
-                                        print(f"    Continuing search for better tone/emotion match...")
-                            except (json.JSONDecodeError, KeyError):
-                                if verbose:
-                                    print(f"    Validation failed: {validation_msg}")
-
-                            if should_save_temporarily:
-                                temp_output_file = str(Path(output_file).with_suffix(".temp.wav"))
-                                should_replace_temp = not voice_temporarily_saved or has_tone_match
-                                if should_replace_temp:
-                                    shutil.move(output_file, temp_output_file)
-                                    generated[char_name] = temp_output_file
-                                    voice_temporarily_saved = True
-                                    if verbose:
-                                        if has_tone_match:
-                                            print(f"    Saved improved voice (4/5 match - has tone): {temp_output_file}")
-                                        else:
-                                            print(f"    Saved temporary voice: {temp_output_file}")
-                                retry_count += 1
-                                continue
-
-                            # Full failure - delete and retry
-                            os.remove(output_file)
-                            retry_count += 1
-                            continue
-
-                    # Voice passed all checks (or validation disabled)
-                    voice_accepted = True
+                if success:
                     generated[char_name] = output_file
                     if verbose:
-                        print(f"    Accepted after {retry_count + 1} attempt(s)")
-
-                if not voice_accepted:
-                    if voice_temporarily_saved:
-                        # Rename temp file to final .wav
-                        temp_file = generated[char_name]
-                        final_file = temp_file.replace(".temp.wav", ".wav")
-                        if os.path.exists(temp_file):
-                            os.rename(temp_file, final_file)
-                            generated[char_name] = final_file
-                            if verbose:
-                                print(f"    Using best available voice: {final_file}")
-                    else:
-                        # Clean up any leftover .temp.wav file for this character
-                        temp_file = os.path.join(output_dir, f"{char_name}.temp.wav")
-                        if os.path.exists(temp_file):
-                            os.remove(temp_file)
-                            if verbose:
-                                print(f"    Cleaned up orphaned temp file: {temp_file}")
-
-                        # Fallback: use existing narrator voice if available
-                        narrator_voice = voice_mapper.get_voice_path("narrator")
-                        if narrator_voice and os.path.exists(narrator_voice):
-                            generated[char_name] = narrator_voice
-                            if verbose:
-                                print(f"    Using narrator voice as fallback: {narrator_voice}")
-                        else:
-                            failed.append(char_name)
-                            if verbose:
-                                print(f"    Failed: no valid voice found and no narrator voice available")
+                        print(f"    Generated: {output_file}")
+                else:
+                    failed.append(char_name)
+                    if verbose:
+                        print(f"    Failed to generate voice")
         except Exception as e:
             return f"Error generating voices: {str(e)}\n{traceback.format_exc()}", {}
 

@@ -28,6 +28,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
 
 import torch
+import torchaudio
 from scipy.io import wavfile
 import numpy as np
 
@@ -309,8 +310,6 @@ def generate_tts_for_line(
 
         if tts_engine == 'moss':
             # MOSS-TTS zero-shot voice cloning
-            import torchaudio
-
             if verbose and voice_path is None:
                 print(f"  DEBUG MOSS2: voice_path is None, calling voice_mapper.get_voice_path('{voice_name}')")
             if voice_path is None:
@@ -352,7 +351,6 @@ def generate_tts_for_line(
 
         elif tts_engine == 'echo-tts':
             # Echo TTS generates audio directly without processor
-            import torchaudio
             from functools import partial
 
             # Get voice path
@@ -422,7 +420,6 @@ def generate_tts_for_line(
             text_chunks = split_text_for_echo_tts(full_script)
 
             # Generate audio for each chunk and concatenate
-            import torch
             audio_chunks = []
 
             for i, chunk in enumerate(text_chunks):
@@ -458,6 +455,30 @@ def generate_tts_for_line(
             # Save audio
             sr = 44100
             torchaudio.save(output_path, audio_final.cpu(), sr)
+
+        elif tts_engine == 'omni':
+            voice_path = voice_path or voice_mapper.get_voice_path(voice_name)
+            if voice_path is None:
+                raise Exception(f"No voice path found for '{voice_name}'")
+
+            ref_text = DEFAULTS["static_voice_text"]
+
+            # Load reference audio for voice cloning (OmniVoice expects audio array + sample rate)
+            import soundfile as sf
+            ref_audio, ref_sr = sf.read(voice_path)
+
+            # OmniVoice voice cloning (per official docs)
+            audio = tts_model.generate(
+                text=full_script,
+                ref_audio=(ref_audio, ref_sr),
+                ref_text=ref_text,
+            )
+
+            if audio is None or len(audio) == 0 or audio[0].numel() == 0:
+                raise Exception("Empty OmniVoice generation for chapter text")
+
+            sr = 24000
+            torchaudio.save(output_path, audio[0].cpu(), sr)
 
         else:
             # KugelAudio and VibeVoice use processor inputs
@@ -953,7 +974,7 @@ class PipelineState:
 
 def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       verbose: bool = False, api_key: str = None, llm_port: str = None,
-                      tts_engine: str = "kugelaudio", turbo: bool = False,
+                      voice_engine: str = "moss", tts_engine: str = "kugelaudio", turbo: bool = False,
                       device: str = AUDIO_SETTINGS["default_device"], seed_voice_map: str = None,
                       num_llm_attempts: int = DEFAULTS["num_llm_attempts"],
                       resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
@@ -967,7 +988,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         verbose: Print verbose output
         api_key: LLM API key for speaker labeling and character descriptions
         llm_port: LLM endpoint port (e.g., LM Studio)
-        tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts')
+        voice_engine: TTS engine for voice sample generation ('moss', 'omni')
+        tts_engine: TTS engine for audiobook generation ('kugelaudio', 'vibevoice', 'moss', 'echo-tts', 'omni')
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         device: CUDA device (e.g., 'cuda', 'cuda:1')
         seed_voice_map: Path to existing voices_map.json to seed voices
@@ -1161,7 +1183,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 verbose=verbose,
                 progress=None,  # CLI mode, no gr.Progress
                 seed_characters=seed_characters,
-                tts_engine=tts_engine,
+                voice_engine=voice_engine,
                 validate=validate
             )
 
@@ -1354,8 +1376,10 @@ Examples:
     parser.add_argument("--verbose", "-v", action="store_true", help="Print verbose output")
     parser.add_argument("-api_key", help="LLM API key for speaker labeling")
     parser.add_argument("-llm_port", default=str(LLM_SETTINGS["port"]), help="LLM endpoint port (for LM Studio)")
-    parser.add_argument("-tts_engine", default=AUDIO_SETTINGS["default_tts_engine"], choices=["kugelaudio", "vibevoice", "moss", "echo-tts"],
-                        help="TTS engine to use")
+    parser.add_argument("--voice-engine", default="moss", choices=["moss", "omni"],
+                        help="TTS engine for voice sample generation (Stage 4)")
+    parser.add_argument("--tts-engine", default=AUDIO_SETTINGS["default_tts_engine"], choices=["kugelaudio", "vibevoice", "moss", "echo-tts", "omni"],
+                        help="TTS engine for audiobook generation (Stage 5, voice cloning)")
     parser.add_argument("--turbo", action="store_true", help="Use KugelAudio turbo model (kugel-1-turbo)")
     parser.add_argument("-device", default=AUDIO_SETTINGS["default_device"], help="CUDA device to use")
     parser.add_argument("--whisper_alt_gpu", action="store_true", help="Use CPU with float32 for Whisper validation model (instead of GPU with float16)")
@@ -1444,6 +1468,7 @@ Examples:
                     verbose=args.verbose,
                     api_key=args.api_key,
                     llm_port=args.llm_port,
+                    voice_engine=args.voice_engine,
                     tts_engine=args.tts_engine,
                     turbo=args.turbo,
                     device=args.device,

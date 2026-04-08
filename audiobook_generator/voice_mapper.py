@@ -14,6 +14,7 @@ import json
 import gc
 import traceback
 import torch
+import torchaudio
 from typing import Dict, Tuple, Optional, Any
 from pathlib import Path
 from openai import OpenAI
@@ -287,6 +288,23 @@ class VoiceMapper:
             self.tts_models[engine_key] = result
             return result
 
+        elif self.tts_engine == "omni":
+            from omnivoice import OmniVoice
+
+            model_path = TTS_MODEL_PATHS["omni"]
+
+            # Load OmniVoice model (per official docs)
+            tts_model = OmniVoice.from_pretrained(
+                model_path,
+                device_map=self.device,
+                dtype=torch.float16,
+            )
+
+            # OmniVoice doesn't use a separate processor
+            result = (tts_model, None, model_path, None)
+            self.tts_models[engine_key] = result
+            return result
+
         else:
             raise ValueError(f"Unknown TTS engine: {self.tts_engine}")
 
@@ -456,10 +474,16 @@ class VoiceMapper:
         Returns:
             Tuple of (success, output_file_path, duration_seconds)
         """
-        if self.tts_engine == "moss":
-            return self._generate_voice_sample_moss(
-                character_name, description, output_dir, max_new_tokens, verbose
-            )
+        if self.tts_engine in ("moss", "omni"):
+            # Both MOSS and OmniVoice support voice design from descriptions
+            if self.tts_engine == "moss":
+                return self._generate_voice_sample_moss(
+                    character_name, description, output_dir, max_new_tokens, verbose
+                )
+            else:
+                return self._generate_voice_sample_omni(
+                    character_name, description, output_dir, max_new_tokens, verbose
+                )
         else:
             # For kugelaudio, vibevoice, and echo-tts, generate from a reference text
             # Note: echo-tts is only used for voice cloning in stage 5, not for initial voice generation
@@ -753,6 +777,173 @@ class VoiceMapper:
 
         except Exception as e:
             print(f"    Error generating voice with MOSS-TTS: {e}")
+            print(f"    Exception type: {type(e).__name__}")
+            traceback.print_exc()
+            return False, None, 0
+
+    def _convert_description_to_omni_instruct(self, description: str, verbose: bool = False) -> str:
+        """Convert a character description to OmniVoice instruct format.
+
+        OmniVoice expects comma-separated attributes like:
+        "female, young adult, high pitch, british accent"
+
+        Supported OmniVoice attributes (per official docs):
+        - Gender: male, female
+        - Age: child, teenager, young adult, middle-aged, elderly
+        - Pitch: very low pitch, low pitch, moderate pitch, high pitch, very high pitch
+        - Style: whisper
+        - English Accents: american accent, british accent, australian accent, canadian accent,
+          indian accent, chinese accent, korean accent, japanese accent, portuguese accent, russian accent
+        - Chinese Dialects: 河南话，陕西话，四川话，贵州话，云南话，桂林话，济南话，石家庄话，
+          甘肃话，宁夏话，青岛话，东北话
+
+        Args:
+            description: Voice description from LLM (e.g., "male. middle aged. high")
+
+        Returns:
+            Formatted instruct string for OmniVoice
+        """
+        # Normalize: replace periods with commas, strip whitespace, lowercase
+        instruct = description.replace(".", ",")
+        parts = [p.strip().lower() for p in instruct.split(",") if p.strip()]
+
+        # Mapping from our terms to OmniVoice format
+        gender_map = {"male": "male", "female": "female"}
+        age_map = {
+            "child": "child",
+            "young": "young adult",
+            "teen": "teenager",
+            "teenager": "teenager",
+            "young adult": "young adult",
+            "middle aged": "middle-aged",
+            "middle-aged": "middle-aged",
+            "elderly": "elderly",
+            "old": "elderly",
+        }
+        pitch_map = {
+            "very low": "very low pitch",
+            "low": "low pitch",
+            "medium": "moderate pitch",
+            "mid": "moderate pitch",
+            "moderate": "moderate pitch",
+            "high": "high pitch",
+            "very high": "very high pitch",
+        }
+        accent_map = {
+            "american": "american accent",
+            "british": "british accent",
+            "australian": "australian accent",
+            "canadian": "canadian accent",
+            "indian": "indian accent",
+            "chinese": "chinese accent",
+            "korean": "korean accent",
+            "japanese": "japanese accent",
+            "portuguese": "portuguese accent",
+            "russian": "russian accent",
+        }
+
+        mapped_parts = []
+        for part in parts:
+            # Gender
+            if part in gender_map:
+                mapped_parts.append(gender_map[part])
+            # Age
+            elif part in age_map:
+                mapped_parts.append(age_map[part])
+            # Pitch
+            elif part in pitch_map:
+                mapped_parts.append(pitch_map[part])
+            # Style
+            elif part == "whisper":
+                mapped_parts.append("whisper")
+            # Accent (with or without "accent" suffix)
+            elif part in accent_map:
+                mapped_parts.append(accent_map[part])
+            elif part.endswith(" accent"):
+                mapped_parts.append(part)
+            # Chinese dialects (pass through)
+            elif any(c in part for c in "河南陕西四川贵云南桂济石甘宁青岛东北话"):
+                mapped_parts.append(part)
+            # Unknown - skip to avoid invalid attributes
+            else:
+                if verbose:
+                    print(f"    Warning: Skipping unknown attribute '{part}'")
+
+        return ", ".join(mapped_parts)
+
+    def _generate_voice_sample_omni(
+        self,
+        character_name: str,
+        description: str,
+        output_dir: str = None,
+        max_new_tokens: int = None,
+        verbose: bool = False
+    ) -> Tuple[bool, Optional[str], float]:
+        """Generate a voice sample for a character using OmniVoice voice design.
+
+        OmniVoice supports voice design from text descriptions without reference audio.
+        The character description is converted to OmniVoice's instruct format.
+
+        Args:
+            character_name: Name of the character
+            description: Voice description from LLM (e.g., "male. middle aged. high")
+            output_dir: Output directory (defaults to self.output_dir)
+            max_new_tokens: Max tokens for generation (not used by OmniVoice)
+            verbose: Print verbose output
+
+        Returns:
+            Tuple of (success, output_file_path, duration_seconds)
+        """
+        if output_dir is None:
+            output_dir = self.output_dir
+
+        # Use the static voice text from config for high emotional range
+        sample_text = DEFAULTS["static_voice_text"]
+
+        # Validate description
+        if not description or not description.strip():
+            if verbose:
+                print(f"  ERROR: Skipping '{character_name}' due to empty description")
+            return False, None, 0
+
+        # Get OmniVoice model
+        model, _, _, _ = self.setup_tts_engine()
+
+        try:
+            # Convert description to OmniVoice instruct format
+            # Input: "male. middle aged. high" -> "male, middle-aged, high pitch"
+            instruct = self._convert_description_to_omni_instruct(description, verbose)
+
+            if verbose:
+                print(f"  Character: {character_name}")
+                print(f"  OmniVoice instruct: {instruct}")
+                print(f"  Sample text: {sample_text}")
+
+            # Generate audio using voice design (per OmniVoice docs)
+            audio = model.generate(
+                text=sample_text,
+                instruct=instruct,
+            )
+
+            if audio is None or len(audio) == 0 or audio[0].numel() == 0:
+                return False, None, 0
+
+            os.makedirs(output_dir, exist_ok=True)
+            output_file = os.path.join(output_dir, f"{character_name}.wav")
+
+            sr = 24000
+            torchaudio.save(output_file, audio[0].cpu(), sr)
+
+            duration = len(audio[0]) / sr
+            self.add_voice_path(character_name, output_file)
+
+            if verbose:
+                print(f"    Generated: {duration:.2f}s -> {output_file}")
+
+            return True, output_file, duration
+
+        except Exception as e:
+            print(f"    Error generating voice with OmniVoice: {e}")
             print(f"    Exception type: {type(e).__name__}")
             traceback.print_exc()
             return False, None, 0

@@ -192,17 +192,17 @@ def reset_chapters_dir() -> None:
 
 def get_saved_audiobooks_dir() -> Path:
     """Get the directory where saved audiobook archives are stored."""
-    return Path.home() / ".claude" / "saved_audiobooks"
+    return Path.home() / ".audiobook_generator" / "saved_audiobooks"
 
 
 def get_latest_saved_file() -> Path:
     """Get the path to the latest saved audiobook info file."""
-    return Path.home() / ".claude" / "latest_saved_audiobook.json"
+    return Path.home() / ".audiobook_generator" / "latest_saved_audiobook.json"
 
 
 def get_loaded_temp_file() -> Path:
     """Get the path to the loaded temp directory info file."""
-    return Path.home() / ".claude" / "loaded_temp.json"
+    return Path.home() / ".audiobook_generator" / "loaded_temp.json"
 
 
 def save_temp_dir(temp_dir: str) -> str:

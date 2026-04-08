@@ -100,19 +100,19 @@ from voice_mapper import VoiceMapper
 # ============================================================================
 
 
-def setup_validation_model(device: str, alt_gpu: bool = False) -> WhisperModel:
+def setup_validation_model(device: str, cpu: bool = False) -> WhisperModel:
     """Setup the Whisper validation model for audio transcription.
 
     Args:
         device: Device to run the model on (e.g., 'cuda', 'cuda:0', 'cuda:1', 'cpu')
-        alt_gpu: If True, use CPU with float32 instead of GPU with float16
+        cpu: If True, use CPU with float32 instead of GPU with float16
 
     Returns:
         WhisperModel instance for audio validation
     """
     model_name = DEFAULTS["validation_model_name"]
-    if alt_gpu:
-        # Use CPU with float32 for alternate GPU mode
+    if cpu:
+        # Use CPU with float32
         return WhisperModel(model_name, device="cpu", compute_type="float32")
     else:
         # Normalize device for Whisper: faster-whisper only supports 'cuda', not 'cuda:0', 'cuda:1', etc.
@@ -668,7 +668,7 @@ def generate_audiobook_from_chapters(
     duplicate_replacement_map: Dict[str, str] = None,
     seed_voice_map: str = None,
     whisper_device: str = None,
-    whisper_alt_gpu: bool = False,
+    whisper_cpu: bool = False,
     debug_tts: bool = False,
     validate_clean: bool = False
 ) -> Tuple[str, int]:
@@ -708,7 +708,7 @@ def generate_audiobook_from_chapters(
         with ProgressHandler(progress=progress, total=len(chapters_to_process), desc="Audiobook Generation") as progress_handler:
             # Setup validation model (Whisper always runs)
             whisper_device = whisper_device if whisper_device is not None else device
-            validation_model = setup_validation_model(whisper_device, alt_gpu=whisper_alt_gpu)
+            validation_model = setup_validation_model(whisper_device, cpu=whisper_cpu)
             # This avoids crashes from faster-whisper dependencies if validation_model is None
             validation_client = get_validation_client() if validate_clean else None
             # Initialize VoiceMapper with output_dir so it looks in the correct location
@@ -1413,7 +1413,7 @@ Examples:
                         help="TTS engine for audiobook generation (Stage 5, voice cloning)")
     parser.add_argument("--turbo", action="store_true", help="Use KugelAudio turbo model (kugel-1-turbo)")
     parser.add_argument("-device", default=AUDIO_SETTINGS["default_device"], help="CUDA device to use")
-    parser.add_argument("--whisper_alt_gpu", action="store_true", help="Use CPU with float32 for Whisper validation model (instead of GPU with float16)")
+    parser.add_argument("--whisper_cpu", action="store_true", help="Use CPU with float32 for Whisper validation model (instead of GPU with float16)")
     parser.add_argument("--gradio", action="store_true", help="Launch Gradio interface instead of CLI")
     parser.add_argument("-num_llm_attempts", type=int, default=DEFAULTS["num_llm_attempts"], help="Number of LLM attempts for speaker labeling")
     parser.add_argument("-gradio_port", type=int, default=None, help="Port for Gradio web interface")
@@ -1474,7 +1474,7 @@ Examples:
 
         # Determine whisper device
         whisper_device = args.device
-        whisper_alt_gpu = args.whisper_alt_gpu
+        whisper_cpu = args.whisper_cpu
 
         # Use temp directory by default, or user-specified output_dir if provided
         used_temp_dir = False
@@ -1507,7 +1507,7 @@ Examples:
                     num_llm_attempts=args.num_llm_attempts,
                     resume=(saved_temp_dir is not None),
                     whisper_device=whisper_device,
-                    whisper_alt_gpu=whisper_alt_gpu,
+                    whisper_cpu=whisper_cpu,
                     debug_tts=args.debug_tts,
                     validate=args.validate,
                     validate_clean=args.validate_clean

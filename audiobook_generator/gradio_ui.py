@@ -555,7 +555,7 @@ def generate_tts_audio(
     max_chapters: Optional[int],
     turbo: bool = False,
     seed_voice_map: str = None,
-    whisper_alt_gpu: bool = False,
+    whisper_cpu: bool = False,
     validate_clean: bool = False,
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
@@ -567,7 +567,7 @@ def generate_tts_audio(
         max_chapters: Maximum number of chapters to process
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         seed_voice_map: Path to seed voices_map.json for reusing existing voices
-        whisper_alt_gpu: Use alternate GPU (cuda:1) for Whisper
+        whisper_cpu: Use CPU for Whisper
         validate_clean: If True, validate audio contains only clean speech (no music/SFX)
         progress: Gradio progress callback
 
@@ -650,11 +650,13 @@ def generate_tts_audio(
         # Determine device (use CUDA if available, default to cuda:0)
         import torch
         device = AUDIO_SETTINGS["default_device"] if torch.cuda.is_available() else "cpu"
-        # Use alternate GPU for Whisper if requested
-        whisper_device = "cuda:1" if whisper_alt_gpu else device
+        # Use CPU for Whisper if requested
+        if whisper_cpu:
+            whisper_device = "cpu"
+            log_output += f"\nWhisper will use CPU"
+        else:
+            whisper_device = device
         log_output += f"\nUsing device: {device}"
-        if whisper_alt_gpu:
-            log_output += f"\nWhisper will use alternate GPU (cuda:1)"
 
         # Use the unified generate_audiobook_from_chapters function from package
         verbose = True
@@ -707,7 +709,7 @@ def generate_full_audiobook(
     max_chapters: Optional[int],
     turbo: bool = False,
     seed_voice_map: str = None,
-    whisper_alt_gpu: bool = False,
+    whisper_cpu: bool = False,
     validate_clean: bool = False,
 ) -> Tuple[str, PipelineState]:
     """Stage 5: Generate full audiobook using generate_audiobook_from_chapters().
@@ -718,14 +720,14 @@ def generate_full_audiobook(
         max_chapters: Maximum number of chapters to process
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         seed_voice_map: Path to seed voices_map.json for reusing existing voices
-        whisper_alt_gpu: Use alternate GPU (cuda:1) for Whisper
+        whisper_cpu: Use CPU for Whisper
         validate_clean: If True, validate audio contains only clean speech (no music/SFX)
     """
     log_output += "\n\n=== Stage 5: Full Audiobook Generation ==="
 
     try:
         # Use the unified generate_audiobook_from_chapters function
-        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters, turbo, seed_voice_map, whisper_alt_gpu, validate_clean)
+        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters, turbo, seed_voice_map, whisper_cpu, validate_clean)
 
         # Update state to audiobook complete (MP3s are created during generate_audiobook_from_chapters)
         log_output += f"\n\n=== Stage 5 Complete: Full Audiobook Generation === State: {pipeline_state.pipeline_state}"
@@ -1337,8 +1339,8 @@ def create_interface(
                     scale=2,
                 )
             with gr.Row():
-                whisper_alt_gpu_checkbox = gr.Checkbox(
-                    label="Use Alt GPU for Whisper (cuda:1)",
+                whisper_cpu_checkbox = gr.Checkbox(
+                    label="Use CPU for Whisper",
                     value=False,
                     scale=3
                 )
@@ -1747,7 +1749,7 @@ def create_interface(
         # Generate Full Audiobook - Stage 5
         tts_btn.click(
             fn=generate_full_audiobook,
-            inputs=[pipeline_state_obj, log_output, max_chapters_slider, seed_voice_map_input, whisper_alt_gpu_checkbox, validate_clean_checkbox],
+            inputs=[pipeline_state_obj, log_output, max_chapters_slider, seed_voice_map_input, whisper_cpu_checkbox, validate_clean_checkbox],
             outputs=[log_output, pipeline_state_obj],
         ).then(
             fn=update_button_visibility_from_state,

@@ -668,6 +668,7 @@ def generate_audiobook_from_chapters(
     duplicate_replacement_map: Dict[str, str] = None,
     seed_voice_map: str = None,
     whisper_device: str = None,
+    whisper_alt_gpu: bool = False,
     whisper_cpu: bool = False,
     debug_tts: bool = False,
     validate_clean: bool = False
@@ -708,6 +709,9 @@ def generate_audiobook_from_chapters(
         with ProgressHandler(progress=progress, total=len(chapters_to_process), desc="Audiobook Generation") as progress_handler:
             # Setup validation model (Whisper always runs)
             whisper_device = whisper_device if whisper_device is not None else device
+            # Apply whisper_alt_gpu to override device to cuda:1 if not explicitly set
+            if whisper_alt_gpu and whisper_device == device:
+                whisper_device = "cuda:1"
             validation_model = setup_validation_model(whisper_device, cpu=whisper_cpu)
             # This avoids crashes from faster-whisper dependencies if validation_model is None
             validation_client = get_validation_client() if validate_clean else None
@@ -813,6 +817,16 @@ def generate_audiobook_from_chapters(
                             voice_path = os.path.join(output_dir, voices_map[canonical_voice])
                             if verbose:
                                 print(f"  DEBUG: Found voice_path in voices_map: {voice_path}")
+                            # Check if the voice file actually exists
+                            if not os.path.exists(voice_path):
+                                if verbose:
+                                    print(f"  WARNING: Voice file not found: {voice_path}")
+                                # Try to find an alternative - check if canonical_voice is in seed_characters
+                                # and use that path instead (for cases like elan morin tedronai -> baalzamon)
+                                if seed_characters and canonical_voice in seed_characters:
+                                    voice_path = seed_characters[canonical_voice]
+                                    if verbose:
+                                        print(f"  DEBUG: Using seed voice path: {voice_path}")
                         else:
                             # Fall back to VoiceMapper lookup with canonical name
                             voice_path = voice_mapper.get_voice_path(canonical_voice)
@@ -1009,7 +1023,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       device: str = AUDIO_SETTINGS["default_device"], seed_voice_map: str = None,
                       num_llm_attempts: int = DEFAULTS["num_llm_attempts"],
                       resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
-                      debug_tts: bool = False, validate: bool = False, validate_clean: bool = False) -> str:
+                      whisper_cpu: bool = False, debug_tts: bool = False, validate: bool = False,
+                      validate_clean: bool = False) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -1058,6 +1073,34 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         duplicate_replacement_map = load_json(replacement_map_file)
         if verbose and duplicate_replacement_map:
             print(f"[DUPLICATE MAP] Loaded {len(duplicate_replacement_map)} replacements from duplicate_replacement_map.json")
+
+    # Check for missing voice file mappings and add fallbacks
+    # This handles cases where LLM labeled characters differently than the voice file names
+    # e.g., "elan morin tedronai" should map to "baalzamon.wav"
+    if resume:
+        # Get list of available voice files in the output directory
+        available_voices = set()
+        for f in Path(output_dir).glob("*.wav"):
+            voice_name = f.stem  # filename without extension
+            available_voices.add(voice_name)
+        if verbose and available_voices:
+            print(f"[VOICE CHECK] Found {len(available_voices)} voice files: {sorted(available_voices)}")
+
+        # Check for characters in voice_map that don't have corresponding voice files
+        missing_mappings = {}
+        for char_name, voice_path_rel in state.voice_map.items():
+            voice_path_full = os.path.join(output_dir, voice_path_rel)
+            if not os.path.exists(voice_path_full):
+                if verbose:
+                    print(f"[VOICE CHECK] Missing voice file for '{char_name}': {voice_path_full}")
+                # Try to find a matching voice file by looking for similar names
+                # e.g., "elan morin tedronai" -> "baalzamon"
+                for available in available_voices:
+                    if available in char_name or char_name in available:
+                        missing_mappings[char_name] = available
+                        if verbose:
+                            print(f"[VOICE CHECK]   -> Mapped to available voice: '{available}'")
+                        break
 
     # Load seed voices if provided
     seed_characters = None
@@ -1241,10 +1284,21 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         # Count chapters for progress
         num_chapters_to_process = len(state.chapters) if state.chapters else 0
 
+        # Merge seed_voice_map into state.voice_map to handle characters not in the resumed voice map
+        # This is important for characters like "elan morin tedronai" that should map to "baalzamon.wav"
+        merged_voices_map = dict(state.voice_map)  # Start with a copy of the loaded voice map
+        if seed_voice_map and seed_characters:
+            # Add seed mappings for any characters not in the loaded voice map
+            for char_name, voice_path in seed_characters.items():
+                if char_name not in merged_voices_map:
+                    merged_voices_map[char_name] = voice_path
+                    if verbose:
+                        print(f"  [SEED MERGE] Added '{char_name}' -> '{voice_path}' from seed_voice_map")
+
         status, processed = generate_audiobook_from_chapters(
             chapters=state.chapters,
             chapter_maps=state.chapter_maps,
-            voices_map=state.voice_map,
+            voices_map=merged_voices_map,
             output_dir=str(state.chapters_dir),
             device=device,
             tts_engine=tts_engine,

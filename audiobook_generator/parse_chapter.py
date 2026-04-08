@@ -196,10 +196,58 @@ def load_chapters_from_txt(output_dir: str, max_chapters: int = None, prefix: st
     for chapter_file in chapter_files:
         with open(chapter_file, "r", encoding="utf-8") as f:
             text = f.read()
-        chapter_objs = get_chapter_objs(text)
+        # Use load_chapter_objs_from_file to preserve original line numbers
+        chapter_objs = load_chapter_objs_from_file(text)
         chapters.append(chapter_objs)
 
     return chapters
+
+
+def load_chapter_objs_from_file(text: str) -> list:
+    """
+    Load chapter objects from text file content, preserving original line numbers.
+
+    This is different from get_chapter_objs() which re-assigns line numbers from 0.
+    This function parses the "Line N:" prefix from each line to preserve the original
+    line numbers, which is critical for resuming from saved state.
+
+    Args:
+        text: The full text of the chapter file (with "Line N:" prefixes)
+
+    Returns:
+        list: List of ChapterObj objects with preserved line_num values
+    """
+    lines = text.split('\n')
+    chapter_objs = []
+
+    for line in lines:
+        if not line.strip():
+            continue
+
+        # Parse "Line N: " prefix to get the original line number
+        # Format: "Line 69: "some text" or Line 70: some text"
+        match = re.match(r'^Line\s+(\d+):\s*(.*)$', line, re.IGNORECASE)
+        if match:
+            line_num = int(match.group(1))
+            content = match.group(2)
+
+            # Determine if this is a quoted line
+            has_quotes = content.startswith('"') and content.endswith('"')
+
+            # Strip the quotes from content if present
+            if has_quotes:
+                content = content[1:-1]
+
+            # Clean up the text (but don't strip "Line N:" prefix again - already parsed)
+            content = content.replace("   ", " ").replace("  ", " ")
+
+            chapter_objs.append(ChapterObj(has_quotes, content, line_num))
+        else:
+            # Line doesn't match expected format - skip or handle as error
+            # For backward compatibility, skip lines without proper prefix
+            pass
+
+    return chapter_objs
 
 
 def main():

@@ -909,19 +909,20 @@ class VoiceMapper:
         # Get OmniVoice model
         model, _, _, _ = self.setup_tts_engine()
 
+        # Try generation with the original description first
+        instruct = self._convert_description_to_omni_instruct(description, verbose)
+
+        if verbose:
+            print(f"  Character: {character_name}")
+            print(f"  OmniVoice instruct: {instruct}")
+            print(f"  Sample text: {sample_text}")
+
         try:
-            # Convert description to OmniVoice instruct format
-            # Input: "male. middle aged. high" -> "male, middle-aged, high pitch"
-            instruct = self._convert_description_to_omni_instruct(description, verbose)
-
-            if verbose:
-                print(f"  Character: {character_name}")
-                print(f"  OmniVoice instruct: {instruct}")
-                print(f"  Sample text: {sample_text}")
-
             # Generate audio using voice design (per OmniVoice docs)
             audio = model.generate(
                 text=sample_text,
+                num_step=32,  # diffusion steps (or 16 for faster inference)
+                class_temperature=3.0, # default is 0, but not enough diversity
                 instruct=instruct,
             )
 
@@ -942,11 +943,92 @@ class VoiceMapper:
 
             return True, output_file, duration
 
+        except ValueError as e:
+            error_msg = str(e)
+            # Check for conflicting instruct items error
+            if "Conflicting instruct items" in error_msg or "Each category" in error_msg:
+                if verbose:
+                    print(f"    Conflict detected in instruct: {error_msg}")
+                    print(f"    Retrying with simplified voice description...")
+
+                # Try with a minimal fallback instruct (just gender if possible, otherwise nothing)
+                fallback_instruct = self._get_fallback_instruct(description, verbose)
+                if fallback_instruct:
+                    if verbose:
+                        print(f"  Retrying with fallback instruct: {fallback_instruct}")
+
+                    try:
+                        audio = model.generate(
+                            text=sample_text,
+                            num_step=32,
+                            class_temperature=3.0,
+                            instruct=fallback_instruct,
+                        )
+
+                        if audio is None or len(audio) == 0 or audio[0].numel() == 0:
+                            return False, None, 0
+
+                        os.makedirs(output_dir, exist_ok=True)
+                        output_file = os.path.join(output_dir, f"{character_name}.wav")
+
+                        sr = 24000
+                        torchaudio.save(output_file, audio[0].cpu(), sr)
+
+                        duration = len(audio[0]) / sr
+                        self.add_voice_path(character_name, output_file)
+
+                        if verbose:
+                            print(f"    Generated (fallback): {duration:.2f}s -> {output_file}")
+
+                        return True, output_file, duration
+
+                    except Exception as e2:
+                        print(f"    Fallback generation also failed: {e2}")
+                        print(f"    Exception type: {type(e2).__name__}")
+                        traceback.print_exc()
+                        return False, None, 0
+                else:
+                    if verbose:
+                        print(f"    No fallback instruct available, generation failed")
+                    return False, None, 0
+            else:
+                # Different error, re-raise as normal
+                print(f"    Error generating voice with OmniVoice: {e}")
+                print(f"    Exception type: {type(e).__name__}")
+                traceback.print_exc()
+                return False, None, 0
+
         except Exception as e:
             print(f"    Error generating voice with OmniVoice: {e}")
             print(f"    Exception type: {type(e).__name__}")
             traceback.print_exc()
             return False, None, 0
+
+    def _get_fallback_instruct(self, description: str, verbose: bool = False) -> Optional[str]:
+        """Extract a minimal, non-conflicting instruct from a description.
+
+        When the original description has conflicting attributes (e.g., multiple
+        genders or ages), this extracts just the first valid gender as a fallback.
+
+        Args:
+            description: Voice description from LLM
+            verbose: Print verbose output
+
+        Returns:
+            A minimal instruct string (e.g., "male") or None if nothing valid found
+        """
+        parts = [p.strip().lower() for p in description.replace(".", ",").split(",") if p.strip()]
+
+        # Gender mapping
+        gender_map = {"male": "male", "female": "female"}
+
+        # Find first valid gender
+        for part in parts:
+            if part in gender_map:
+                return gender_map[part]
+
+        # No valid gender found, return None (caller will handle)
+        return None
 
     def build_voice_clone_prompt(
         self,
@@ -989,6 +1071,9 @@ class VoiceMapper:
 
         # Load the voice sample
         voice_audio, sr = sf.read(voice_path)
+        # Convert numpy array to torch tensor (OmniVoice expects tensor, not numpy array)
+        import torch
+        voice_audio = torch.from_numpy(voice_audio)
 
         # Get Base model (needed to build the prompt)
         _, _, _, base_model = self.setup_tts_engine()

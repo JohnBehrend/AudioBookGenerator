@@ -31,11 +31,16 @@ OMNIVOICE SUPPORTED ATTRIBUTES:
 - Style: whisper
 - English Accents: american accent, british accent, australian accent, canadian accent, indian accent, chinese accent, korean accent, japanese accent, portuguese accent, russian accent
 
-RULES:
+CRITICAL RULES:
 - Output ONLY comma-separated attributes (no other text)
 - NO markdown, NO sentences, NO "a", NO "with", NO "voice"
 - Use ONLY the supported attributes listed above
 - 2-5 attributes max, comma-separated
+- ONE gender only (male OR female, NOT both)
+- ONE age only (child OR teenager OR young adult OR middle-aged OR elderly)
+- ONE pitch only
+- ONE accent only (or omit if not applicable)
+- NEVER combine multiple genders, ages, or pitches in one description
 
 Format: <gender>, <age>, <pitch>, <accent>
 
@@ -50,6 +55,11 @@ BAD Examples (do NOT use):
 - A middle-aged male with a smooth voice.
 - male. middle aged. high
 - An elderly male with a gravelly voice.
+- male, female, young adult (conflicting genders)
+- male, young adult, middle-aged, elderly (multiple ages)
+- male, middle-aged, high pitch, low pitch (conflicting pitches)
+
+For group characters like "crowd", "voices", or "people", pick ONE representative voice (e.g., "male, middle-aged, moderate pitch").
 """
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)

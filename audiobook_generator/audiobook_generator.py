@@ -461,17 +461,48 @@ def generate_tts_for_line(
             if voice_path is None:
                 raise Exception(f"No voice path found for '{voice_name}'")
 
-            ref_text = DEFAULTS["static_voice_text"]
+            # Auto-transcribe reference audio to get the correct ref_text for voice cloning
+            # This is critical when using custom voice files that weren't generated with static_voice_text
+            try:
+                ref_text, _, _ = transcribe_audio_with_whisper(validation_model, voice_path)
+                if verbose:
+                    print(f"    Transcribed ref_text for '{voice_name}': {ref_text[:80]}...")
+            except Exception as e:
+                if verbose:
+                    print(f"    Warning: Failed to transcribe ref_text for '{voice_name}': {e}")
+                    print(f"    Falling back to static_voice_text (cloning quality may be degraded)")
+                ref_text = DEFAULTS["static_voice_text"]
 
-            # Load reference audio for voice cloning (OmniVoice expects audio array + sample rate)
+            # Load reference audio for voice cloning (OmniVoice expects audio tensor + sample rate)
             import soundfile as sf
-            ref_audio, ref_sr = sf.read(voice_path)
+            import torch
+            ref_audio_np, ref_sr = sf.read(voice_path)
+
+            # Handle stereo audio by converting to mono
+            if len(ref_audio_np.shape) > 1:
+                if verbose:
+                    print(f"    Converting stereo audio to mono for '{voice_name}'")
+                ref_audio_np = ref_audio_np.mean(axis=1)
+
+            # Convert to float32 (soundfile reads as float64 by default, but model expects float32)
+            ref_audio_np = ref_audio_np.astype(np.float32)
+
+            # Convert numpy array to torch tensor (OmniVoice expects tensor, not numpy array)
+            ref_audio = torch.from_numpy(ref_audio_np)
+
+            if verbose:
+                print(f"    ref_audio shape: {ref_audio.shape}, dtype: {ref_audio.dtype}, sample rate: {ref_sr}, elements: {ref_audio.numel()}")
+
+            if ref_audio.numel() == 0:
+                raise Exception(f"Reference audio for '{voice_name}' is empty after loading from {voice_path}")
 
             # OmniVoice voice cloning (per official docs)
+            # preprocess_prompt=False to avoid silence removal issues with custom voice files
             audio = tts_model.generate(
                 text=full_script,
                 ref_audio=(ref_audio, ref_sr),
                 ref_text=ref_text,
+                preprocess_prompt=False,
             )
 
             if audio is None or len(audio) == 0 or audio[0].numel() == 0:

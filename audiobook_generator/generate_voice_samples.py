@@ -30,10 +30,9 @@ def load_character_descriptions(descriptions_file):
         return json.load(f)
 
 
-def generate_voice_sample(character_name: str, description: str, output_dir: str,
-                          device: str = None, max_new_tokens: int = None, verbose: bool = False,
-                          validate: bool = False, validation_client: OpenAI = None,
-                          voice_engine: str = None) -> tuple:
+def generate_voice_sample(character_name: str, description: str, voice_mapper: VoiceMapper,
+                          output_dir: str, max_new_tokens: int = None, verbose: bool = False,
+                          validate: bool = False, validation_client: OpenAI = None) -> tuple:
     """Generate a short voice sample for a character using VoiceDesign model via VoiceMapper.
 
     Uses voice design with an instruct prompt to generate speech
@@ -42,13 +41,12 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
     Args:
         character_name: Name of the character
         description: Voice description from LLM
+        voice_mapper: Shared VoiceMapper instance (prevents repeated model loading)
         output_dir: Directory to save voice samples
-        device: CUDA device (uses config default if not specified)
         max_new_tokens: Max tokens for generation
         verbose: Print verbose output
         validate: If True, validate the generated voice with LLM
         validation_client: OpenAI client for validation (created if None)
-        voice_engine: TTS engine for voice generation ('moss', 'omni')
 
     Returns:
         Tuple of (success, output_file_path, duration_seconds, is_valid, validation_msg)
@@ -56,12 +54,6 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
     """
     if max_new_tokens is None:
         max_new_tokens = DEFAULTS["max_new_tokens"]
-    if device is None:
-        device = AUDIO_SETTINGS["default_device"]
-
-    # Use provided engine or default to moss
-    engine = voice_engine or "moss"
-    voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=engine)
 
     try:
         success, output_file, duration = voice_mapper.generate_voice_sample(
@@ -94,8 +86,6 @@ def generate_voice_sample(character_name: str, description: str, output_dir: str
 
             if not is_valid:
                 print(f"    Warning: Voice validation failed: {validation_msg}")
-
-        voice_mapper.cleanup_tts_models()
 
         return success, output_file, duration, is_valid, validation_msg
 
@@ -279,6 +269,10 @@ def generate_voice_samples(
             print("      Voices use a static string from config instead.")
             print("=" * 60 + "\n")
 
+        # Create VoiceMapper once to cache the TTS model across all characters
+        engine = voice_engine or "moss"
+        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=engine)
+
         try:
             for i, (char_name, char_desc) in enumerate(descriptions.items()):
                 if verbose:
@@ -309,17 +303,16 @@ def generate_voice_samples(
                     if voice_found:
                         continue
 
-                # Generate voice
+                # Generate voice (pass shared voice_mapper to avoid repeated model loading)
                 success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
                     character_name=char_name,
                     description=char_desc,
+                    voice_mapper=voice_mapper,
                     output_dir=output_dir,
-                    device=device,
                     max_new_tokens=max_tokens,
                     verbose=verbose,
                     validate=False,
-                    validation_client=None,
-                    voice_engine=voice_engine
+                    validation_client=None
                 )
 
                 if success:
@@ -330,6 +323,9 @@ def generate_voice_samples(
                     failed.append(char_name)
                     if verbose:
                         print(f"    Failed to generate voice")
+
+            # Clean up TTS models after all characters are processed
+            voice_mapper.cleanup_tts_models()
         except Exception as e:
             return f"Error generating voices: {str(e)}\n{traceback.format_exc()}", {}
 

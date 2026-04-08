@@ -300,6 +300,13 @@ class VoiceMapper:
                 dtype=torch.float16,
             )
 
+            # Pre-load ASR model to avoid repeated downloads during generation
+            # This is needed when ref_text is not provided (auto-transcription mode)
+            try:
+                tts_model.load_asr_model()
+            except Exception as e:
+                print(f"  Warning: Could not pre-load ASR model: {e}")
+
             # OmniVoice doesn't use a separate processor
             result = (tts_model, None, model_path, None)
             self.tts_models[engine_key] = result
@@ -922,7 +929,7 @@ class VoiceMapper:
             audio = model.generate(
                 text=sample_text,
                 num_step=32,  # diffusion steps (or 16 for faster inference)
-                class_temperature=3.0, # default is 0, but not enough diversity
+                class_temperature=0.5, # default is 0, but not enough diversity
                 instruct=instruct,
             )
 

@@ -63,42 +63,28 @@ For group characters like "crowd", "voices", or "people", pick ONE representativ
 """
 
 # VoxCPM format prompt
-CHARACTER_DESCRIPTION_PROMPT_VOX = """You are an expert voice actor. Create rich, detailed voice profiles for VoxCPM TTS synthesis.
+CHARACTER_DESCRIPTION_PROMPT_VOX = """You are an expert voice actor. Create SHORT voice profiles for VoxCPM TTS synthesis.
 
-CRITICAL: Output MUST be in natural language format, wrapped in parentheses.
+CRITICAL: Output concise descriptions WITHOUT parentheses.
 
 VOXCPM FORMATTING:
-- Start with "(" and end with ")"
-- Combine multiple ingredients into ONE comprehensive description
-- Support both English and Chinese
-
-THREE INGREDIENTS TO MIX:
-
-1. BASIC (The Base) - Core identity: gender, age, role
-   Examples: middle-aged male broadcaster, elderly woman, young female narrator
-
-2. TEXTURED (The Marinade) - Voice quality and pitch
-   Examples: low-pitched, raspy, magnetic, gravelly, smooth, breathy, warm
-
-3. VIVID (The Presentation) - Emotion, pacing, scenario
-   Examples: passionate, shouting, gentle, slow tone, energetic, calm narration
-
-COMBINE ALL THREE into a single rich description like a signature recipe.
+- NO parentheses - just plain text
+- 5-15 words max, comma-separated
+- Combine: basic identity + key voice trait + delivery style
 
 Good Examples (VoxCPM format):
-- (middle-aged male broadcaster, low-pitched and magnetic voice, passionate delivery with rhythmic pacing)
-- (elderly woman, raspy and grainy texture with subtle breathy tremors, slow gentle tone perfect for historical narration)
-- (young female narrator, warm and smooth voice, energetic and engaging with clear articulation)
-- (deep-voiced male villain, gravelly and menacing texture, slow deliberate pacing with dark undertones)
-- (cheerful child, high-pitched and bright, excited and rapid speech pattern)
+- young female, clear bright voice, rapid rhythmic pacing
+- middle-aged male, low gravelly voice, calm measured tone
+- elderly woman, warm raspy voice, gentle slow delivery
+- deep-voiced male, smooth magnetic voice, intense urgent gravity
+- cheerful child, high-pitched bright voice, energetic rapid speech
 
 BAD Examples (do NOT use):
-- male, middle-aged, high pitch (too brief, missing emotional/presentation layer)
-- A middle-aged male with a smooth voice. (not wrapped in parentheses, too simple)
-- male, female, young adult (conflicting attributes)
-- (male, old) (only basic ingredient, missing texture and vividness)
+- (young female mystic with a street-smart edge...) - too long with parens
+- male, middle-aged, high pitch - too brief
+- A middle-aged male with a smooth voice - not comma-separated
 
-For group characters like "crowd", "voices", or "people", pick ONE representative voice with all three ingredients (e.g., "(middle-aged male, moderate low pitch, energetic crowd leader)").
+For group characters like "crowd" or "voices", use a single representative voice (e.g., "male, moderate pitch, energetic delivery").
 """
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)

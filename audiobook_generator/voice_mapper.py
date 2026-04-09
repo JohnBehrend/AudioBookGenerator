@@ -15,6 +15,7 @@ import gc
 import traceback
 import torch
 import torchaudio
+import soundfile as sf
 from typing import Dict, Tuple, Optional, Any
 from pathlib import Path
 from openai import OpenAI
@@ -55,7 +56,7 @@ class VoiceMapper:
         Args:
             output_dir: Directory to save/load voice samples and maps
             device: Device to run TTS models ('cuda:0', 'cuda:1', etc.)
-            tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts')
+            tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts', 'omni', 'vox')
                        Defaults to AUDIO_SETTINGS['default_tts_engine']
             duplicate_replacement_map: Optional dict mapping duplicate character names to canonical names
         """
@@ -312,6 +313,19 @@ class VoiceMapper:
             self.tts_models[engine_key] = result
             return result
 
+        elif self.tts_engine == "vox":
+            from voxcpm import VoxCPM
+
+            model_path = TTS_MODEL_PATHS["vox"]
+
+            # Load VoxCPM model (disable denoiser if not needed)
+            tts_model = VoxCPM.from_pretrained(model_path, load_denoiser=False)
+
+            # VoxCPM doesn't use a separate processor
+            result = (tts_model, None, model_path, None)
+            self.tts_models[engine_key] = result
+            return result
+
         else:
             raise ValueError(f"Unknown TTS engine: {self.tts_engine}")
 
@@ -481,14 +495,18 @@ class VoiceMapper:
         Returns:
             Tuple of (success, output_file_path, duration_seconds)
         """
-        if self.tts_engine in ("moss", "omni"):
-            # Both MOSS and OmniVoice support voice design from descriptions
+        if self.tts_engine in ("moss", "omni", "vox"):
+            # MOSS, OmniVoice, and VoxCPM support voice design from descriptions
             if self.tts_engine == "moss":
                 return self._generate_voice_sample_moss(
                     character_name, description, output_dir, max_new_tokens, verbose
                 )
-            else:
+            elif self.tts_engine == "omni":
                 return self._generate_voice_sample_omni(
+                    character_name, description, output_dir, max_new_tokens, verbose
+                )
+            else:
+                return self._generate_voice_sample_vox(
                     character_name, description, output_dir, max_new_tokens, verbose
                 )
         else:
@@ -1000,16 +1018,101 @@ class VoiceMapper:
                     return False, None, 0
             else:
                 # Different error, re-raise as normal
-                print(f"    Error generating voice with OmniVoice: {e}")
-                print(f"    Exception type: {type(e).__name__}")
-                traceback.print_exc()
-                return False, None, 0
+                return self._handle_voice_generation_error("OmniVoice", e, verbose)
 
         except Exception as e:
-            print(f"    Error generating voice with OmniVoice: {e}")
-            print(f"    Exception type: {type(e).__name__}")
-            traceback.print_exc()
+            return self._handle_voice_generation_error("OmniVoice", e, verbose)
+
+    def _generate_voice_sample_vox(
+        self,
+        character_name: str,
+        description: str,
+        output_dir: str = None,
+        max_new_tokens: int = None,
+        verbose: bool = False
+    ) -> Tuple[bool, Optional[str], float]:
+        """Generate a voice sample for a character using VoxCPM2 voice design.
+
+        Args:
+            character_name: Name of the character
+            description: Voice description from LLM (e.g., "male. middle aged. high")
+            output_dir: Output directory (defaults to self.output_dir)
+            max_new_tokens: Max tokens for generation (not used by VoxCPM)
+            verbose: Print verbose output
+
+        Returns:
+            Tuple of (success, output_file_path, duration_seconds)
+        """
+        if output_dir is None:
+            output_dir = self.output_dir
+
+        # Use the static voice text from config for high emotional range
+        sample_text = DEFAULTS["static_voice_text"]
+
+        # Validate description
+        if not description or not description.strip():
+            if verbose:
+                print(f"  ERROR: Skipping '{character_name}' due to empty description")
             return False, None, 0
+
+        # Get VoxCPM model
+        model, _, _, _ = self.setup_tts_engine()
+
+        # Wrap description in parentheses for VoxCPM voice style
+        voice_style = f"({description})"
+        instruct_text = f"{voice_style}{sample_text}"
+
+        if verbose:
+            print(f"  Character: {character_name}")
+            print(f"  VoxCPM instruct: {instruct_text[:100]}...")
+            print(f"  Sample text: {sample_text}")
+
+        try:
+            # Generate audio using VoxCPM voice design
+            # Based on VoxCPM docs: cfg_value=2.0, inference_timesteps=10
+            wav = model.generate(
+                text=instruct_text,
+                cfg_value=2.0,
+                inference_timesteps=10,
+            )
+
+            if wav is None or len(wav) == 0:
+                return False, None, 0
+
+            os.makedirs(output_dir, exist_ok=True)
+            output_file = os.path.join(output_dir, f"{character_name}.wav")
+
+            # VoxCPM outputs 48kHz audio
+            sr = model.tts_model.sample_rate
+            sf.write(output_file, wav, sr)
+
+            duration = len(wav) / sr
+            self.add_voice_path(character_name, output_file)
+
+            if verbose:
+                print(f"    Generated: {duration:.2f}s -> {output_file}")
+
+            return True, output_file, duration
+
+        except Exception as e:
+            return self._handle_voice_generation_error("VoxCPM", e, verbose)
+
+    def _handle_voice_generation_error(self, engine_name: str, error: Exception, verbose: bool = False) -> Tuple[bool, None, int]:
+        """Centralized error handler for voice generation.
+
+        Args:
+            engine_name: Name of the TTS engine for error messages
+            error: The exception that occurred
+            verbose: Print verbose output
+
+        Returns:
+            Failure tuple (False, None, 0)
+        """
+        if verbose:
+            print(f"    Error generating voice with {engine_name}: {error}")
+            print(f"    Exception type: {type(error).__name__}")
+        traceback.print_exc()
+        return False, None, 0
 
     def _get_fallback_instruct(self, description: str, verbose: bool = False) -> Optional[str]:
         """Extract a minimal, non-conflicting instruct from a description.
@@ -1074,12 +1177,9 @@ class VoiceMapper:
                 if verbose:
                     print(f"  Warning: auto_transcribe failed: {e}")
 
-        import soundfile as sf
-
         # Load the voice sample
         voice_audio, sr = sf.read(voice_path)
         # Convert numpy array to torch tensor (OmniVoice expects tensor, not numpy array)
-        import torch
         voice_audio = torch.from_numpy(voice_audio)
 
         # Get Base model (needed to build the prompt)

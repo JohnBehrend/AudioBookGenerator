@@ -317,6 +317,7 @@ def describe_characters_ui(
     pipeline_state: PipelineState,
     log_output: str,
     seed_voice_map: str = None,
+    voice_engine: str = "omni",
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 3: Use LLM to describe characters."""
@@ -325,8 +326,11 @@ def describe_characters_ui(
         log_output += "\nPipeline state not initialized. Please run Stage 2 (Label Speakers) first."
         return log_output, None
 
+    # Update pipeline state's voice_engine setting
+    pipeline_state.voice_engine = voice_engine
+
     progress(0, desc="Starting character description generation...")
-    log_output += "\n\nGenerating character descriptions..."
+    log_output += f"\n\nGenerating character descriptions with voice engine '{voice_engine}'..."
 
     try:
         chapters_dir = get_chapters_dir()
@@ -370,7 +374,8 @@ def describe_characters_ui(
             port=port,
             verbose=False,
             seed_characters=load_seed_characters(seed_voice_map),
-            progress_callback=progress
+            progress_callback=progress,
+            voice_engine=voice_engine
         )
 
         log_output += f"\n{result_msg}"
@@ -824,11 +829,12 @@ def update_character_table(
     return gr.Dataframe(value=[])
 
 
-def create_or_get_pipeline_state(output_dir: str = None) -> PipelineState:
+def create_or_get_pipeline_state(output_dir: str = None, voice_engine: str = None) -> PipelineState:
     """Create a new PipelineState or get the existing one from gr.State().
 
     Args:
         output_dir: Optional output directory path. If None, uses get_chapters_dir().
+        voice_engine: Voice engine for character descriptions ('omni' or 'vox')
 
     Returns:
         PipelineState instance
@@ -836,7 +842,7 @@ def create_or_get_pipeline_state(output_dir: str = None) -> PipelineState:
     if output_dir is None:
         chapters_dir = get_chapters_dir()
         output_dir = str(chapters_dir)
-    return PipelineState(output_dir)
+    return PipelineState(output_dir, voice_engine=voice_engine)
 
 
 STATE_LABELS = {
@@ -1110,6 +1116,7 @@ def create_interface(
     seed_voice_map_default: Optional[str] = None,
     saved_temp_dir: Optional[str] = None,
     tts_engine_default: Optional[str] = None,
+    voice_engine_default: Optional[str] = None,
 ):
     """Create the Gradio interface with all stages using a state machine pattern.
 
@@ -1119,6 +1126,7 @@ def create_interface(
     Args:
         saved_temp_dir: Optional path to a saved temp directory to restore from.
                        If provided, restores the pipeline state from this directory.
+        voice_engine_default: Default voice engine for character descriptions ('omni' or 'vox')
     """
 
     with gr.Blocks() as demo:
@@ -1374,6 +1382,14 @@ def create_interface(
                 value=seed_voice_map_default
             )
 
+            # Voice engine selection (hidden, passed through state)
+            voice_engine_input = gr.Radio(
+                choices=["omni", "vox"],
+                label="Voice Engine for Character Descriptions",
+                value=voice_engine_default or "omni",
+                info="omni=OmniVoice format, vox=VoxCPM format"
+            )
+
             # Save and Load
             with gr.Row():
                 save_temp_btn = gr.Button("Save Temp", variant="secondary")
@@ -1516,7 +1532,7 @@ def create_interface(
         # Describe Characters - Stage 3
         describe_btn.click(
             fn=describe_characters_ui,
-            inputs=[api_key_input, port_input, pipeline_state_obj, log_output, seed_voice_map_input],
+            inputs=[api_key_input, port_input, pipeline_state_obj, log_output, seed_voice_map_input, voice_engine_input],
             outputs=[log_output, pipeline_state_obj],
         ).then(
             fn=update_button_visibility_from_state,

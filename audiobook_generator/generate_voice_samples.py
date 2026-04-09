@@ -195,7 +195,7 @@ def generate_voice_samples(
     verbose: bool = False,
     progress=None,
     seed_characters: Dict[str, str] = None,
-    voice_engine: str = None,
+    voice_engine: str = "moss",
     force_regenerate: bool = False,
     validate: bool = False  # Deprecated - ignored
 ) -> Tuple[str, Dict[str, str]]:
@@ -210,7 +210,7 @@ def generate_voice_samples(
         verbose: Print verbose output
         progress: Gradio progress bar to update during generation
         seed_characters: Dict mapping character names to existing voice paths from seed voices_map
-        voice_engine: TTS engine for voice generation ('moss', 'omni')
+        voice_engine: TTS engine for voice generation ('moss', 'omni', 'vox')
         force_regenerate: If True, regenerate voices even if they already exist
         validate: Deprecated - ignored
 
@@ -270,8 +270,7 @@ def generate_voice_samples(
             print("=" * 60 + "\n")
 
         # Create VoiceMapper once to cache the TTS model across all characters
-        engine = voice_engine or "moss"
-        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=engine)
+        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=voice_engine)
 
         try:
             for i, (char_name, char_desc) in enumerate(descriptions.items()):

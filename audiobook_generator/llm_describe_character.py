@@ -19,8 +19,8 @@ from config import LLM_SETTINGS, OUTPUT_DIR
 from utils import get_llm_client, compare_characters, get_characters_from_map_files, natural_sort_key
 
 
-# Default prompt for character description
-CHARACTER_DESCRIPTION_PROMPT = """You are an expert voice actor. Create VERY SHORT voice profiles optimized for TTS (text-to-speech) synthesis.
+# Default prompt for character description (OmniVoice format)
+CHARACTER_DESCRIPTION_PROMPT_OMNI = """You are an expert voice actor. Create VERY SHORT voice profiles optimized for TTS (text-to-speech) synthesis.
 
 CRITICAL: Output MUST be in OmniVoice format - comma-separated attributes only.
 
@@ -60,6 +60,45 @@ BAD Examples (do NOT use):
 - male, middle-aged, high pitch, low pitch (conflicting pitches)
 
 For group characters like "crowd", "voices", or "people", pick ONE representative voice (e.g., "male, middle-aged, moderate pitch").
+"""
+
+# VoxCPM format prompt
+CHARACTER_DESCRIPTION_PROMPT_VOX = """You are an expert voice actor. Create rich, detailed voice profiles for VoxCPM TTS synthesis.
+
+CRITICAL: Output MUST be in natural language format, wrapped in parentheses.
+
+VOXCPM FORMATTING:
+- Start with "(" and end with ")"
+- Combine multiple ingredients into ONE comprehensive description
+- Support both English and Chinese
+
+THREE INGREDIENTS TO MIX:
+
+1. BASIC (The Base) - Core identity: gender, age, role
+   Examples: middle-aged male broadcaster, elderly woman, young female narrator
+
+2. TEXTURED (The Marinade) - Voice quality and pitch
+   Examples: low-pitched, raspy, magnetic, gravelly, smooth, breathy, warm
+
+3. VIVID (The Presentation) - Emotion, pacing, scenario
+   Examples: passionate, shouting, gentle, slow tone, energetic, calm narration
+
+COMBINE ALL THREE into a single rich description like a signature recipe.
+
+Good Examples (VoxCPM format):
+- (middle-aged male broadcaster, low-pitched and magnetic voice, passionate delivery with rhythmic pacing)
+- (elderly woman, raspy and grainy texture with subtle breathy tremors, slow gentle tone perfect for historical narration)
+- (young female narrator, warm and smooth voice, energetic and engaging with clear articulation)
+- (deep-voiced male villain, gravelly and menacing texture, slow deliberate pacing with dark undertones)
+- (cheerful child, high-pitched and bright, excited and rapid speech pattern)
+
+BAD Examples (do NOT use):
+- male, middle-aged, high pitch (too brief, missing emotional/presentation layer)
+- A middle-aged male with a smooth voice. (not wrapped in parentheses, too simple)
+- male, female, young adult (conflicting attributes)
+- (male, old) (only basic ingredient, missing texture and vividness)
+
+For group characters like "crowd", "voices", or "people", pick ONE representative voice with all three ingredients (e.g., "(middle-aged male, moderate low pitch, energetic crowd leader)").
 """
 
 # get_characters_from_map_files is now imported from utils (uses glob with sorted output)
@@ -357,7 +396,21 @@ def build_character_context(characters: list, chapter_texts: list, chapter_files
     return context, chapter_messages
 
 
-def describe_character(client: OpenAI, model: str, character: str, context: str, chapter_messages: list = None) -> str:
+def _get_description_prompt(voice_engine: str) -> str:
+    """Get the appropriate character description prompt based on voice engine.
+
+    Args:
+        voice_engine: TTS engine name ('vox' or other)
+
+    Returns:
+        Appropriate system prompt string
+    """
+    if voice_engine == "vox":
+        return CHARACTER_DESCRIPTION_PROMPT_VOX
+    return CHARACTER_DESCRIPTION_PROMPT_OMNI
+
+
+def describe_character(client: OpenAI, model: str, character: str, context: str, chapter_messages: list = None, voice_engine: str = None) -> str:
     """Ask the LLM to describe a single character.
 
     Args:
@@ -366,10 +419,13 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
         character: Character name to describe
         context: Character description context string
         chapter_messages: Optional list of chapter-based dialogue messages
+        voice_engine: TTS engine for voice generation ('omni', 'vox', etc.) - determines prompt format
     """
+    system_prompt = _get_description_prompt(voice_engine)
+
     # System prompt first
     messages = [
-        {"role": "system", "content": CHARACTER_DESCRIPTION_PROMPT},
+        {"role": "system", "content": system_prompt},
     ]
 
     # Add chapter messages as separate user messages if provided
@@ -390,20 +446,22 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
         return f"Error describing character: {e}"
 
 
-def describe_all_characters(client: OpenAI, model: str, characters: list, context: str) -> dict:
+def describe_all_characters(client: OpenAI, model: str, characters: list, context: str, voice_engine: str = None) -> dict:
     """Ask the LLM to describe all characters at once."""
+    system_prompt = _get_description_prompt(voice_engine)
+
     # Build the user message
     user_message = f"Describe all these characters in detail. Return a JSON object with character names as keys and descriptions as values.\n\nCharacters:\n{chr(10).join(characters)}\n\nContext:\n{context}"
 
     messages = [
-        {"role": "system", "content": CHARACTER_DESCRIPTION_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message}
     ]
 
     # DEBUG: Save the context and messages to a file for debugging
     debug_output = {
         "model": model,
-        "system_prompt": CHARACTER_DESCRIPTION_PROMPT,
+        "system_prompt": system_prompt,
         "characters": characters,
         "context": context,
     }
@@ -500,6 +558,12 @@ def main() -> None:
         help="Describe a single specific character."
     )
     parser.add_argument(
+        "--voice-engine",
+        default="omni",
+        choices=["omni", "vox"],
+        help="Voice engine for TTS ('omni' for OmniVoice format, 'vox' for VoxCPM format)"
+    )
+    parser.add_argument(
         "--wiki-url",
         metavar="URL",
         dest="wiki_url_template",
@@ -554,7 +618,7 @@ def main() -> None:
         )
         context = context_result[0]
         chapter_messages = context_result[1] if len(context_result) > 1 else []
-        description = describe_character(client, args.model, args.single_character, context, chapter_messages)
+        description = describe_character(client, args.model, args.single_character, context, chapter_messages, voice_engine=args.voice_engine)
         print(f"\nDescription for '{args.single_character}':")
         print(description)
     else:
@@ -568,7 +632,8 @@ def main() -> None:
             model=args.model,
             single_character=None,
             wiki_url_template=args.wiki_url_template,
-            verbose=args.verbose
+            verbose=args.verbose,
+            voice_engine=args.voice_engine
         )
 
         # Print summary
@@ -596,7 +661,8 @@ def describe_characters_shared(
     model: str,
     wiki_url_template: str = "",
     verbose: bool = False,
-    progress_callback: callable = None
+    progress_callback: callable = None,
+    voice_engine: str = None
 ) -> dict:
     """Shared logic for describing characters.
 
@@ -609,7 +675,8 @@ def describe_characters_shared(
         model: Model name to use for inference
         wiki_url_template: Optional URL template for wiki lookup
         verbose: Print verbose output
-        progress_callback: Optional callback(progress, desc) for progress updates
+        progress_callback: Optional callback for progress updates
+        voice_engine: TTS engine for voice generation ('omni', 'vox', etc.)
 
     Returns:
         Dict of character descriptions
@@ -649,15 +716,14 @@ def describe_characters_shared(
         context = context_result[0]
         chapter_messages = context_result[1] if len(context_result) > 1 else []
 
-        # Call describe_character for this single character
-        description = describe_character(client, model, character, context, chapter_messages)
+        description = describe_character(client, model, character, context, chapter_messages, voice_engine=voice_engine)
         descriptions[character] = description
 
         # Save debug output for this character
         debug_output = {
             "model": model,
             "character": character,
-            "system_prompt": CHARACTER_DESCRIPTION_PROMPT,
+            "system_prompt": _get_description_prompt(voice_engine),
             "context": context,
             "description": description,
         }
@@ -728,7 +794,8 @@ def describe_characters(
     wiki_url_template: str = "",
     verbose: bool = False,
     seed_characters: Dict[str, str] = None,
-    progress_callback: callable = None
+    progress_callback: callable = None,
+    voice_engine: str = None
 ) -> Tuple[str, Dict[str, str]]:
     """Describe characters from an audiobook using an LLM.
 
@@ -748,6 +815,7 @@ def describe_characters(
         verbose: Print verbose output
         seed_characters: Dict mapping character names to voice paths from seed voices_map
         progress_callback: Optional callback(progress, desc) for progress updates
+        voice_engine: TTS engine for voice generation ('omni', 'vox', etc.) - affects prompt format
 
     Returns:
         Tuple of (status message, dict of character descriptions)
@@ -813,7 +881,8 @@ def describe_characters(
         model=model,
         wiki_url_template=wiki_url_template,
         verbose=verbose,
-        progress_callback=progress_callback
+        progress_callback=progress_callback,
+        voice_engine=voice_engine
     )
 
     result_msg = f"Successfully described {len(descriptions)} characters."

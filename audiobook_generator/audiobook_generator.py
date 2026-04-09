@@ -31,6 +31,7 @@ import torch
 import torchaudio
 from scipy.io import wavfile
 import numpy as np
+import soundfile as sf
 
 # Helper to check if flash-attn is available
 def _get_attn_implementation() -> Optional[str]:
@@ -229,7 +230,7 @@ def generate_tts_for_line(
         processor: TTS processor
         voice_mapper: VoiceMapper instance
         device: Device to run on
-        tts_engine: 'kugelaudio', 'vibevoice', or 'moss'
+        tts_engine: 'kugelaudio', 'vibevoice', 'moss', 'echo-tts', 'omni', or 'voxcpm'
         voice_path: Optional path to voice sample file. If not provided, uses voice_mapper.
         cfg_scale: CFG scale value
         output_dir: Output directory for audio files
@@ -241,8 +242,7 @@ def generate_tts_for_line(
         Returns:
         Tuple of (success: bool, ratio: float)
     """
-    # Skip empty text (e.g., lines with only "Line 28:" prefix and no content)
-    # This prevents infinite loops in validation when Whisper can't transcribe empty content
+    # Skip empty text to avoid infinite loops when Whisper can't transcribe
     if not text or not text.strip():
         if verbose:
             print(f"  Skipping line {line_idx} (empty text: '{text}')")
@@ -254,7 +254,6 @@ def generate_tts_for_line(
     full_script = re.sub(r"(\s\.)+", r".", full_script)
 
     # Only add short_text_postfix when validation_model is provided
-    # The validation loop is required to detect and dynamically remove the postfix
     postfix_detect_token = None
     if short_text_postfix:
         full_script = full_script + (" " if full_script[-1] in end_characters else ". ") + short_text_postfix
@@ -474,8 +473,6 @@ def generate_tts_for_line(
                 ref_text = DEFAULTS["static_voice_text"]
 
             # Load reference audio for voice cloning (OmniVoice expects audio tensor + sample rate)
-            import soundfile as sf
-            import torch
             ref_audio_np, ref_sr = sf.read(voice_path)
 
             # Handle stereo audio by converting to mono
@@ -510,6 +507,41 @@ def generate_tts_for_line(
 
             sr = 24000
             torchaudio.save(output_path, audio[0].cpu(), sr)
+
+        elif tts_engine == 'vox':
+            voice_path = voice_path or voice_mapper.get_voice_path(voice_name)
+            if voice_path is None:
+                raise Exception(f"No voice path found for '{voice_name}'")
+
+            # VoxCPM2 voice cloning with reference audio
+            # VoxCPM supports "Ultimate Cloning" mode with prompt_audio + prompt_text + reference_audio
+
+            # Get reference text by transcribing the voice sample
+            try:
+                ref_text, _, _ = transcribe_audio_with_whisper(validation_model, voice_path)
+                if verbose:
+                    print(f"    Transcribed ref_text for '{voice_name}': {ref_text[:80]}...")
+            except Exception as e:
+                if verbose:
+                    print(f"    Warning: Failed to transcribe ref_text for '{voice_name}': {e}")
+                    print(f"    Falling back to static_voice_text (cloning quality may be degraded)")
+                ref_text = DEFAULTS["static_voice_text"]
+
+            # VoxCPM2 Ultimate Cloning mode
+            # Uses prompt_wav_path, prompt_text, and reference_wav_path for highest fidelity
+            wav = tts_model.generate(
+                text=full_script,
+                prompt_wav_path=voice_path,
+                prompt_text=ref_text,
+                reference_wav_path=voice_path,
+            )
+
+            if wav is None or len(wav) == 0:
+                raise Exception("Empty VoxCPM generation for chapter text")
+
+            # VoxCPM outputs 48kHz audio
+            sr = 48000
+            torchaudio.save(output_path, torch.from_numpy(wav), sr)
 
         else:
             # KugelAudio and VibeVoice use processor inputs
@@ -684,7 +716,7 @@ def generate_audiobook_from_chapters(
         voices_map: Dict mapping character names to voice file paths (wav)
         output_dir: Output directory for audio files
         device: Device to run on
-        tts_engine: 'kugelaudio', 'vibevoice', or 'moss'
+        tts_engine: 'kugelaudio', 'vibevoice', 'moss', 'echo-tts', 'omni', or 'voxcpm'
         cfg_scale: CFG scale value
         max_chapters: Maximum number of chapters to process
         verbose: Print verbose output
@@ -901,7 +933,7 @@ def generate_audiobook_from_chapters(
 class PipelineState:
     """Manages state for the audiobook pipeline."""
 
-    def __init__(self, output_dir: str):
+    def __init__(self, output_dir: str, voice_engine: str = None):
         self.output_dir = Path(output_dir)
         # Use output_dir directly as chapters_dir (not nested)
         # This ensures consistent behavior between CLI and Gradio
@@ -914,6 +946,7 @@ class PipelineState:
         self.character_descriptions = {}
         self.voice_map = {}
         self.selected_character = None
+        self.voice_engine = voice_engine or "omni"  # Default to omni for backwards compatibility
 
     def load_chapter_maps(self):
         """Load all chapter map files from the chapters directory."""
@@ -1030,8 +1063,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         verbose: Print verbose output
         api_key: LLM API key for speaker labeling and character descriptions
         llm_port: LLM endpoint port (e.g., LM Studio)
-        voice_engine: TTS engine for voice sample generation ('moss', 'omni')
-        tts_engine: TTS engine for audiobook generation ('kugelaudio', 'vibevoice', 'moss', 'echo-tts', 'omni')
+        voice_engine: TTS engine for voice sample generation ('moss', 'omni', 'vox')
+        tts_engine: TTS engine for audiobook generation ('kugelaudio', 'vibevoice', 'moss', 'echo-tts', 'omni', 'vox')
         turbo: Use KugelAudio turbo model (kugel-1-turbo)
         device: CUDA device (e.g., 'cuda', 'cuda:1')
         seed_voice_map: Path to existing voices_map.json to seed voices
@@ -1457,9 +1490,9 @@ Examples:
     parser.add_argument("--verbose", "-v", action="store_true", help="Print verbose output")
     parser.add_argument("-api_key", help="LLM API key for speaker labeling")
     parser.add_argument("-llm_port", default=str(LLM_SETTINGS["port"]), help="LLM endpoint port (for LM Studio)")
-    parser.add_argument("--voice-engine", default="moss", choices=["moss", "omni"],
+    parser.add_argument("--voice-engine", default="moss", choices=["moss", "omni", "vox"],
                         help="TTS engine for voice sample generation (Stage 4)")
-    parser.add_argument("--tts-engine", default=AUDIO_SETTINGS["default_tts_engine"], choices=["kugelaudio", "vibevoice", "moss", "echo-tts", "omni"],
+    parser.add_argument("--tts-engine", default=AUDIO_SETTINGS["default_tts_engine"], choices=["kugelaudio", "vibevoice", "moss", "echo-tts", "omni", "vox"],
                         help="TTS engine for audiobook generation (Stage 5, voice cloning)")
     parser.add_argument("--turbo", action="store_true", help="Use KugelAudio turbo model (kugel-1-turbo)")
     parser.add_argument("-device", default=AUDIO_SETTINGS["default_device"], help="CUDA device to use")

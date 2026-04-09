@@ -534,6 +534,7 @@ def generate_tts_for_line(
                 prompt_wav_path=voice_path,
                 prompt_text=ref_text,
                 reference_wav_path=voice_path,
+                cfg_value=1.5,
             )
 
             if wav is None or len(wav) == 0:
@@ -1235,7 +1236,26 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     descriptions_file = state.output_dir / "characters_descriptions.json"
     descriptions_exist = descriptions_file.exists()
 
+    # Check if voice engine changed (for resume mode)
+    force_regenerate_descriptions = False
     if resume and descriptions_exist:
+        metadata_file = state.output_dir / "description_metadata.json"
+        if metadata_file.exists():
+            with open(metadata_file, "r", encoding="utf-8") as mf:
+                metadata = json.load(mf)
+                old_voice_engine = metadata.get("voice_engine", "omni")
+                if old_voice_engine != voice_engine:
+                    force_regenerate_descriptions = True
+                    if verbose:
+                        print(f"[STAGE 3] Voice engine changed from '{old_voice_engine}' to '{voice_engine}' - regenerating descriptions")
+        else:
+            # No metadata file - assume omni for backwards compatibility
+            if voice_engine != "omni":
+                force_regenerate_descriptions = True
+                if verbose:
+                    print(f"[STAGE 3] No metadata file found, voice engine is '{voice_engine}' - regenerating descriptions")
+
+    if resume and descriptions_exist and not force_regenerate_descriptions:
         if verbose:
             print(f"[STAGE 3] Skipping - character descriptions already exist")
         state.load_character_descriptions()
@@ -1253,7 +1273,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 port=llm_port or str(LLM_SETTINGS["port"]),
                 verbose=verbose,
                 seed_characters=seed_characters,
-                progress_callback=handler.update
+                progress_callback=handler.update,
+                voice_engine=voice_engine
             )
 
             if verbose:
@@ -1261,6 +1282,11 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
             handler.update(1, desc="Character descriptions complete")
             state.load_character_descriptions()
+
+            # Save metadata to track which voice engine was used
+            metadata_file = state.output_dir / "description_metadata.json"
+            with open(metadata_file, "w", encoding="utf-8") as mf:
+                json.dump({"voice_engine": voice_engine}, mf)
 
     # Stage 4: Generate Voice Samples with progress
     # Check for existing voice samples (resume mode)
@@ -1367,7 +1393,8 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
                             llm_port: str = None, gradio_port: int = None,
                             num_attempts: int = 2, max_chapters: int = 10,
                             seed_voice_map: str = None, epub_file: str = None,
-                            saved_temp_dir: str = None, tts_engine: str = None) -> None:
+                            saved_temp_dir: str = None, tts_engine: str = None,
+                            voice_engine: str = None) -> None:
     """Create and launch the Gradio interface for the audiobook pipeline.
 
     This function launches the Gradio interface imported from the package's
@@ -1426,7 +1453,8 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
             seed_voice_map_default=seed_voice_map_path,
             epub_path_default=epub_path_default,
             saved_temp_dir=saved_temp_dir,
-            tts_engine_default=tts_engine
+            tts_engine_default=tts_engine,
+            voice_engine_default=voice_engine
         )
 
         try:
@@ -1542,7 +1570,8 @@ Examples:
             max_chapters=args.max_chapters or DEFAULTS.get("max_chapters", 10),
             seed_voice_map=args.seed_voice_map,
             epub_file=args.epub_file,
-            saved_temp_dir=saved_temp_dir if args.resume_from else None
+            saved_temp_dir=saved_temp_dir if args.resume_from else None,
+            voice_engine=args.voice_engine
         )
     else:
         # Run CLI pipeline

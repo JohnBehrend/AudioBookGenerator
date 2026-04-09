@@ -718,8 +718,11 @@ def generate_audiobook_from_chapters(
             # Initialize VoiceMapper with output_dir so it looks in the correct location
             voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=tts_engine, duplicate_replacement_map=duplicate_replacement_map)
             tts_model_read_chapters, processor, _, _ = voice_mapper.setup_tts_engine(turbo=turbo)
-            for voice, relative_path in voices_map.items():
-                voice_path = os.path.join(output_dir, relative_path)
+
+            for voice, path in voices_map.items():
+                # Handle both basenames and absolute paths (from resumed sessions with different temp dirs)
+                voice_basename = os.path.basename(path)
+                voice_path = os.path.join(output_dir, voice_basename)
                 # Cache voice path in VoiceMapper
                 voice_mapper.add_voice_path(voice, voice_path)
             short_text_postfix = DEFAULTS["short_text_postfix"]
@@ -813,7 +816,7 @@ def generate_audiobook_from_chapters(
                             print(f"  DEBUG: voices_map = {voices_map}")
                         # Use canonical voice for path lookup
                         if canonical_voice in voices_map:
-                            # voices_map contains relative paths, prepend output_dir
+                            # voices_map contains relative paths (basenames), prepend output_dir
                             voice_path = os.path.join(output_dir, voices_map[canonical_voice])
                             if verbose:
                                 print(f"  DEBUG: Found voice_path in voices_map: {voice_path}")
@@ -821,17 +824,10 @@ def generate_audiobook_from_chapters(
                             if not os.path.exists(voice_path):
                                 if verbose:
                                     print(f"  WARNING: Voice file not found: {voice_path}")
-                                # Try to find an alternative - check if canonical_voice is in seed_characters
-                                # and use that path instead (for cases like elan morin tedronai -> baalzamon)
-                                if seed_characters and canonical_voice in seed_characters:
-                                    voice_path = seed_characters[canonical_voice]
-                                    if verbose:
-                                        print(f"  DEBUG: Using seed voice path: {voice_path}")
-                        else:
-                            # Fall back to VoiceMapper lookup with canonical name
-                            voice_path = voice_mapper.get_voice_path(canonical_voice)
-                            if verbose:
-                                print(f"  DEBUG: voice_mapper.get_voice_path('{canonical_voice}') = {voice_path}")
+                                # Fall back to VoiceMapper lookup (searches output_dir for matching .wav files)
+                                voice_path = voice_mapper.get_voice_path(canonical_voice)
+                                if verbose:
+                                    print(f"  DEBUG: voice_mapper.get_voice_path('{canonical_voice}') = {voice_path}")
                         # If still not found, raise error
                         if voice_path is None:
                             raise Exception(f"No voice path found for '{voice}' (canonical: '{canonical_voice}')")

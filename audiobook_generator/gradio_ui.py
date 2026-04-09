@@ -618,12 +618,13 @@ def generate_tts_audio(
                 continue
             wav_path = get_character_wav_file(char_name, chapters_dir)
             if wav_path and os.path.exists(wav_path):
-                voices_map[char_name] = wav_path
+                # Store relative path (basename) to avoid issues with temp directory paths
+                voices_map[char_name] = os.path.basename(wav_path)
             else:
                 # Use a default narrator voice if no sample found
                 narrator_path = get_character_wav_file("narrator", chapters_dir)
                 if narrator_path and os.path.exists(narrator_path):
-                    voices_map[char_name] = narrator_path
+                    voices_map[char_name] = os.path.basename(narrator_path)
         progress(0.5, desc=f"Prepared voices for {len(voices_map)} characters. (temp: {chapters_dir.parent})")
         if not voices_map:
             log_output += "\nNo voice samples found. Please run Stage 4 (Generate Voices) first."

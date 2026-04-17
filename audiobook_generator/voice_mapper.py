@@ -23,18 +23,8 @@ from openai import OpenAI
 # Import config for default values
 from config import DEFAULTS, AUDIO_SETTINGS, TTS_MODEL_PATHS, VOICE_VALIDATION
 
-# Import utility for validation client
-from utils import get_validation_client
-
-
-# Helper to check if flash-attn is available
-def _get_attn_implementation() -> Optional[str]:
-    """Return flash_attention_2 if available, otherwise None."""
-    try:
-        import flash_attn
-        return "flash_attention_2"
-    except ImportError:
-        return None
+# Import utilities for validation client and attention implementation
+from utils import get_validation_client, _get_attn_implementation
 
 
 class VoiceMapper:

@@ -22,6 +22,15 @@ from openai import OpenAI
 from config import LLM_SETTINGS
 
 
+def _get_attn_implementation() -> Optional[str]:
+    """Return flash_attention_2 if available, otherwise None."""
+    try:
+        import flash_attn
+        return "flash_attention_2"
+    except ImportError:
+        return None
+
+
 class ProgressHandler:
     """Unified progress handler for both Gradio and CLI.
 

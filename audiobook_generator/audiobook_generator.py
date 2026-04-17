@@ -33,14 +33,8 @@ from scipy.io import wavfile
 import numpy as np
 import soundfile as sf
 
-# Helper to check if flash-attn is available
-def _get_attn_implementation() -> Optional[str]:
-    """Return flash_attention_2 if available, otherwise None."""
-    try:
-        import flash_attn
-        return "flash_attention_2"
-    except ImportError:
-        return None
+# Import flash-attn availability check
+from utils import _get_attn_implementation
 
 # Import config for default values
 from config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS

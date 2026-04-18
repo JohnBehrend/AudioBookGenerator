@@ -21,10 +21,13 @@ from pathlib import Path
 from openai import OpenAI
 
 # Import config for default values
-from config import DEFAULTS, AUDIO_SETTINGS, TTS_MODEL_PATHS, VOICE_VALIDATION
+from config import DEFAULTS, AUDIO_SETTINGS, VOICE_VALIDATION
 
-# Import utilities for validation client and attention implementation
-from utils import get_validation_client, _get_attn_implementation
+# Import engine registry
+from engines import get_engine
+
+# Import utilities for validation client
+from utils import get_validation_client
 
 
 class VoiceMapper:
@@ -60,6 +63,7 @@ class VoiceMapper:
         self.tts_models: Dict[str, Any] = {}  # Cached TTS models
         self.voice_paths: Dict[str, str] = {}  # Cached voice file paths
         self.voice_clone_prompts: Dict[str, Any] = {}  # Pre-built prompts for voice cloning
+        self._cached_engine: Optional[Any] = None  # Cached TTS engine instance
 
         # Create output directory if needed
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -182,155 +186,50 @@ class VoiceMapper:
             turbo: Use KugelAudio turbo model (ignored for non-kugelaudio engines)
 
         Returns:
-            For kugelaudio/vibevoice: (model, processor, model_path, None)
-            For moss: (model, processor, model_path, None)
+            Tuple of (model, processor, model_path, None) for backward compatibility.
         """
         engine_key = f"{self.tts_engine}_turbo_{turbo}"
 
         if engine_key in self.tts_models:
             return self.tts_models[engine_key]
 
-        attn_impl = _get_attn_implementation()
-        attn_kwargs = {"attn_implementation": attn_impl} if attn_impl else {}
+        engine = get_engine(self.tts_engine)
+        model, processor = engine.setup(self.device, turbo=turbo)
+        model_path = self._get_model_path()
+        result = (model, processor, model_path, None)
+        self.tts_models[engine_key] = result
+        return result
 
-        if self.tts_engine == "kugelaudio":
-            from kugelaudio_open.processors.kugelaudio_processor import KugelAudioProcessor
-            from kugelaudio_open.models.kugelaudio_inference import KugelAudioForConditionalGenerationInference
-
-            model_path = TTS_MODEL_PATHS["kugelaudio"]["turbo"] if turbo else TTS_MODEL_PATHS["kugelaudio"]["base"]
-            # Use device_map for KugelAudio (required to avoid meta tensor issues)
-            tts_model = KugelAudioForConditionalGenerationInference.from_pretrained(
-                model_path,
-                torch_dtype=torch.bfloat16,
-                device_map=self.device,
-                **attn_kwargs,
-            )
-            tts_model.eval()
-            processor = KugelAudioProcessor.from_pretrained(model_path)
-            result = (tts_model, processor, model_path, None)
-            self.tts_models[engine_key] = result
-            return result
-
-        elif self.tts_engine == "vibevoice":
-            from vibevoice.processor.vibevoice_processor import VibeVoiceProcessor
-            from vibevoice.modular.modeling_vibevoice_inference import VibeVoiceForConditionalGenerationInference
-
-            model_path = TTS_MODEL_PATHS["vibevoice"]
-            tts_model = VibeVoiceForConditionalGenerationInference.from_pretrained(
-                model_path,
-                torch_dtype=torch.bfloat16,
-                device_map=self.device,
-                **attn_kwargs,
-            )
-            tts_model.eval()
-            processor = VibeVoiceProcessor.from_pretrained(model_path)
-            result = (tts_model, processor, model_path, None)
-            self.tts_models[engine_key] = result
-            return result
-
-        elif self.tts_engine == "moss":
-            from transformers import AutoModel, AutoProcessor
-
-            model_path = TTS_MODEL_PATHS["moss"]
-
-            # Memory-efficient attention settings
-            torch.backends.cuda.enable_cudnn_sdp(False)
-            torch.backends.cuda.enable_flash_sdp(True)
-            torch.backends.cuda.enable_mem_efficient_sdp(True)
-
-            # Initialize model with explicit device placement (not device_map)
-            # This avoids meta tensor issues with lazy loading
-            tts_model = AutoModel.from_pretrained(
-                model_path,
-                trust_remote_code=True,
-                torch_dtype=torch.bfloat16,
-            ).to(self.device).eval()
-
-            # Initialize processor and move audio_tokenizer to device
-            processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
-            processor.audio_tokenizer = processor.audio_tokenizer.to(self.device)
-
-            # Fix: Ensure model.config has num_hidden_layers for DynamicCache compatibility
-            # The MOSS model's config class (MossTTSDelayConfig) doesn't expose this
-            # so we add it manually if missing
-            if not hasattr(tts_model.config, "num_hidden_layers"):
-                tts_model.config.num_hidden_layers = getattr(
-                    tts_model.config, "num_layers",
-                    getattr(tts_model.config, "n_layers", 32)  # Default to 32 if neither exists
-                )
-
-            result = (tts_model, processor, model_path, None)
-            self.tts_models[engine_key] = result
-            return result
-
-        elif self.tts_engine == "echo-tts":
-            # Use the EchoTTSLoader from the echo_tts module
-            # Import using absolute path to work when running as script
-            import importlib.util
-            echo_tts_path = Path(__file__).parent / "echo_tts" / "__init__.py"
-            spec = importlib.util.spec_from_file_location("echo_tts_module", echo_tts_path)
-            echo_tts_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(echo_tts_module)
-            EchoTTSLoader = echo_tts_module.EchoTTSLoader
-
-            model_path = TTS_MODEL_PATHS["echo-tts"]
-            loader = EchoTTSLoader(self.device, model_path)
-            result = (loader, None, model_path, None)
-            self.tts_models[engine_key] = result
-            return result
-
-        elif self.tts_engine == "omni":
-            from omnivoice import OmniVoice
-
-            model_path = TTS_MODEL_PATHS["omni"]
-
-            # Load OmniVoice model (per official docs)
-            tts_model = OmniVoice.from_pretrained(
-                model_path,
-                device_map=self.device,
-                dtype=torch.float16,
-            )
-
-            # Pre-load ASR model to avoid repeated downloads during generation
-            # This is needed when ref_text is not provided (auto-transcription mode)
-            try:
-                tts_model.load_asr_model()
-            except Exception as e:
-                print(f"  Warning: Could not pre-load ASR model: {e}")
-
-            # OmniVoice doesn't use a separate processor
-            result = (tts_model, None, model_path, None)
-            self.tts_models[engine_key] = result
-            return result
-
-        elif self.tts_engine == "vox":
-            from voxcpm import VoxCPM
-
-            model_path = TTS_MODEL_PATHS["vox"]
-
-            # Load VoxCPM model (disable denoiser if not needed)
-            tts_model = VoxCPM.from_pretrained(model_path, load_denoiser=False)
-
-            # VoxCPM doesn't use a separate processor
-            result = (tts_model, None, model_path, None)
-            self.tts_models[engine_key] = result
-            return result
-
-        else:
-            raise ValueError(f"Unknown TTS engine: {self.tts_engine}")
+    def _get_model_path(self) -> str:
+        """Get the HuggingFace model path for the current engine."""
+        from config import TTS_MODEL_PATHS
+        engine_paths = TTS_MODEL_PATHS[self.tts_engine]
+        if isinstance(engine_paths, dict):
+            return engine_paths.get("base", list(engine_paths.values())[0])
+        return engine_paths
 
     def cleanup_tts_models(self) -> None:
         """Clean up all cached TTS models from GPU memory."""
-        for key, models in list(self.tts_models.items()):
-            for model in models:
-                if hasattr(model, "to") and hasattr(model, "state_dict"):
-                    try:
-                        del model
-                    except Exception:
-                        pass
         self.tts_models.clear()
         gc.collect()
         torch.cuda.empty_cache()
+
+    def get_engine(self):
+        """Get or create a cached TTS engine instance.
+
+        The engine is created once and reused across all line generations
+        to avoid repeatedly loading models.
+
+        Returns:
+            TTSEngine instance.
+        """
+        if self._cached_engine is None:
+            self._cached_engine = get_engine(self.tts_engine)
+        return self._cached_engine
+
+    def cleanup_engines(self) -> None:
+        """Release cached engine instance."""
+        self._cached_engine = None
 
     @staticmethod
     def validate_voice_with_llm(
@@ -439,14 +338,16 @@ class VoiceMapper:
             # On error, return True to allow generation to continue
             return True, error_msg
 
-    def unload_model(self, model_name: str) -> None:
-        """Unload a specific model by name.
+    def unload_model(self, engine_name: str) -> None:
+        """Unload models for a specific TTS engine.
 
         Args:
-            model_name: Name of the model to unload (e.g., 'kugelaudio', 'moss')
+            engine_name: Name of the TTS engine to unload (e.g., 'kugelaudio', 'moss')
         """
-        if model_name in self.tts_models:
-            del self.tts_models[model_name]
+        keys_to_remove = [k for k in self.tts_models if k.startswith(f"{engine_name}_")]
+        for key in keys_to_remove:
+            del self.tts_models[key]
+        if keys_to_remove:
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -475,55 +376,13 @@ class VoiceMapper:
     ) -> Tuple[bool, Optional[str], float]:
         """Generate a voice sample for a character using the configured TTS engine.
 
-        Args:
-            character_name: Name of the character
-            description: Voice description from LLM
-            output_dir: Output directory (defaults to self.output_dir)
-            max_new_tokens: Max tokens for generation
-            verbose: Print verbose output
-
-        Returns:
-            Tuple of (success, output_file_path, duration_seconds)
-        """
-        if self.tts_engine in ("moss", "omni", "vox"):
-            # MOSS, OmniVoice, and VoxCPM support voice design from descriptions
-            if self.tts_engine == "moss":
-                return self._generate_voice_sample_moss(
-                    character_name, description, output_dir, max_new_tokens, verbose
-                )
-            elif self.tts_engine == "omni":
-                return self._generate_voice_sample_omni(
-                    character_name, description, output_dir, max_new_tokens, verbose
-                )
-            else:
-                return self._generate_voice_sample_vox(
-                    character_name, description, output_dir, max_new_tokens, verbose
-                )
-        else:
-            # For kugelaudio, vibevoice, and echo-tts, generate from a reference text
-            # Note: echo-tts is only used for voice cloning in stage 5, not for initial voice generation
-            return self._generate_voice_sample_generic(
-                character_name, description, output_dir, max_new_tokens, verbose
-            )
-
-    def _generate_voice_sample_generic(
-        self,
-        character_name: str,
-        description: str,
-        output_dir: str = None,
-        max_new_tokens: int = None,
-        verbose: bool = False
-    ) -> Tuple[bool, Optional[str], float]:
-        """Generate a voice sample for a character using kugelaudio or vibevoice.
-
-        For these engines, we generate from a reference text directly without
-        voice cloning (since we don't have an existing voice to clone yet).
+        Delegates to the registered engine for generation logic.
 
         Args:
             character_name: Name of the character
             description: Voice description from LLM
             output_dir: Output directory (defaults to self.output_dir)
-            max_new_tokens: Max tokens for generation
+            max_new_tokens: Max tokens for generation (engine-specific)
             verbose: Print verbose output
 
         Returns:
@@ -534,601 +393,19 @@ class VoiceMapper:
         if max_new_tokens is None:
             max_new_tokens = DEFAULTS["max_new_tokens"]
 
-        # Reference text for voice generation - uses static text from config
-        sample_text = DEFAULTS["static_voice_text"]
+        engine = get_engine(self.tts_engine)
+        success, output_file, duration = engine.generate_voice_sample(
+            character_name=character_name,
+            description=description,
+            output_dir=Path(output_dir),
+            device=self.device,
+            verbose=verbose,
+        )
 
-        # Validate description
-        if not description or not description.strip():
-            if verbose:
-                print(f"  ERROR: Skipping '{character_name}' due to empty description")
-            return False, None, 0
-
-        # Get the TTS model and processor
-        tts_model, processor, model_path, _ = self.setup_tts_engine()
-
-        try:
-            if self.tts_engine == "kugelaudio":
-                # KugelAudio: generate from text with voice prompt (using a generic reference)
-                # For initial voice sample, we generate from text directly
-                inputs = processor(
-                    text=sample_text,
-                    padding=True,
-                    return_tensors="pt",
-                )
-                with torch.no_grad():
-                    speech_outputs = tts_model.generate(
-                        input_ids=inputs["input_ids"].to(self.device),
-                        attention_mask=inputs["attention_mask"].to(self.device),
-                        max_new_tokens=max_new_tokens,
-                    )
-                wavs = speech_outputs.float().cpu().numpy()
-                sr = tts_model.config.sample_rate
-            elif self.tts_engine == "vibevoice":
-                # VibeVoice: generate from text
-                inputs = processor(
-                    text=[sample_text],
-                    padding=True,
-                    return_tensors="pt",
-                    return_attention_mask=True,
-                )
-                with torch.no_grad():
-                    outputs = tts_model.generate(
-                        input_ids=inputs["input_ids"].to(self.device),
-                        attention_mask=inputs["attention_mask"].to(self.device),
-                        max_new_tokens=max_new_tokens,
-                    )
-                wavs = outputs.cpu().numpy()
-                sr = tts_model.config.sampling_rate
-            else:
-                return False, None, 0
-
-            if not wavs or len(wavs) == 0:
-                return False, None, 0
-
-            os.makedirs(output_dir, exist_ok=True)
-            output_file = os.path.join(output_dir, f"{character_name}.wav")
-
-            import soundfile as sf
-            sf.write(output_file, wavs[0], sr)
-
-            duration = len(wavs[0]) / sr
+        if success:
             self.add_voice_path(character_name, output_file)
 
-            if verbose:
-                print(f"    Generated: {duration:.2f}s -> {output_file}")
-
-            return True, output_file, duration
-
-        except Exception as e:
-            print(f"    Error generating voice: {e}")
-            return False, None, 0
-
-    def _generate_voice_sample_echo_tts(
-        self,
-        character_name: str,
-        description: str,
-        output_dir: str = None,
-        max_new_tokens: int = None,
-        verbose: bool = False
-    ) -> Tuple[bool, Optional[str], float]:
-        """Generate a voice sample for a character using Echo TTS.
-
-        Echo TTS uses speaker reference audio for conditioning. Since we don't
-        have an existing voice to clone, we generate from text with the static
-        voice text as the prompt.
-
-        Args:
-            character_name: Name of the character
-            description: Voice description from LLM (not used directly - Echo TTS uses audio reference)
-            output_dir: Output directory (defaults to self.output_dir)
-            max_new_tokens: Max tokens for generation (ignored for Echo TTS)
-            verbose: Print verbose output
-
-        Returns:
-            Tuple of (success, output_file_path, duration_seconds)
-        """
-        if output_dir is None:
-            output_dir = self.output_dir
-        if max_new_tokens is None:
-            max_new_tokens = DEFAULTS["max_new_tokens"]
-
-        # Reference text for voice generation - uses static text from config
-        sample_text = DEFAULTS["static_voice_text"]
-
-        # Validate description (kept for API compatibility, though not used)
-        if not description or not description.strip():
-            if verbose:
-                print(f"  ERROR: Skipping '{character_name}' due to empty description")
-            return False, None, 0
-
-        # Get Echo TTS models (lazy loader)
-        loader, fish_ae, pca_state, sample_fn, model_path = self.setup_tts_engine()
-
-        try:
-            # Load echo-tts models (this is where the heavy import happens)
-            loader.load()
-
-            # Prepare text prompt - Echo TTS expects speaker tags like [S1]
-            # Since we're generating a base voice without reference, we use [S1]
-            text_prompt = f"[S1] {sample_text}"
-
-            if verbose:
-                print(f"  Generating with text: {text_prompt[:50]}...")
-
-            # Generate audio using Echo TTS pipeline
-            # No speaker reference audio (speaker_audio=None) - generates generic voice
-            audio_out, _ = loader.sample_fn(
-                model=loader.echo_model,
-                fish_ae=loader.fish_ae,
-                pca_state=loader.pca_state,
-                text_prompt=text_prompt,
-                speaker_audio=None,  # No speaker reference - generates generic voice
-                rng_seed=0,
-            )
-
-            if audio_out is None or audio_out.numel() == 0:
-                print(f"    ERROR: No audio generated")
-                return False, None, 0
-
-            # Save output
-            os.makedirs(output_dir, exist_ok=True)
-            output_file = os.path.join(output_dir, f"{character_name}.wav")
-
-            # Echo TTS outputs at 44100 Hz
-            sr = 44100
-            import torchaudio
-            torchaudio.save(output_file, audio_out[0].cpu(), sr)
-
-            duration = len(audio_out[0]) / sr
-            self.add_voice_path(character_name, output_file)
-
-            if verbose:
-                print(f"    Generated: {duration:.2f}s -> {output_file}")
-
-            return True, output_file, duration
-
-        except Exception as e:
-            print(f"    Error generating voice with Echo TTS: {e}")
-            print(f"    Exception type: {type(e).__name__}")
-            traceback.print_exc()
-            return False, None, 0
-
-    # Note: _generate_voice_sample_echo_tts removed - echo-tts is only used for
-    # voice cloning in stage 5 (audiobook generation), not for initial voice generation.
-    # Initial voice samples always use MOSS-TTS.
-
-    def _generate_voice_sample_moss(
-        self,
-        character_name: str,
-        description: str,
-        output_dir: str = None,
-        max_new_tokens: int = None,
-        verbose: bool = False
-    ) -> Tuple[bool, Optional[str], float]:
-        """Generate a voice sample for a character using MOSS-TTS.
-
-        MOSS-TTS generates speech directly from text. The character description
-        is used as the prompt for voice style, and a sample text is generated.
-
-        Args:
-            character_name: Name of the character
-            description: Voice description from LLM (used to style the speech)
-            output_dir: Output directory (defaults to self.output_dir)
-            max_new_tokens: Max tokens for generation
-            verbose: Print verbose output
-
-        Returns:
-            Tuple of (success, output_file_path, duration_seconds)
-        """
-        if output_dir is None:
-            output_dir = self.output_dir
-        if max_new_tokens is None:
-            max_new_tokens = DEFAULTS["max_new_tokens"]
-
-        # Use the static voice text from config for high emotional range
-        sample_text = DEFAULTS["static_voice_text"]
-
-        # Validate description
-        if not description or not description.strip():
-            if verbose:
-                print(f"  ERROR: Skipping '{character_name}' due to empty description")
-            return False, None, 0
-
-        # Get MOSS model and processor
-        model, processor, _, _ = self.setup_tts_engine()
-
-        try:
-            # Build structured voice instruction for MOSS-TTS
-            # Explicit format improves model's ability to follow voice style directions
-            voice_instruction = f"Generate speech with this voice: {description}. Speak the following text in this voice style."
-
-            if verbose:
-                print(f"  Character: {character_name}")
-                print(f"  Voice instruction: {voice_instruction[:200]}...")
-                print(f"  Sample text: {sample_text}")
-
-            conversations = [
-                processor.build_user_message(text=sample_text, instruction=voice_instruction)
-            ]
-
-            # Prepare batch for generation
-            with torch.no_grad():
-                batch = processor(conversations, mode="generation")
-                outputs = model.generate(
-                    input_ids=batch["input_ids"].to(self.device),
-                    attention_mask=batch["attention_mask"].to(self.device),
-                    max_new_tokens=max_new_tokens,
-                    # MOSS-VoiceGenerator hyperparameters for Stage 1 voice design
-                    audio_temperature=DEFAULTS["moss_voicegen_temperature"],
-                    audio_top_p=DEFAULTS["moss_voicegen_top_p"],
-                    audio_top_k=DEFAULTS["moss_voicegen_top_k"],
-                    audio_repetition_penalty=DEFAULTS["moss_voicegen_repetition_penalty"],
-                )
-
-                message = processor.decode(outputs)[0]
-                audio = message.audio_codes_list[0]
-                sr = processor.model_config.sampling_rate
-
-                # MOSS returns CPU tensor directly - no meta tensor handling needed
-                # when model is loaded with .to(device)
-
-            if audio is None or (hasattr(audio, 'numel') and audio.numel() == 0):
-                return False, None, 0
-
-            os.makedirs(output_dir, exist_ok=True)
-            output_file = os.path.join(output_dir, f"{character_name}.wav")
-
-            # Save audio
-            import torchaudio
-            torchaudio.save(output_file, audio.unsqueeze(0), sr)
-
-            duration = len(audio) / sr
-            self.add_voice_path(character_name, output_file)
-
-            if verbose:
-                print(f"    Generated: {duration:.2f}s -> {output_file}")
-
-            return True, output_file, duration
-
-        except Exception as e:
-            print(f"    Error generating voice with MOSS-TTS: {e}")
-            print(f"    Exception type: {type(e).__name__}")
-            traceback.print_exc()
-            return False, None, 0
-
-    def _convert_description_to_omni_instruct(self, description: str, verbose: bool = False) -> str:
-        """Convert a character description to OmniVoice instruct format.
-
-        OmniVoice expects comma-separated attributes like:
-        "female, young adult, high pitch, british accent"
-
-        Supported OmniVoice attributes (per official docs):
-        - Gender: male, female
-        - Age: child, teenager, young adult, middle-aged, elderly
-        - Pitch: very low pitch, low pitch, moderate pitch, high pitch, very high pitch
-        - Style: whisper
-        - English Accents: american accent, british accent, australian accent, canadian accent,
-          indian accent, chinese accent, korean accent, japanese accent, portuguese accent, russian accent
-        - Chinese Dialects: 河南话，陕西话，四川话，贵州话，云南话，桂林话，济南话，石家庄话，
-          甘肃话，宁夏话，青岛话，东北话
-
-        Args:
-            description: Voice description from LLM (e.g., "male. middle aged. high")
-
-        Returns:
-            Formatted instruct string for OmniVoice
-        """
-        # Normalize: replace periods with commas, strip whitespace, lowercase
-        instruct = description.replace(".", ",")
-        parts = [p.strip().lower() for p in instruct.split(",") if p.strip()]
-
-        # Mapping from our terms to OmniVoice format
-        gender_map = {"male": "male", "female": "female"}
-        age_map = {
-            "child": "child",
-            "young": "young adult",
-            "teen": "teenager",
-            "teenager": "teenager",
-            "young adult": "young adult",
-            "middle aged": "middle-aged",
-            "middle-aged": "middle-aged",
-            "elderly": "elderly",
-            "old": "elderly",
-        }
-        pitch_map = {
-            "very low": "very low pitch",
-            "low": "low pitch",
-            "medium": "moderate pitch",
-            "mid": "moderate pitch",
-            "moderate": "moderate pitch",
-            "high": "high pitch",
-            "very high": "very high pitch",
-        }
-        accent_map = {
-            "american": "american accent",
-            "british": "british accent",
-            "australian": "australian accent",
-            "canadian": "canadian accent",
-            "indian": "indian accent",
-            "chinese": "chinese accent",
-            "korean": "korean accent",
-            "japanese": "japanese accent",
-            "portuguese": "portuguese accent",
-            "russian": "russian accent",
-        }
-
-        mapped_parts = []
-        for part in parts:
-            # Gender
-            if part in gender_map:
-                mapped_parts.append(gender_map[part])
-            # Age
-            elif part in age_map:
-                mapped_parts.append(age_map[part])
-            # Pitch
-            elif part in pitch_map:
-                mapped_parts.append(pitch_map[part])
-            # Style
-            elif part == "whisper":
-                mapped_parts.append("whisper")
-            # Accent (with or without "accent" suffix)
-            elif part in accent_map:
-                mapped_parts.append(accent_map[part])
-            elif part.endswith(" accent"):
-                mapped_parts.append(part)
-            # Chinese dialects (pass through)
-            elif any(c in part for c in "河南陕西四川贵云南桂济石甘宁青岛东北话"):
-                mapped_parts.append(part)
-            # Unknown - skip to avoid invalid attributes
-            else:
-                if verbose:
-                    print(f"    Warning: Skipping unknown attribute '{part}'")
-
-        return ", ".join(mapped_parts)
-
-    def _generate_voice_sample_omni(
-        self,
-        character_name: str,
-        description: str,
-        output_dir: str = None,
-        max_new_tokens: int = None,
-        verbose: bool = False
-    ) -> Tuple[bool, Optional[str], float]:
-        """Generate a voice sample for a character using OmniVoice voice design.
-
-        OmniVoice supports voice design from text descriptions without reference audio.
-        The character description is converted to OmniVoice's instruct format.
-
-        Args:
-            character_name: Name of the character
-            description: Voice description from LLM (e.g., "male. middle aged. high")
-            output_dir: Output directory (defaults to self.output_dir)
-            max_new_tokens: Max tokens for generation (not used by OmniVoice)
-            verbose: Print verbose output
-
-        Returns:
-            Tuple of (success, output_file_path, duration_seconds)
-        """
-        if output_dir is None:
-            output_dir = self.output_dir
-
-        # Use the static voice text from config for high emotional range
-        sample_text = DEFAULTS["static_voice_text"]
-
-        # Validate description
-        if not description or not description.strip():
-            if verbose:
-                print(f"  ERROR: Skipping '{character_name}' due to empty description")
-            return False, None, 0
-
-        # Get OmniVoice model
-        model, _, _, _ = self.setup_tts_engine()
-
-        # Try generation with the original description first
-        instruct = self._convert_description_to_omni_instruct(description, verbose)
-
-        if verbose:
-            print(f"  Character: {character_name}")
-            print(f"  OmniVoice instruct: {instruct}")
-            print(f"  Sample text: {sample_text}")
-
-        try:
-            # Generate audio using voice design (per OmniVoice docs)
-            audio = model.generate(
-                text=sample_text,
-                num_step=32,  # diffusion steps (or 16 for faster inference)
-                class_temperature=0.5, # default is 0, but not enough diversity
-                instruct=instruct,
-            )
-
-            if audio is None or len(audio) == 0 or audio[0].numel() == 0:
-                return False, None, 0
-
-            os.makedirs(output_dir, exist_ok=True)
-            output_file = os.path.join(output_dir, f"{character_name}.wav")
-
-            sr = 24000
-            torchaudio.save(output_file, audio[0].cpu(), sr)
-
-            duration = len(audio[0]) / sr
-            self.add_voice_path(character_name, output_file)
-
-            if verbose:
-                print(f"    Generated: {duration:.2f}s -> {output_file}")
-
-            return True, output_file, duration
-
-        except ValueError as e:
-            error_msg = str(e)
-            # Check for conflicting instruct items error
-            if "Conflicting instruct items" in error_msg or "Each category" in error_msg:
-                if verbose:
-                    print(f"    Conflict detected in instruct: {error_msg}")
-                    print(f"    Retrying with simplified voice description...")
-
-                # Try with a minimal fallback instruct (just gender if possible, otherwise nothing)
-                fallback_instruct = self._get_fallback_instruct(description, verbose)
-                if fallback_instruct:
-                    if verbose:
-                        print(f"  Retrying with fallback instruct: {fallback_instruct}")
-
-                    try:
-                        audio = model.generate(
-                            text=sample_text,
-                            num_step=32,
-                            class_temperature=3.0,
-                            instruct=fallback_instruct,
-                        )
-
-                        if audio is None or len(audio) == 0 or audio[0].numel() == 0:
-                            return False, None, 0
-
-                        os.makedirs(output_dir, exist_ok=True)
-                        output_file = os.path.join(output_dir, f"{character_name}.wav")
-
-                        sr = 24000
-                        torchaudio.save(output_file, audio[0].cpu(), sr)
-
-                        duration = len(audio[0]) / sr
-                        self.add_voice_path(character_name, output_file)
-
-                        if verbose:
-                            print(f"    Generated (fallback): {duration:.2f}s -> {output_file}")
-
-                        return True, output_file, duration
-
-                    except Exception as e2:
-                        print(f"    Fallback generation also failed: {e2}")
-                        print(f"    Exception type: {type(e2).__name__}")
-                        traceback.print_exc()
-                        return False, None, 0
-                else:
-                    if verbose:
-                        print(f"    No fallback instruct available, generation failed")
-                    return False, None, 0
-            else:
-                # Different error, re-raise as normal
-                return self._handle_voice_generation_error("OmniVoice", e, verbose)
-
-        except Exception as e:
-            return self._handle_voice_generation_error("OmniVoice", e, verbose)
-
-    def _generate_voice_sample_vox(
-        self,
-        character_name: str,
-        description: str,
-        output_dir: str = None,
-        max_new_tokens: int = None,
-        verbose: bool = False
-    ) -> Tuple[bool, Optional[str], float]:
-        """Generate a voice sample for a character using VoxCPM2 voice design.
-
-        Args:
-            character_name: Name of the character
-            description: Voice description from LLM (e.g., "male. middle aged. high")
-            output_dir: Output directory (defaults to self.output_dir)
-            max_new_tokens: Max tokens for generation (not used by VoxCPM)
-            verbose: Print verbose output
-
-        Returns:
-            Tuple of (success, output_file_path, duration_seconds)
-        """
-        if output_dir is None:
-            output_dir = self.output_dir
-
-        # Use the static voice text from config for high emotional range
-        sample_text = DEFAULTS["static_voice_text"]
-
-        # Validate description
-        if not description or not description.strip():
-            if verbose:
-                print(f"  ERROR: Skipping '{character_name}' due to empty description")
-            return False, None, 0
-
-        # Get VoxCPM model
-        model, _, _, _ = self.setup_tts_engine()
-
-        # Wrap description in parentheses for VoxCPM voice style
-        voice_style = f"({description})"
-        instruct_text = f"{voice_style}{sample_text}"
-
-        if verbose:
-            print(f"  Character: {character_name}")
-            print(f"  VoxCPM instruct: {instruct_text[:100]}...")
-            print(f"  Sample text: {sample_text}")
-
-        try:
-            # Generate audio using VoxCPM voice design
-            # Based on VoxCPM docs: cfg_value=2.0, inference_timesteps=10
-            wav = model.generate(
-                text=instruct_text,
-                cfg_value=2.0,
-                inference_timesteps=10,
-            )
-
-            if wav is None or len(wav) == 0:
-                return False, None, 0
-
-            os.makedirs(output_dir, exist_ok=True)
-            output_file = os.path.join(output_dir, f"{character_name}.wav")
-
-            # VoxCPM outputs 48kHz audio
-            sr = model.tts_model.sample_rate
-            sf.write(output_file, wav, sr)
-
-            duration = len(wav) / sr
-            self.add_voice_path(character_name, output_file)
-
-            if verbose:
-                print(f"    Generated: {duration:.2f}s -> {output_file}")
-
-            return True, output_file, duration
-
-        except Exception as e:
-            return self._handle_voice_generation_error("VoxCPM", e, verbose)
-
-    def _handle_voice_generation_error(self, engine_name: str, error: Exception, verbose: bool = False) -> Tuple[bool, None, int]:
-        """Centralized error handler for voice generation.
-
-        Args:
-            engine_name: Name of the TTS engine for error messages
-            error: The exception that occurred
-            verbose: Print verbose output
-
-        Returns:
-            Failure tuple (False, None, 0)
-        """
-        if verbose:
-            print(f"    Error generating voice with {engine_name}: {error}")
-            print(f"    Exception type: {type(error).__name__}")
-        traceback.print_exc()
-        return False, None, 0
-
-    def _get_fallback_instruct(self, description: str, verbose: bool = False) -> Optional[str]:
-        """Extract a minimal, non-conflicting instruct from a description.
-
-        When the original description has conflicting attributes (e.g., multiple
-        genders or ages), this extracts just the first valid gender as a fallback.
-
-        Args:
-            description: Voice description from LLM
-            verbose: Print verbose output
-
-        Returns:
-            A minimal instruct string (e.g., "male") or None if nothing valid found
-        """
-        parts = [p.strip().lower() for p in description.replace(".", ",").split(",") if p.strip()]
-
-        # Gender mapping
-        gender_map = {"male": "male", "female": "female"}
-
-        # Find first valid gender
-        for part in parts:
-            if part in gender_map:
-                return gender_map[part]
-
-        # No valid gender found, return None (caller will handle)
-        return None
+        return success, output_file, duration
 
     def build_voice_clone_prompt(
         self,

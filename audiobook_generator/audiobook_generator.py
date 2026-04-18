@@ -146,6 +146,67 @@ def color_word(word, score):
     return f"{color_code}{word}{reset_code}"
 
 
+def split_text_for_echo_tts(text: str, max_chunk_size: int = 500) -> list:
+    """Split text into chunks that fit within Echo TTS token limits.
+
+    Echo TTS has a sequence_length limit of 640 tokens (~30 seconds of audio).
+    Splits at sentence boundaries first, then commas, then word boundaries.
+    """
+    if len(text) <= max_chunk_size:
+        return [text]
+
+    chunks = []
+    remaining = text
+
+    while remaining:
+        if len(remaining) <= max_chunk_size:
+            chunks.append(remaining)
+            break
+
+        # Find the best split point (sentence boundary)
+        split_point = max_chunk_size
+
+        # Look for sentence endings first
+        for sep in ['. ', '! ', '? ', '.\n', '!\n', '?\n']:
+            idx = remaining[:max_chunk_size].rfind(sep)
+            if idx > max_chunk_size // 2:  # Must be past the middle
+                split_point = idx + len(sep)
+                break
+
+        # If no sentence boundary, look for comma
+        if split_point == max_chunk_size:
+            for sep in [', ', '; ']:
+                idx = remaining[:max_chunk_size].rfind(sep)
+                if idx > max_chunk_size // 2:
+                    split_point = idx + len(sep)
+                    break
+
+        # If still no good split, split at word boundary
+        if split_point == max_chunk_size:
+            last_space = remaining[:max_chunk_size].rfind(' ')
+            if last_space > max_chunk_size // 2:
+                split_point = last_space
+
+        chunks.append(remaining[:split_point].strip())
+        remaining = remaining[split_point:].strip()
+
+    return chunks
+
+
+def _get_ref_text_for_voice(voice_path: str, validation_model, voice_name: str, verbose: bool) -> str:
+    """Transcribe voice sample to get reference text for cloning, with fallback."""
+    try:
+        ref_text, _, _ = transcribe_audio_with_whisper(validation_model, voice_path)
+        if verbose:
+            print(f"    Transcribed ref_text for '{voice_name}': {ref_text[:80]}...")
+        return ref_text
+    except Exception as e:
+        if verbose:
+            print(f"    Warning: Failed to transcribe ref_text for '{voice_name}': {e}")
+            print(f"    Falling back to static_voice_text (cloning quality may be degraded)")
+        return DEFAULTS["static_voice_text"]
+
+
 def score_strings_pop(i_str, d_str, lookahead=5, postfix="and also with you"):
     # Ensure lookahead is non-negative
     lookahead = max(0, lookahead)
@@ -199,8 +260,6 @@ def generate_tts_for_line(
     line_idx: int,
     text: str,
     voice_name: str,
-    tts_model,
-    processor,
     voice_mapper: VoiceMapper,
     device: str,
     tts_engine: str,
@@ -220,11 +279,9 @@ def generate_tts_for_line(
         line_idx: Line index within chapter
         text: Text to synthesize
         voice_name: Name of the voice/character
-        tts_model: Initialized TTS model
-        processor: TTS processor
         voice_mapper: VoiceMapper instance
         device: Device to run on
-        tts_engine: 'kugelaudio', 'vibevoice', 'moss', 'echo-tts', 'omni', or 'voxcpm'
+        tts_engine: 'kugelaudio', 'vibevoice', 'moss', 'echo-tts', 'omni', or 'vox'
         voice_path: Optional path to voice sample file. If not provided, uses voice_mapper.
         cfg_scale: CFG scale value
         output_dir: Output directory for audio files
@@ -233,7 +290,8 @@ def generate_tts_for_line(
         verbose: Print verbose output
         validation_client: OpenAI client for clean audio validation (created if None)
         validate_clean: If True, validate audio contains only clean speech (no music/SFX)
-        Returns:
+
+    Returns:
         Tuple of (success: bool, ratio: float)
     """
     # Skip empty text to avoid infinite loops when Whisper can't transcribe
@@ -257,317 +315,37 @@ def generate_tts_for_line(
     max_ratio = float('-inf')  # Initialize to lowest possible value to ensure first attempt is always saved
     retries = 0
     input_string = distill_string(full_script)
-    
+
     set_seed(42)
     while ratio < 0.85 and retries < 2:
         set_seed(42 + retries)
-        inputs = None
-        outputs = None
-        if tts_engine == 'kugelaudio':
-            # Use KugelAudio processor with voice prompt
-            # Use provided voice_path if available, otherwise look up via voice_mapper
-            if voice_path is None:
-                voice_path = voice_mapper.get_voice_path(voice_name)
-            inputs = processor(
-                text=full_script,
-                voice_prompt=voice_path,
-                padding=True,
-                return_tensors="pt",
-            )
-        elif tts_engine == 'vibevoice':
-            # Use VibeVoice processor with voice_samples
-            if voice_path is None:
-                voice_path = voice_mapper.get_voice_path(voice_name)
-            inputs = processor(
-                text=["Speaker 1: ? " + full_script],
-                voice_samples=[voice_path],
-                padding=True,
-                return_tensors="pt",
-                return_attention_mask=True,
-            )
-        elif tts_engine == 'moss':
-            # MOSS-TTS uses reference audio for zero-shot cloning
-            if verbose and voice_path is None:
-                print(f"  DEBUG MOSS: voice_path is None, calling voice_mapper.get_voice_path('{voice_name}')")
-                print(f"  DEBUG MOSS: voice_mapper.duplicate_replacement_map = {voice_mapper.duplicate_replacement_map}")
-            if voice_path is None:
-                voice_path = voice_mapper.get_voice_path(voice_name)
-            if verbose and voice_path is None:
-                print(f"  DEBUG MOSS: voice_mapper.get_voice_path('{voice_name}') returned None")
-            if voice_path is None:
-                raise Exception(f"No voice path found for '{voice_name}'")
-            # MOSS-TTS will be handled in the generation block below
-            pass
 
         output_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.tmp.wav")
 
-        if tts_engine == 'moss':
-            # MOSS-TTS zero-shot voice cloning
-            if verbose and voice_path is None:
-                print(f"  DEBUG MOSS2: voice_path is None, calling voice_mapper.get_voice_path('{voice_name}')")
-            if voice_path is None:
-                voice_path = voice_mapper.get_voice_path(voice_name)
-            if verbose and voice_path is None:
-                print(f"  DEBUG MOSS2: voice_mapper.get_voice_path('{voice_name}') returned None")
-            if voice_path is None:
-                raise Exception(f"No voice path found for '{voice_name}'")
+        # Resolve voice path if not provided
+        if voice_path is None:
+            voice_path = voice_mapper.get_voice_path(voice_name)
+        if voice_path is None:
+            raise Exception(f"No voice path found for '{voice_name}'")
 
-            # Build conversation with reference audio
-            conversations = [
-                processor.build_user_message(text=full_script, reference=[voice_path])
-            ]
-
-            # Prepare batch for generation
-            with torch.no_grad():
-                batch = processor(conversations, mode="generation")
-                outputs = tts_model.generate(
-                    input_ids=batch["input_ids"].to(device),
-                    attention_mask=batch["attention_mask"].to(device),
-                    max_new_tokens=DEFAULTS["max_new_tokens"],
-                    # MOSS-TTS hyperparameters
-                    audio_temperature=DEFAULTS["moss_audio_temperature"],
-                    audio_top_p=DEFAULTS["moss_audio_top_p"],
-                    audio_top_k=DEFAULTS["moss_audio_top_k"],
-                    audio_repetition_penalty=DEFAULTS["moss_audio_repetition_penalty"],
-                )
-
-                # Decode output
-                message = processor.decode(outputs)[0]
-                audio = message.audio_codes_list[0]
-                sr = processor.model_config.sampling_rate
-
-            # Save audio
-            if audio is not None and audio.numel() > 0:
-                torchaudio.save(output_path, audio.unsqueeze(0), sr)
-            else:
-                raise Exception("Empty MOSS-TTS generation for chapter text")
-
-        elif tts_engine == 'echo-tts':
-            # Echo TTS generates audio directly without processor
-            from functools import partial
-
-            # Get voice path
-            if voice_path is None:
-                voice_path = voice_mapper.get_voice_path(voice_name)
-            if voice_path is None:
-                raise Exception(f"No voice path found for '{voice_name}'")
-
-            # Load echo-tts if not already loaded
-            if not hasattr(tts_model, '_loaded') or tts_model._loaded is False:
-                tts_model.load()
-
-            # Load speaker audio for voice cloning
-            # After tts_model.load(), the inference module is available in sys.modules
-            import sys
-            inference_module = sys.modules.get('inference')
-            if inference_module is None:
-                import importlib
-                inference_module = importlib.import_module('inference')
-            speaker_audio_tensor = inference_module.load_audio(voice_path).to(tts_model.echo_model.device)
-
-            # Split text into chunks for Echo TTS (max ~500 chars per chunk to stay under 640 token limit)
-            # Echo TTS has a sequence_length limit of 640 tokens (~30 seconds of audio)
-            def split_text_for_echo_tts(text: str, max_chunk_size: int = 500) -> list:
-                """Split text into chunks that fit within Echo TTS token limits."""
-                if len(text) <= max_chunk_size:
-                    return [text]
-
-                chunks = []
-                remaining = text
-
-                while remaining:
-                    if len(remaining) <= max_chunk_size:
-                        chunks.append(remaining)
-                        break
-
-                    # Find the best split point (sentence boundary)
-                    split_point = max_chunk_size
-
-                    # Look for sentence endings first
-                    for sep in ['. ', '! ', '? ', '.\n', '!\n', '?\n']:
-                        idx = remaining[:max_chunk_size].rfind(sep)
-                        if idx > max_chunk_size // 2:  # Must be past the middle
-                            split_point = idx + len(sep)
-                            break
-
-                    # If no sentence boundary, look for comma
-                    if split_point == max_chunk_size:
-                        for sep in [', ', '; ']:
-                            idx = remaining[:max_chunk_size].rfind(sep)
-                            if idx > max_chunk_size // 2:
-                                split_point = idx + len(sep)
-                                break
-
-                    # If still no good split, split at word boundary
-                    if split_point == max_chunk_size:
-                        last_space = remaining[:max_chunk_size].rfind(' ')
-                        if last_space > max_chunk_size // 2:
-                            split_point = last_space
-
-                    chunks.append(remaining[:split_point].strip())
-                    remaining = remaining[split_point:].strip()
-
-                return chunks
-
-            # Split text into chunks
-            text_chunks = split_text_for_echo_tts(full_script)
-
-            # Generate audio for each chunk and concatenate
-            audio_chunks = []
-
-            for i, chunk in enumerate(text_chunks):
-                text_prompt = f"[S1] {chunk}"
-
-                audio_out, _ = tts_model.sample_pipeline(
-                    model=tts_model.echo_model,
-                    fish_ae=tts_model.fish_ae,
-                    pca_state=tts_model.pca_state,
-                    sample_fn=tts_model.sampler,
-                    text_prompt=text_prompt,
-                    speaker_audio=speaker_audio_tensor,  # Use speaker reference for voice cloning
-                    rng_seed=42 + i,  # Different seed for each chunk
-                )
-
-                if audio_out is None or audio_out.numel() == 0:
-                    raise Exception(f"Empty Echo TTS generation for chunk {i}")
-
-                audio_chunks.append(audio_out[0])
-
-            # Concatenate all audio chunks
-            if len(audio_chunks) == 1:
-                audio_final = audio_chunks[0]
-            else:
-                # Concatenate with a small silence between chunks
-                # Use the device and shape from the first audio chunk
-                # audio_chunks are 2D: (1, samples), so silence needs same shape
-                silence = torch.zeros(1, 2205, device=audio_chunks[0].device)  # ~0.05 seconds of silence at 44100 Hz
-                audio_final = audio_chunks[0]
-                for chunk in audio_chunks[1:]:
-                    audio_final = torch.cat([audio_final, silence, chunk], dim=1)
-
-            # Save audio
-            sr = 44100
-            torchaudio.save(output_path, audio_final.cpu(), sr)
-
-        elif tts_engine == 'omni':
-            voice_path = voice_path or voice_mapper.get_voice_path(voice_name)
-            if voice_path is None:
-                raise Exception(f"No voice path found for '{voice_name}'")
-
-            # Auto-transcribe reference audio to get the correct ref_text for voice cloning
-            # This is critical when using custom voice files that weren't generated with static_voice_text
-            try:
-                ref_text, _, _ = transcribe_audio_with_whisper(validation_model, voice_path)
-                if verbose:
-                    print(f"    Transcribed ref_text for '{voice_name}': {ref_text[:80]}...")
-            except Exception as e:
-                if verbose:
-                    print(f"    Warning: Failed to transcribe ref_text for '{voice_name}': {e}")
-                    print(f"    Falling back to static_voice_text (cloning quality may be degraded)")
-                ref_text = DEFAULTS["static_voice_text"]
-
-            # Load reference audio for voice cloning (OmniVoice expects audio tensor + sample rate)
-            ref_audio_np, ref_sr = sf.read(voice_path)
-
-            # Handle stereo audio by converting to mono
-            if len(ref_audio_np.shape) > 1:
-                if verbose:
-                    print(f"    Converting stereo audio to mono for '{voice_name}'")
-                ref_audio_np = ref_audio_np.mean(axis=1)
-
-            # Convert to float32 (soundfile reads as float64 by default, but model expects float32)
-            ref_audio_np = ref_audio_np.astype(np.float32)
-
-            # Convert numpy array to torch tensor (OmniVoice expects tensor, not numpy array)
-            ref_audio = torch.from_numpy(ref_audio_np)
-
-            if verbose:
-                print(f"    ref_audio shape: {ref_audio.shape}, dtype: {ref_audio.dtype}, sample rate: {ref_sr}, elements: {ref_audio.numel()}")
-
-            if ref_audio.numel() == 0:
-                raise Exception(f"Reference audio for '{voice_name}' is empty after loading from {voice_path}")
-
-            # OmniVoice voice cloning (per official docs)
-            # preprocess_prompt=False to avoid silence removal issues with custom voice files
-            audio = tts_model.generate(
+        engine = voice_mapper.get_engine()
+        try:
+            engine.generate_line(
                 text=full_script,
-                ref_audio=(ref_audio, ref_sr),
-                ref_text=ref_text,
-                preprocess_prompt=False,
-            )
-
-            if audio is None or len(audio) == 0 or audio[0].numel() == 0:
-                raise Exception("Empty OmniVoice generation for chapter text")
-
-            sr = 24000
-            torchaudio.save(output_path, audio[0].cpu(), sr)
-
-        elif tts_engine == 'vox':
-            voice_path = voice_path or voice_mapper.get_voice_path(voice_name)
-            if voice_path is None:
-                raise Exception(f"No voice path found for '{voice_name}'")
-
-            # VoxCPM2 voice cloning with reference audio
-            # VoxCPM supports "Ultimate Cloning" mode with prompt_audio + prompt_text + reference_audio
-
-            # Get reference text by transcribing the voice sample
-            try:
-                ref_text, _, _ = transcribe_audio_with_whisper(validation_model, voice_path)
-                if verbose:
-                    print(f"    Transcribed ref_text for '{voice_name}': {ref_text[:80]}...")
-            except Exception as e:
-                if verbose:
-                    print(f"    Warning: Failed to transcribe ref_text for '{voice_name}': {e}")
-                    print(f"    Falling back to static_voice_text (cloning quality may be degraded)")
-                ref_text = DEFAULTS["static_voice_text"]
-
-            # VoxCPM2 Ultimate Cloning mode
-            # Uses prompt_wav_path, prompt_text, and reference_wav_path for highest fidelity
-            wav = tts_model.generate(
-                text=full_script,
-                prompt_wav_path=voice_path,
-                prompt_text=ref_text,
-                reference_wav_path=voice_path,
-                cfg_value=1.5,
-            )
-
-            if wav is None or len(wav) == 0:
-                raise Exception("Empty VoxCPM generation for chapter text")
-
-            # VoxCPM outputs 48kHz audio
-            sr = 48000
-            torchaudio.save(output_path, torch.from_numpy(wav), sr)
-
-        else:
-            # KugelAudio and VibeVoice use processor inputs
-            for k, v in inputs.items():
-                if torch.is_tensor(v):
-                    inputs[k] = v.to(device)
-
-            outputs = tts_model.generate(
-                **inputs,
-                max_new_tokens=DEFAULTS["max_new_tokens"],
+                voice_path=voice_path,
+                output_path=output_path,
+                device=device,
+                validation_model=validation_model,
                 cfg_scale=cfg_scale,
-                tokenizer=processor.tokenizer,
-                do_sample=False,
-                verbose=False
+                verbose=verbose,
             )
-
-            if tts_engine == 'kugelaudio':
-                # KugelAudio returns audio directly in speech_outputs
-                processor.save_audio(
-                    outputs.speech_outputs[0],
-                    output_path=output_path,
-                )
-            else:
-                # VibeVoice also returns audio in speech_outputs
-                processor.save_audio(
-                    outputs.speech_outputs[0],
-                    output_path=output_path,
-                )
-
-        del inputs
-        del outputs
+        except Exception as e:
+            print(f"    Engine generation failed: {e}")
+            if verbose:
+                traceback.print_exc()
+            ratio = 0.0
+            retries += 1
+            continue
 
         gc.collect()
         torch.cuda.empty_cache()
@@ -698,7 +476,10 @@ def generate_audiobook_from_chapters(
     whisper_alt_gpu: bool = False,
     whisper_cpu: bool = False,
     debug_tts: bool = False,
-    validate_clean: bool = False
+    validate_clean: bool = False,
+    max_retries: int = None,
+    enable_postfix: bool = True,
+    validation_interval: int = 1,
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -744,7 +525,6 @@ def generate_audiobook_from_chapters(
             validation_client = get_validation_client() if validate_clean else None
             # Initialize VoiceMapper with output_dir so it looks in the correct location
             voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=tts_engine, duplicate_replacement_map=duplicate_replacement_map)
-            tts_model_read_chapters, processor, _, _ = voice_mapper.setup_tts_engine(turbo=turbo)
 
             for voice, path in voices_map.items():
                 # Handle both basenames and absolute paths (from resumed sessions with different temp dirs)
@@ -753,6 +533,10 @@ def generate_audiobook_from_chapters(
                 # Cache voice path in VoiceMapper
                 voice_mapper.add_voice_path(voice, voice_path)
             short_text_postfix = DEFAULTS["short_text_postfix"]
+
+            # Resolve max_retries: use provided value, fall back to config
+            if max_retries is None:
+                max_retries = DEFAULTS.get("max_retries", 1)
 
             processed = 0
             for i, chapter in enumerate(chapters_to_process):
@@ -830,31 +614,16 @@ def generate_audiobook_from_chapters(
                         # Get the voice path for this character
                         # Apply duplicate replacement map if available to get canonical name
                         canonical_voice = voice
-                        if verbose:
-                            print(f"  DEBUG: Processing voice '{voice}'")
-                            print(f"  DEBUG: duplicate_replacement_map = {duplicate_replacement_map}")
                         if duplicate_replacement_map and voice in duplicate_replacement_map:
                             canonical_voice = duplicate_replacement_map[voice]
-                            if verbose:
-                                print(f"  DEBUG: Remapping duplicate voice '{voice}' -> '{canonical_voice}'")
-                        if verbose:
-                            print(f"  DEBUG: canonical_voice = '{canonical_voice}'")
-                            print(f"  DEBUG: canonical_voice in voices_map = {canonical_voice in voices_map}")
-                            print(f"  DEBUG: voices_map = {voices_map}")
                         # Use canonical voice for path lookup
                         if canonical_voice in voices_map:
                             # voices_map contains relative paths (basenames), prepend output_dir
                             voice_path = os.path.join(output_dir, voices_map[canonical_voice])
-                            if verbose:
-                                print(f"  DEBUG: Found voice_path in voices_map: {voice_path}")
                             # Check if the voice file actually exists
                             if not os.path.exists(voice_path):
-                                if verbose:
-                                    print(f"  WARNING: Voice file not found: {voice_path}")
                                 # Fall back to VoiceMapper lookup (searches output_dir for matching .wav files)
                                 voice_path = voice_mapper.get_voice_path(canonical_voice)
-                                if verbose:
-                                    print(f"  DEBUG: voice_mapper.get_voice_path('{canonical_voice}') = {voice_path}")
                         # If still not found, raise error
                         if voice_path is None:
                             raise Exception(f"No voice path found for '{voice}' (canonical: '{canonical_voice}')")
@@ -865,8 +634,6 @@ def generate_audiobook_from_chapters(
                             line_idx=line_num,
                             text=chapter_obj.text,
                             voice_name=voice,
-                            tts_model=tts_model_read_chapters,
-                            processor=processor,
                             voice_mapper=voice_mapper,
                             device=device,
                             tts_engine=tts_engine,
@@ -1048,7 +815,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       num_llm_attempts: int = DEFAULTS["num_llm_attempts"],
                       resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
                       whisper_cpu: bool = False, debug_tts: bool = False, validate: bool = False,
-                      validate_clean: bool = False) -> str:
+                      validate_clean: bool = False, max_retries: int = None,
+                      enable_postfix: bool = True, validation_interval: int = 1) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -1358,7 +1126,10 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             duplicate_replacement_map=duplicate_replacement_map,
             seed_voice_map=seed_voice_map,
             whisper_alt_gpu=whisper_alt_gpu,
-            validate_clean=validate_clean)
+            validate_clean=validate_clean,
+            max_retries=max_retries,
+            enable_postfix=enable_postfix,
+            validation_interval=validation_interval)
 
         if verbose:
             print(f"  {status}")
@@ -1530,6 +1301,9 @@ Examples:
                         help="Enable LLM validation to judge generated audio quality")
     parser.add_argument("--validate_clean", action="store_true",
                         help="Enable clean audio validation (no music/SFX) when --validate is also enabled")
+    parser.add_argument("--max-retries", type=int, default=None, help="Max retries for failed lines (default: use config)")
+    parser.add_argument("--no-postfix", action="store_true", help="Skip postfix text for faster generation")
+    parser.add_argument("--validation-interval", type=int, default=1, help="Validate every Nth line (default: 1 = every line)")
 
     args = parser.parse_args()
 

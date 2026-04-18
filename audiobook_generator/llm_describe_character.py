@@ -444,17 +444,6 @@ def describe_all_characters(client: OpenAI, model: str, characters: list, contex
         {"role": "user", "content": user_message}
     ]
 
-    # DEBUG: Save the context and messages to a file for debugging
-    debug_output = {
-        "model": model,
-        "system_prompt": system_prompt,
-        "characters": characters,
-        "context": context,
-    }
-    with open("chapters/llm_character_description_debug.json", "w", encoding="utf-8") as f:
-        json.dump(debug_output, f, indent=2, ensure_ascii=False)
-    print("DEBUG: Saved LLM call context and messages to chapters/llm_character_description_debug.json")
-
     try:
         response = client.chat.completions.create(
             model=model,

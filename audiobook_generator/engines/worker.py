@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import time
 from multiprocessing import Process, Queue
 from pathlib import Path
@@ -20,6 +19,12 @@ _ENVIRONMENTS_DIR = Path(__file__).parent / ".environments"
 
 _Request = dict[str, Any]
 _Response = dict[str, Any]
+
+
+def _run_cmd(cmd: list[str], cwd: str, env: dict[str, str], label: str, engine_name: str) -> None:
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, env=env)
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to {label} for {engine_name}: {result.stderr}")
 
 
 def _ensure_env(engine_name: str) -> str:
@@ -38,34 +43,18 @@ def _ensure_env(engine_name: str) -> str:
             return python
 
     project_root = Path(__file__).resolve().parent.parent.parent
+    env = os.environ.copy()
+    env["VIRTUAL_ENV"] = str(venv_dir)
 
     print(f"  Setting up {engine_name} environment...")
     if not venv_dir.exists():
-        result = subprocess.run(
-            [sys.executable, "-m", "uv", "venv", str(venv_dir)],
-            capture_output=True,
-            text=True,
-            cwd=str(env_dir),
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to create venv for {engine_name}: {result.stderr}")
+        _run_cmd(["uv", "venv", str(venv_dir)], str(env_dir), env,
+                  "create venv", engine_name)
 
-    result = subprocess.run(
-        [python, "-m", "uv", "pip", "install", "-e", "."],
-        capture_output=True,
-        text=True,
-        cwd=str(env_dir),
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to install deps for {engine_name}: {result.stderr}")
-
-    result = subprocess.run(
-        [python, "-m", "uv", "pip", "install", "-e", str(project_root)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to install main package in {engine_name}: {result.stderr}")
+    _run_cmd(["uv", "pip", "install", "-e", "."], str(env_dir), env,
+              "install deps", engine_name)
+    _run_cmd(["uv", "pip", "install", "-e", str(project_root)], str(env_dir), env,
+              "install main package", engine_name)
 
     print(f"  {engine_name} environment ready.")
     return python

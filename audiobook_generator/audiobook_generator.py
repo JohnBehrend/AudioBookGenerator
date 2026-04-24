@@ -8,16 +8,19 @@ This module provides:
 - Stage 5: TTS audio generation from chapter maps and voice samples
 
 Usage:
-    # Run full pipeline via CLI
-    python audiobook_generator.py <epub_file> [--output-dir] [--verbose]
-
     # Launch Gradio interface
-    python audiobook_generator.py --gradio [--api-key KEY] [--llm-port PORT] [--gradio-port PORT]
+    audiobook-interface --gradio
+
+    # Run full pipeline via CLI
+    audiobook-interface <epub_file> [--output-dir] [--verbose]
+
+    # Or as a module
+    python -m audiobook_generator --gradio
 """
 
 import argparse
-import sys
 import os
+import sys
 import time
 import json
 import re
@@ -506,185 +509,177 @@ def generate_audiobook_from_chapters(
     Returns:
         Tuple of (status_message, chapters_processed)
     """
-    if True:
-        os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
-        # Limit chapters if specified
-        chapters_to_process = chapters[:max_chapters] if max_chapters else chapters
+    # Limit chapters if specified
+    chapters_to_process = chapters[:max_chapters] if max_chapters else chapters
 
-        # Create unified progress handler for both Gradio and CLI
-        # Using context manager for proper cleanup
-        with ProgressHandler(progress=progress, total=len(chapters_to_process), desc="Audiobook Generation") as progress_handler:
-            # Setup validation model (Whisper always runs)
-            whisper_device = whisper_device if whisper_device is not None else device
-            # Apply whisper_alt_gpu to override device to cuda:1 if not explicitly set
-            if whisper_alt_gpu and whisper_device == device:
-                whisper_device = "cuda:1"
-            validation_model = setup_validation_model(whisper_device, cpu=whisper_cpu)
-            # This avoids crashes from faster-whisper dependencies if validation_model is None
-            validation_client = get_validation_client() if validate_clean else None
-            # Initialize VoiceMapper with output_dir so it looks in the correct location
-            voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=tts_engine, duplicate_replacement_map=duplicate_replacement_map)
+    # Create unified progress handler for both Gradio and CLI
+    # Using context manager for proper cleanup
+    with ProgressHandler(progress=progress, total=len(chapters_to_process), desc="Audiobook Generation") as progress_handler:
+        # Setup validation model (Whisper always runs)
+        whisper_device = whisper_device if whisper_device is not None else device
+        # Apply whisper_alt_gpu to override device to cuda:1 if not explicitly set
+        if whisper_alt_gpu and whisper_device == device:
+            whisper_device = "cuda:1"
+        validation_model = setup_validation_model(whisper_device, cpu=whisper_cpu)
+        # This avoids crashes from faster-whisper dependencies if validation_model is None
+        validation_client = get_validation_client() if validate_clean else None
+        # Initialize VoiceMapper with output_dir so it looks in the correct location
+        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=tts_engine, duplicate_replacement_map=duplicate_replacement_map)
 
-            for voice, path in voices_map.items():
-                # Handle both basenames and absolute paths (from resumed sessions with different temp dirs)
-                voice_basename = os.path.basename(path)
-                voice_path = os.path.join(output_dir, voice_basename)
-                # Cache voice path in VoiceMapper
-                voice_mapper.add_voice_path(voice, voice_path)
-            short_text_postfix = DEFAULTS["short_text_postfix"]
+        for voice, path in voices_map.items():
+            # Handle both basenames and absolute paths (from resumed sessions with different temp dirs)
+            voice_basename = os.path.basename(path)
+            voice_path = os.path.join(output_dir, voice_basename)
+            # Cache voice path in VoiceMapper
+            voice_mapper.add_voice_path(voice, voice_path)
+        short_text_postfix = DEFAULTS["short_text_postfix"]
 
-            # Resolve max_retries: use provided value, fall back to config
-            if max_retries is None:
-                max_retries = DEFAULTS.get("max_retries", 1)
+        # Resolve max_retries: use provided value, fall back to config
+        if max_retries is None:
+            max_retries = DEFAULTS.get("max_retries", 1)
 
-            processed = 0
-            for i, chapter in enumerate(chapters_to_process):
-                # Check if already generated (resume mode)
-                mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
-                if os.path.exists(mp3_path):
-                    if verbose:
-                        print(f"Skipping chapter {i} (already exists)")
-                    processed += 1
-                    continue
-
-                progress_handler.update((i + 1)/len(chapters_to_process), desc=f"Processing Chapter {i}")
+        processed = 0
+        for i, chapter in enumerate(chapters_to_process):
+            # Check if already generated (resume mode)
+            mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
+            if os.path.exists(mp3_path):
                 if verbose:
-                    print(f"[CHAPTER_START] Chapter {i}/{len(chapters_to_process)}")
-
-                # Get chapter map if available
-                chapter_map = chapter_maps.get(i)
-                if chapter_map:
-                    character_map, line_map = chapter_map
-                    character_map = {int(k): v for k, v in character_map.items()}
-                    line_map = {int(k): v for k, v in line_map.items()}
-                    # Use .get() with fallback to "narrator" for invalid character references
-                    line_to_character_map = {k: character_map.get(v, "narrator") for k, v in line_map.items()}
-                else:
-                    # Fallback: assume narrator for all lines
-                    line_to_character_map = {}
-
-                # Assign speakers based on line map
-                for cobj in chapter:
-                    if not cobj.has_quotes:
-                        # Unquoted lines always use narrator, overriding any LLM mapping
-                        cobj.set_speaker("narrator")
-                    elif cobj.line_num in line_map:
-                        # Quoted line is explicitly mapped to a speaker
-                        char_name = line_to_character_map.get(cobj.line_num, "narrator")
-                        cobj.set_speaker(char_name)
-                    else:
-                        # Quoted line not in map - default to narrator
-                        cobj.set_speaker("narrator")
-
-                # Get unique voices used in this chapter
-                voices_used = []
-                for chapter_obj in chapter:
-                    speaker = chapter_obj.get_speaker()
-                    if speaker not in voices_used:
-                        voices_used.append(speaker)
-
-                # Pre-compute already generated line indices for this chapter (O(1) lookup)
-                already_generated = {
-                    int(x.split(".")[-2])
-                    for x in glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav"))
-                    if not x.endswith(".tmp.wav")
-                }
-
-                # Generate TTS for each voice in this chapter
-                for voice in voices_used:
-                    progress_handler.update(0, desc=f"Processing Chapter {i} Voice {voice}")
-
-                    for j, chapter_obj in enumerate(chapter):
-                        progress_handler.update((j + 1)/ len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j}")
-                        if voice != chapter_obj.get_speaker():
-                            continue
-                        # Use chapter_obj.line_num for file naming (not enumerate index j)
-                        line_num = chapter_obj.line_num
-                        if line_num in already_generated:
-                            if verbose:
-                                print(f"Skipping chapter {i}.{line_num} (already generated)")
-                            continue
-
-                        # Debug TTS mode: print instead of generate
-                        if debug_tts:
-                            print(f"Chapter {i}, Line {line_num}, Speaker {voice}")
-                            continue
-
-                        # Get the voice path for this character
-                        # Apply duplicate replacement map if available to get canonical name
-                        canonical_voice = voice
-                        if duplicate_replacement_map and voice in duplicate_replacement_map:
-                            canonical_voice = duplicate_replacement_map[voice]
-                        # Use canonical voice for path lookup
-                        if canonical_voice in voices_map:
-                            # voices_map contains relative paths (basenames), prepend output_dir
-                            voice_path = os.path.join(output_dir, voices_map[canonical_voice])
-                            # Check if the voice file actually exists
-                            if not os.path.exists(voice_path):
-                                # Fall back to VoiceMapper lookup (searches output_dir for matching .wav files)
-                                voice_path = voice_mapper.get_voice_path(canonical_voice)
-                        # If still not found, raise error
-                        if voice_path is None:
-                            raise Exception(f"No voice path found for '{voice}' (canonical: '{canonical_voice}')")
-
-                        # Generate TTS for this line
-                        success, ratio = generate_tts_for_line(
-                            chapter_idx=i,
-                            line_idx=line_num,
-                            text=chapter_obj.text,
-                            voice_name=voice,
-                            voice_mapper=voice_mapper,
-                            device=device,
-                            tts_engine=tts_engine,
-                            cfg_scale=cfg_scale,
-                            output_dir=output_dir,
-                            short_text_postfix=(short_text_postfix if (validation_model is not None) else None),
-                            validation_model=validation_model,
-                            verbose=verbose,
-                            voice_path=voice_path,
-                            validation_client=validation_client,
-                            validate_clean=validate_clean
-                        )
-                        progress_handler.update((j + 1)/len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j} Ratio {int(ratio * 100)}")
-                        if verbose:
-                            print(f"[LINE_PROGRESS] Chapter {i}, Line {j+1}/{len(chapter)}, Voice: {voice}, Ratio: {int(ratio * 100)}")
-
-                # Assemble chapter MP3 from WAV files
-                progress_handler.update(1, desc=f"Assembling Chapters")
-                wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")), key=natural_sort_key)
-                if wav_files:
-                    audio = get_non_silent_audio_from_wavs(wav_files)
-                    mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
-                    audio.export(str(mp3_path), format="mp3")
-
-                    # Clean up individual WAV files
-                    for wav in wav_files:
-                        os.unlink(wav)
-
-                    if verbose:
-                        print(f"Chapter {i}: Created {os.path.basename(mp3_path)} from {len(wav_files)} audio segments.")
-                else:
-                    if verbose:
-                        print(f"Chapter {i}: No WAV files generated.")
-
-                if verbose:
-                    print(f"[CHAPTER_COMPLETE] Chapter {i}/{len(chapters_to_process)}")
-
-                # Clear cache after each chapter to free VRAM
-                torch.cuda.empty_cache()
-                gc.collect()
-
+                    print(f"Skipping chapter {i} (already exists)")
                 processed += 1
+                continue
 
-            return f"Generated {processed} chapters successfully.", processed
+            progress_handler.update((i + 1)/len(chapters_to_process), desc=f"Processing Chapter {i}")
+            if verbose:
+                print(f"[CHAPTER_START] Chapter {i}/{len(chapters_to_process)}")
 
-    # except Exception as e:
-    #     import traceback
-    #     error_msg = f"Error generating audiobook: {str(e)}\n{traceback.format_exc()}"
-    #     if verbose:
-    #         print(error_msg)
-    #     return error_msg, 0
+            # Get chapter map if available
+            chapter_map = chapter_maps.get(i)
+            if chapter_map:
+                character_map, line_map = chapter_map
+                character_map = {int(k): v for k, v in character_map.items()}
+                line_map = {int(k): v for k, v in line_map.items()}
+                # Use .get() with fallback to "narrator" for invalid character references
+                line_to_character_map = {k: character_map.get(v, "narrator") for k, v in line_map.items()}
+            else:
+                # Fallback: assume narrator for all lines
+                line_to_character_map = {}
+
+            # Assign speakers based on line map
+            for cobj in chapter:
+                if not cobj.has_quotes:
+                    # Unquoted lines always use narrator, overriding any LLM mapping
+                    cobj.set_speaker("narrator")
+                elif cobj.line_num in line_map:
+                    # Quoted line is explicitly mapped to a speaker
+                    char_name = line_to_character_map.get(cobj.line_num, "narrator")
+                    cobj.set_speaker(char_name)
+                else:
+                    # Quoted line not in map - default to narrator
+                    cobj.set_speaker("narrator")
+
+            # Get unique voices used in this chapter
+            voices_used = []
+            for chapter_obj in chapter:
+                speaker = chapter_obj.get_speaker()
+                if speaker not in voices_used:
+                    voices_used.append(speaker)
+
+            # Pre-compute already generated line indices for this chapter (O(1) lookup)
+            already_generated = {
+                int(x.split(".")[-2])
+                for x in glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav"))
+                if not x.endswith(".tmp.wav")
+            }
+
+            # Generate TTS for each voice in this chapter
+            for voice in voices_used:
+                progress_handler.update(0, desc=f"Processing Chapter {i} Voice {voice}")
+
+                for j, chapter_obj in enumerate(chapter):
+                    progress_handler.update((j + 1)/ len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j}")
+                    if voice != chapter_obj.get_speaker():
+                        continue
+                    # Use chapter_obj.line_num for file naming (not enumerate index j)
+                    line_num = chapter_obj.line_num
+                    if line_num in already_generated:
+                        if verbose:
+                            print(f"Skipping chapter {i}.{line_num} (already generated)")
+                        continue
+
+                    # Debug TTS mode: print instead of generate
+                    if debug_tts:
+                        print(f"Chapter {i}, Line {line_num}, Speaker {voice}")
+                        continue
+
+                    # Get the voice path for this character
+                    # Apply duplicate replacement map if available to get canonical name
+                    canonical_voice = voice
+                    if duplicate_replacement_map and voice in duplicate_replacement_map:
+                        canonical_voice = duplicate_replacement_map[voice]
+                    # Use canonical voice for path lookup
+                    if canonical_voice in voices_map:
+                        # voices_map contains relative paths (basenames), prepend output_dir
+                        voice_path = os.path.join(output_dir, voices_map[canonical_voice])
+                        # Check if the voice file actually exists
+                        if not os.path.exists(voice_path):
+                            # Fall back to VoiceMapper lookup (searches output_dir for matching .wav files)
+                            voice_path = voice_mapper.get_voice_path(canonical_voice)
+                    # If still not found, raise error
+                    if voice_path is None:
+                        raise Exception(f"No voice path found for '{voice}' (canonical: '{canonical_voice}')")
+
+                    # Generate TTS for this line
+                    success, ratio = generate_tts_for_line(
+                        chapter_idx=i,
+                        line_idx=line_num,
+                        text=chapter_obj.text,
+                        voice_name=voice,
+                        voice_mapper=voice_mapper,
+                        device=device,
+                        tts_engine=tts_engine,
+                        cfg_scale=cfg_scale,
+                        output_dir=output_dir,
+                        short_text_postfix=(short_text_postfix if (validation_model is not None) else None),
+                        validation_model=validation_model,
+                        verbose=verbose,
+                        voice_path=voice_path,
+                        validation_client=validation_client,
+                        validate_clean=validate_clean
+                    )
+                    progress_handler.update((j + 1)/len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j} Ratio {int(ratio * 100)}")
+                    if verbose:
+                        print(f"[LINE_PROGRESS] Chapter {i}, Line {j+1}/{len(chapter)}, Voice: {voice}, Ratio: {int(ratio * 100)}")
+
+            # Assemble chapter MP3 from WAV files
+            progress_handler.update(1, desc=f"Assembling Chapters")
+            wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")), key=natural_sort_key)
+            if wav_files:
+                audio = get_non_silent_audio_from_wavs(wav_files)
+                mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
+                audio.export(str(mp3_path), format="mp3")
+
+                # Clean up individual WAV files
+                for wav in wav_files:
+                    os.unlink(wav)
+
+                if verbose:
+                    print(f"Chapter {i}: Created {os.path.basename(mp3_path)} from {len(wav_files)} audio segments.")
+            else:
+                if verbose:
+                    print(f"Chapter {i}: No WAV files generated.")
+
+            if verbose:
+                print(f"[CHAPTER_COMPLETE] Chapter {i}/{len(chapters_to_process)}")
+
+            # Clear cache after each chapter to free VRAM
+            torch.cuda.empty_cache()
+            gc.collect()
+
+            processed += 1
+
+        return f"Generated {processed} chapters successfully.", processed
 
 
 # ============================================================================

@@ -61,5 +61,10 @@ chapters/
 *.swp
 *.tmp
 
+# Per-engine environments (only pyproject.toml files are tracked)
+audiobook_generator/engines/.environments/*/.venv/
+audiobook_generator/engines/.environments/*/uv.lock
+audiobook_generator/engines/.environments/*/__pycache__/
+
 # Claude
 .claude/*

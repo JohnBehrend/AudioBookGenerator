@@ -7,7 +7,7 @@ from ebooklib import epub
 from bs4 import BeautifulSoup
 import argparse
 import re
-from utils import natural_sort_key
+from .utils import natural_sort_key
 
 class ChapterObj:
     def __init__(self, has_quotes: bool, text: str, line_num: int):

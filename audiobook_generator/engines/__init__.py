@@ -20,11 +20,13 @@ _ENGINE_REGISTRY = {
 }
 
 
-def get_engine(engine_name: str) -> TTSEngine:
+def get_engine(engine_name: str, device: str = "cuda", turbo: bool = False) -> TTSEngine:
     """Get a TTS engine instance by name.
 
     Args:
         engine_name: Engine identifier (e.g., 'moss', 'omni', 'vox', 'kugelaudio', 'vibevoice', 'echo-tts')
+        device: CUDA device string (e.g., 'cuda:0')
+        turbo: Whether to use turbo variant (engine-specific)
 
     Returns:
         A TTSEngine instance.
@@ -34,7 +36,7 @@ def get_engine(engine_name: str) -> TTSEngine:
     """
     if engine_name not in _ENGINE_REGISTRY:
         raise ValueError(f"Unknown TTS engine: {engine_name}. Available: {list(_ENGINE_REGISTRY.keys())}")
-    return _ENGINE_REGISTRY[engine_name]()
+    return _ENGINE_REGISTRY[engine_name](device=device, turbo=turbo)
 
 
 def list_engines() -> list:

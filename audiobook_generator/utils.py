@@ -19,7 +19,7 @@ from collections import Counter
 from typing import Dict, Optional, Tuple, List, Union
 from openai import OpenAI
 
-from config import LLM_SETTINGS
+from .config import LLM_SETTINGS
 
 
 def _get_attn_implementation() -> Optional[str]:

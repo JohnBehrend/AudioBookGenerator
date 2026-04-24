@@ -1,8 +1,18 @@
 """Base class for TTS engines."""
 
+from __future__ import annotations
+
+import gc
+import json
 from abc import ABC, abstractmethod
-from typing import Tuple, Any, Optional
+from multiprocessing import Queue
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional, Tuple
+
+import torch
+
+if TYPE_CHECKING:
+    from .worker import EngineWorker
 
 
 class TTSEngine(ABC):
@@ -13,21 +23,29 @@ class TTSEngine(ABC):
     - Generating voice samples from character descriptions (Stage 4)
     - Generating audio lines from text + voice reference (Stage 5)
 
-    Engines are loaded lazily via setup(). Results are cached in
-    VoiceMapper.tts_models.
+    Engines run TTS inference in isolated subprocess workers. The adapter
+    methods delegate to EngineWorker, while _run_worker() handles the actual
+    model loading and inference in the subprocess.
     """
+
+    # Name matching the per-engine environment directory
+    ENV_NAME: str = ""
+
+    @classmethod
+    @abstractmethod
+    def _run_worker(cls, request_queue: Queue, response_queue: Queue) -> None:
+        """Run the TTS worker loop in the subprocess.
+
+        Loads the model once, then processes requests from the queue.
+        Must send {"type": "ready"} to response_queue before the loop.
+        """
 
     @abstractmethod
     def setup(self, device: str, turbo: bool = False) -> Tuple[Any, Optional[Any]]:
-        """Load the model(s) for this engine.
+        """Load the model(s) for this engine (in-process, for non-worker usage).
 
-        Args:
-            device: CUDA device string (e.g., 'cuda:0')
-            turbo: Whether to use turbo variant (engine-specific)
-
-        Returns:
-            Tuple of (model, processor) where processor may be None.
-            These are the objects passed to callers in audiobook generation.
+        Subclasses should override this only for in-process usage.
+        In worker mode, model loading happens in _run_worker().
         """
 
     @abstractmethod
@@ -39,18 +57,7 @@ class TTSEngine(ABC):
         device: str,
         verbose: bool = False,
     ) -> Tuple[bool, Optional[str], float]:
-        """Generate a voice sample for a character (Stage 4).
-
-        Args:
-            character_name: Name of the character
-            description: Voice description from LLM
-            output_dir: Directory to save the .wav file
-            device: CUDA device string
-            verbose: Print verbose output
-
-        Returns:
-            Tuple of (success, output_file_path, duration_seconds)
-        """
+        """Generate a voice sample for a character (Stage 4)."""
 
     @abstractmethod
     def generate_line(
@@ -64,18 +71,33 @@ class TTSEngine(ABC):
         max_new_tokens: int = 19200,
         verbose: bool = False,
     ) -> bool:
-        """Generate audio for a single line (Stage 5).
+        """Generate audio for a single line (Stage 5)."""
 
-        Args:
-            text: Text to synthesize
-            voice_path: Path to voice sample for cloning (None for non-cloning engines)
-            output_path: Where to save the generated .wav file
-            device: CUDA device string
-            validation_model: WhisperModel for ref_text transcription
-            cfg_scale: CFG scale value
-            max_new_tokens: Max tokens for generation
-            verbose: Print verbose output
+    def _get_worker(self) -> "EngineWorker":
+        """Get or create the EngineWorker for this engine."""
+        if not hasattr(self, "_worker"):
+            from .worker import EngineWorker
+            self._worker = EngineWorker(self.ENV_NAME, self.__class__.__name__)
+            self._worker.start()
+        return self._worker
 
-        Returns:
-            True if generation succeeded, False otherwise.
-        """
+    def shutdown_worker(self) -> None:
+        """Shutdown the worker subprocess."""
+        if hasattr(self, "_worker"):
+            self._worker.shutdown()
+            del self._worker
+
+    def _worker_request(self, method: str, **kwargs: Any) -> dict[str, Any]:
+        """Send a request to the worker and return the response."""
+        worker = self._get_worker()
+        resp = worker.request(method, device=self._device, **kwargs)
+        if resp.get("error"):
+            raise RuntimeError(resp["error"])
+        return resp
+
+    @staticmethod
+    def _clear_cuda_cache() -> None:
+        """Clear CUDA memory after worker calls."""
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

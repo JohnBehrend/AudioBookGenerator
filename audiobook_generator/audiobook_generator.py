@@ -34,13 +34,13 @@ import numpy as np
 import soundfile as sf
 
 # Import flash-attn availability check
-from utils import _get_attn_implementation
+from .utils import _get_attn_implementation
 
 # Import config for default values
-from config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
+from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
 
 # Import natural sort helper
-from utils import natural_sort_key
+from .utils import natural_sort_key
 
 # Text to speech generation - imports moved to setup_tts_engine() for lazy loading
 TTS_ENGINE = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
@@ -59,13 +59,13 @@ import pandas as pd
 from transformers import set_seed
 
 # Import modular stage functions - using clean public interfaces
-import parse_chapter
-from llm_label_speakers import label_speakers  # Clean public function
-from llm_describe_character import describe_characters  # Clean public function
-from generate_voice_samples import generate_voice_samples as gen_voice_samples
+from . import parse_chapter
+from .llm_label_speakers import label_speakers  # Clean public function
+from .llm_describe_character import describe_characters  # Clean public function
+from .generate_voice_samples import generate_voice_samples as gen_voice_samples
 
 # Import shared utilities for consistent temp directory handling
-from utils import (
+from .utils import (
     get_chapters_dir,
     get_temp_dir,
     cleanup_temp_dir,
@@ -87,7 +87,7 @@ from utils import (
 )
 
 # Import VoiceMapper for centralized TTS management
-from voice_mapper import VoiceMapper
+from .voice_mapper import VoiceMapper
 
 
 # ============================================================================
@@ -1181,7 +1181,7 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
     if tts_engine:
         os.environ['TTS_ENGINE'] = tts_engine
     try:
-        from gradio_ui import create_interface, cleanup_temp_dir
+        from .gradio_ui import create_interface, cleanup_temp_dir
         import gradio as gr
         import shutil
 

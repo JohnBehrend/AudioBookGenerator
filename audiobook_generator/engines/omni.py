@@ -1,36 +1,169 @@
 """OmniVoice engine implementation."""
 
-from typing import Tuple, Any, Optional
+from __future__ import annotations
+
+from multiprocessing import Queue
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional, Tuple
 
 import numpy as np
-import torch
-import soundfile as sf
 
-from config import DEFAULTS
+from ..config import DEFAULTS
 from .base import TTSEngine
 
 
 class OmniEngine(TTSEngine):
     """OmniVoice voice cloning engine."""
 
-    def setup(self, device: str, turbo: bool = False) -> Tuple[Any, None]:
+    ENV_NAME = "omni"
+
+    def __init__(self, device: str = "cuda", turbo: bool = False):
+        self._device = device
+        self._turbo = turbo
+
+    @classmethod
+    def _run_worker(cls, request_queue: Queue, response_queue: Queue) -> None:
         from omnivoice import OmniVoice
+        import torch
+        import torchaudio
+        import soundfile as sf
 
-        model_path = "drbaph/OmniVoice-bf16"
-        model = OmniVoice.from_pretrained(
-            model_path,
-            device_map=device,
-            dtype=torch.float16,
-        )
+        model = None
 
-        # Pre-load ASR model to avoid repeated downloads during generation
-        try:
-            model.load_asr_model()
-        except Exception as e:
-            print(f"  Warning: Could not pre-load ASR model: {e}")
+        def load_model(device: str) -> None:
+            nonlocal model
+            if model is not None:
+                return
+            model_path = "drbaph/OmniVoice-bf16"
+            model = OmniVoice.from_pretrained(
+                model_path,
+                device_map=device,
+                dtype=torch.float16,
+            )
+            try:
+                model.load_asr_model()
+            except Exception as e:
+                print(f"  Warning: Could not pre-load ASR model: {e}")
 
-        return model, None
+        response_queue.put({"type": "ready"})
+
+        while True:
+            try:
+                req = request_queue.get(timeout=1)
+            except Exception:
+                continue
+
+            if req.get("type") == "shutdown":
+                break
+            if req.get("type") != "request":
+                continue
+
+            req_id = req["id"]
+            method = req["method"]
+            kwargs = req["kwargs"]
+            device = kwargs.get("device", "cuda")
+
+            try:
+                load_model(device)
+                assert model is not None
+
+                if method == "generate_voice_sample":
+                    character_name = kwargs["character_name"]
+                    description = kwargs["description"]
+                    output_dir = kwargs["output_dir"]
+
+                    if not description or not description.strip():
+                        response_queue.put({"id": req_id, "success": False})
+                        continue
+
+                    sample_text = DEFAULTS["static_voice_text"]
+                    instruct = _convert_description_to_instruct(description)
+
+                    try:
+                        audio = model.generate(
+                            text=sample_text,
+                            num_step=32,
+                            class_temperature=0.5,
+                            instruct=instruct,
+                        )
+                        if audio is None or len(audio) == 0 or audio[0].numel() == 0:
+                            response_queue.put({"id": req_id, "success": False})
+                            continue
+
+                        out_dir = Path(output_dir)
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        output_file = str(out_dir / f"{character_name}.wav")
+                        torchaudio.save(output_file, audio[0].cpu(), 24000)
+                        duration = len(audio[0]) / 24000
+                        response_queue.put({"id": req_id, "success": True, "output_file": output_file, "duration": duration})
+
+                    except ValueError as e:
+                        error_msg = str(e)
+                        if "Conflicting instruct items" in error_msg or "Each category" in error_msg:
+                            fallback = _get_fallback_instruct(description)
+                            if fallback:
+                                try:
+                                    audio = model.generate(
+                                        text=sample_text,
+                                        num_step=32,
+                                        class_temperature=3.0,
+                                        instruct=fallback,
+                                    )
+                                    if audio is None or len(audio) == 0 or audio[0].numel() == 0:
+                                        response_queue.put({"id": req_id, "success": False})
+                                        continue
+                                    out_dir = Path(output_dir)
+                                    out_dir.mkdir(parents=True, exist_ok=True)
+                                    output_file = str(out_dir / f"{character_name}.wav")
+                                    torchaudio.save(output_file, audio[0].cpu(), 24000)
+                                    duration = len(audio[0]) / 24000
+                                    response_queue.put({"id": req_id, "success": True, "output_file": output_file, "duration": duration})
+                                except Exception:
+                                    response_queue.put({"id": req_id, "success": False})
+                            else:
+                                response_queue.put({"id": req_id, "success": False})
+                        else:
+                            response_queue.put({"id": req_id, "success": False})
+
+                elif method == "generate_line":
+                    text = kwargs["text"]
+                    voice_path = kwargs["voice_path"]
+                    output_path = kwargs["output_path"]
+                    ref_text = kwargs.get("ref_text", DEFAULTS["static_voice_text"])
+
+                    ref_audio_np, ref_sr = sf.read(voice_path)
+                    if len(ref_audio_np.shape) > 1:
+                        ref_audio_np = ref_audio_np.mean(axis=1)
+                    ref_audio_np = ref_audio_np.astype(np.float32)
+                    ref_audio = torch.from_numpy(ref_audio_np)
+
+                    if ref_audio.numel() == 0:
+                        response_queue.put({"id": req_id, "success": False})
+                        continue
+
+                    audio = model.generate(
+                        text=text,
+                        ref_audio=(ref_audio, ref_sr),
+                        ref_text=ref_text,
+                        preprocess_prompt=False,
+                    )
+                    if audio is None or len(audio) == 0 or audio[0].numel() == 0:
+                        response_queue.put({"id": req_id, "success": False})
+                        continue
+
+                    torchaudio.save(output_path, audio[0].cpu(), 24000)
+                    response_queue.put({"id": req_id, "success": True})
+
+                else:
+                    response_queue.put({"id": req_id, "error": f"Unknown method: {method}"})
+
+            except Exception as e:
+                import traceback
+                tb = traceback.format_exc()
+                response_queue.put({"id": req_id, "error": str(e), "traceback": tb})
+
+    def setup(self, device: str, turbo: bool = False) -> Tuple[Any, None]:
+        return None, None
 
     def generate_voice_sample(
         self,
@@ -40,83 +173,20 @@ class OmniEngine(TTSEngine):
         device: str,
         verbose: bool = False,
     ) -> Tuple[bool, Optional[str], float]:
-        import torchaudio
-        from config import DEFAULTS
-
-        model, _ = self._get_model(device)
-        sample_text = DEFAULTS["static_voice_text"]
-
         if not description or not description.strip():
             if verbose:
                 print(f"  ERROR: Skipping '{character_name}' due to empty description")
             return False, None, 0
 
-        instruct = self._convert_description_to_instruct(description, verbose)
-
-        if verbose:
-            print(f"  Character: {character_name}")
-            print(f"  OmniVoice instruct: {instruct}")
-
-        try:
-            audio = model.generate(
-                text=sample_text,
-                num_step=32,
-                class_temperature=0.5,
-                instruct=instruct,
-            )
-
-            if audio is None or len(audio) == 0 or audio[0].numel() == 0:
-                return False, None, 0
-
-            output_dir.mkdir(parents=True, exist_ok=True)
-            output_file = str(output_dir / f"{character_name}.wav")
-            torchaudio.save(output_file, audio[0].cpu(), 24000)
-
-            duration = len(audio[0]) / 24000
-            return True, output_file, duration
-
-        except ValueError as e:
-            error_msg = str(e)
-            if "Conflicting instruct items" in error_msg or "Each category" in error_msg:
-                if verbose:
-                    print(f"    Conflict detected in instruct: {error_msg}")
-                    print(f"    Retrying with simplified voice description...")
-
-                fallback_instruct = self._get_fallback_instruct(description, verbose)
-                if fallback_instruct:
-                    if verbose:
-                        print(f"  Retrying with fallback instruct: {fallback_instruct}")
-
-                    try:
-                        audio = model.generate(
-                            text=sample_text,
-                            num_step=32,
-                            class_temperature=3.0,
-                            instruct=fallback_instruct,
-                        )
-
-                        if audio is None or len(audio) == 0 or audio[0].numel() == 0:
-                            return False, None, 0
-
-                        output_dir.mkdir(parents=True, exist_ok=True)
-                        output_file = str(output_dir / f"{character_name}.wav")
-                        torchaudio.save(output_file, audio[0].cpu(), 24000)
-
-                        duration = len(audio[0]) / 24000
-                        return True, output_file, duration
-
-                    except Exception as e2:
-                        print(f"    Fallback generation also failed: {e2}")
-                        return False, None, 0
-                else:
-                    return False, None, 0
-            else:
-                print(f"    Error generating voice with OmniVoice: {e}")
-                return False, None, 0
-
-        except Exception as e:
-            print(f"    Error generating voice with OmniVoice: {e}")
-            return False, None, 0
+        resp = self._worker_request(
+            "generate_voice_sample",
+            character_name=character_name,
+            description=description,
+            output_dir=str(output_dir),
+        )
+        self._clear_cuda_cache()
+        success = resp.get("success", False)
+        return success, resp.get("output_file"), resp.get("duration", 0)
 
     def generate_line(
         self,
@@ -129,40 +199,18 @@ class OmniEngine(TTSEngine):
         max_new_tokens: int = 19200,
         verbose: bool = False,
     ) -> bool:
-        import torchaudio
-        from config import DEFAULTS
-
-        model, _ = self._get_model(device)
-
+        # Pre-compute ref_text in main process (WhisperModel not serializable)
         ref_text = self._get_ref_text(voice_path, validation_model, verbose)
-        ref_audio_np, ref_sr = sf.read(voice_path)
 
-        if len(ref_audio_np.shape) > 1:
-            ref_audio_np = ref_audio_np.mean(axis=1)
-
-        ref_audio_np = ref_audio_np.astype(np.float32)
-        ref_audio = torch.from_numpy(ref_audio_np)
-
-        if ref_audio.numel() == 0:
-            return False
-
-        audio = model.generate(
+        resp = self._worker_request(
+            "generate_line",
             text=text,
-            ref_audio=(ref_audio, ref_sr),
+            voice_path=voice_path,
+            output_path=output_path,
             ref_text=ref_text,
-            preprocess_prompt=False,
         )
-
-        if audio is None or len(audio) == 0 or audio[0].numel() == 0:
-            return False
-
-        torchaudio.save(output_path, audio[0].cpu(), 24000)
-        return True
-
-    def _get_model(self, device: str):
-        if not hasattr(self, "_cached_model"):
-            self._cached_model, self._cached_processor = self.setup(device)
-        return self._cached_model, self._cached_processor
+        self._clear_cuda_cache()
+        return resp.get("success", False)
 
     def _get_ref_text(self, voice_path: str, validation_model, verbose: bool) -> str:
         try:
@@ -172,56 +220,55 @@ class OmniEngine(TTSEngine):
         except Exception:
             return DEFAULTS["static_voice_text"]
 
-    def _convert_description_to_instruct(self, description: str, verbose: bool = False) -> str:
-        instruct = description.replace(".", ",")
-        parts = [p.strip().lower() for p in instruct.split(",") if p.strip()]
 
-        gender_map = {"male": "male", "female": "female"}
-        age_map = {
-            "child": "child", "young": "young adult", "teen": "teenager",
-            "teenager": "teenager", "young adult": "young adult",
-            "middle aged": "middle-aged", "middle-aged": "middle-aged",
-            "elderly": "elderly", "old": "elderly",
-        }
-        pitch_map = {
-            "very low": "very low pitch", "low": "low pitch",
-            "medium": "moderate pitch", "mid": "moderate pitch",
-            "moderate": "moderate pitch", "high": "high pitch",
-            "very high": "very high pitch",
-        }
-        accent_map = {
-            "american": "american accent", "british": "british accent",
-            "australian": "australian accent", "canadian": "canadian accent",
-            "indian": "indian accent", "chinese": "chinese accent",
-            "korean": "korean accent", "japanese": "japanese accent",
-            "portuguese": "portuguese accent", "russian": "russian accent",
-        }
+def _convert_description_to_instruct(description: str) -> str:
+    instruct = description.replace(".", ",")
+    parts = [p.strip().lower() for p in instruct.split(",") if p.strip()]
 
-        mapped_parts = []
-        for part in parts:
-            if part in gender_map:
-                mapped_parts.append(gender_map[part])
-            elif part in age_map:
-                mapped_parts.append(age_map[part])
-            elif part in pitch_map:
-                mapped_parts.append(pitch_map[part])
-            elif part == "whisper":
-                mapped_parts.append("whisper")
-            elif part in accent_map:
-                mapped_parts.append(accent_map[part])
-            elif part.endswith(" accent"):
-                mapped_parts.append(part)
-            elif any(c in part for c in "河南陕西四川贵云南桂济石甘宁青岛东北话"):
-                mapped_parts.append(part)
-            else:
-                if verbose:
-                    print(f"    Warning: Skipping unknown attribute '{part}'")
+    gender_map = {"male": "male", "female": "female"}
+    age_map = {
+        "child": "child", "young": "young adult", "teen": "teenager",
+        "teenager": "teenager", "young adult": "young adult",
+        "middle aged": "middle-aged", "middle-aged": "middle-aged",
+        "elderly": "elderly", "old": "elderly",
+    }
+    pitch_map = {
+        "very low": "very low pitch", "low": "low pitch",
+        "medium": "moderate pitch", "mid": "moderate pitch",
+        "moderate": "moderate pitch", "high": "high pitch",
+        "very high": "very high pitch",
+    }
+    accent_map = {
+        "american": "american accent", "british": "british accent",
+        "australian": "australian accent", "canadian": "canadian accent",
+        "indian": "indian accent", "chinese": "chinese accent",
+        "korean": "korean accent", "japanese": "japanese accent",
+        "portuguese": "portuguese accent", "russian": "russian accent",
+    }
 
-        return ", ".join(mapped_parts)
+    mapped_parts = []
+    for part in parts:
+        if part in gender_map:
+            mapped_parts.append(gender_map[part])
+        elif part in age_map:
+            mapped_parts.append(age_map[part])
+        elif part in pitch_map:
+            mapped_parts.append(pitch_map[part])
+        elif part == "whisper":
+            mapped_parts.append("whisper")
+        elif part in accent_map:
+            mapped_parts.append(accent_map[part])
+        elif part.endswith(" accent"):
+            mapped_parts.append(part)
+        elif any(c in part for c in "河南陕西四川贵云南桂济石甘宁青岛东北话"):
+            mapped_parts.append(part)
 
-    def _get_fallback_instruct(self, description: str, verbose: bool = False) -> Optional[str]:
-        parts = [p.strip().lower() for p in description.replace(".", ",").split(",") if p.strip()]
-        for part in parts:
-            if part in ("male", "female"):
-                return part
-        return None
+    return ", ".join(mapped_parts)
+
+
+def _get_fallback_instruct(description: str) -> Optional[str]:
+    parts = [p.strip().lower() for p in description.replace(".", ",").split(",") if p.strip()]
+    for part in parts:
+        if part in ("male", "female"):
+            return part
+    return None

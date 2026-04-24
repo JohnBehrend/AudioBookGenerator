@@ -21,13 +21,13 @@ from pathlib import Path
 from openai import OpenAI
 
 # Import config for default values
-from config import DEFAULTS, AUDIO_SETTINGS, VOICE_VALIDATION
+from .config import DEFAULTS, AUDIO_SETTINGS, VOICE_VALIDATION, TTS_MODEL_PATHS
 
 # Import engine registry
-from engines import get_engine
+from .engines import get_engine
 
 # Import utilities for validation client
-from utils import get_validation_client
+from .utils import get_validation_client
 
 
 class VoiceMapper:
@@ -193,7 +193,7 @@ class VoiceMapper:
         if engine_key in self.tts_models:
             return self.tts_models[engine_key]
 
-        engine = get_engine(self.tts_engine)
+        engine = get_engine(self.tts_engine, device=self.device, turbo=turbo)
         model, processor = engine.setup(self.device, turbo=turbo)
         model_path = self._get_model_path()
         result = (model, processor, model_path, None)
@@ -202,7 +202,6 @@ class VoiceMapper:
 
     def _get_model_path(self) -> str:
         """Get the HuggingFace model path for the current engine."""
-        from config import TTS_MODEL_PATHS
         engine_paths = TTS_MODEL_PATHS[self.tts_engine]
         if isinstance(engine_paths, dict):
             return engine_paths.get("base", list(engine_paths.values())[0])
@@ -224,12 +223,14 @@ class VoiceMapper:
             TTSEngine instance.
         """
         if self._cached_engine is None:
-            self._cached_engine = get_engine(self.tts_engine)
+            self._cached_engine = get_engine(self.tts_engine, device=self.device)
         return self._cached_engine
 
     def cleanup_engines(self) -> None:
-        """Release cached engine instance."""
-        self._cached_engine = None
+        """Release cached engine instance and shutdown worker."""
+        if self._cached_engine is not None:
+            self._cached_engine.shutdown_worker()
+            self._cached_engine = None
 
     @staticmethod
     def validate_voice_with_llm(
@@ -393,7 +394,7 @@ class VoiceMapper:
         if max_new_tokens is None:
             max_new_tokens = DEFAULTS["max_new_tokens"]
 
-        engine = get_engine(self.tts_engine)
+        engine = get_engine(self.tts_engine, device=self.device)
         success, output_file, duration = engine.generate_voice_sample(
             character_name=character_name,
             description=description,
@@ -405,6 +406,7 @@ class VoiceMapper:
         if success:
             self.add_voice_path(character_name, output_file)
 
+        engine.shutdown_worker()
         return success, output_file, duration
 
     def build_voice_clone_prompt(
@@ -435,7 +437,7 @@ class VoiceMapper:
         # Auto-transcribe if requested and validation_model is available
         if auto_transcribe and validation_model is not None:
             try:
-                from utils import transcribe_audio_with_whisper
+                from ..utils import transcribe_audio_with_whisper
                 actual_ref_text, _, _ = transcribe_audio_with_whisper(validation_model, voice_path)
                 if verbose:
                     print(f"  Transcribed ref_text: {actual_ref_text}")

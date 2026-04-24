@@ -11,8 +11,8 @@ from typing import Dict, Tuple
 from collections import Counter
 from openai import OpenAI
 
-from config import LLM_SETTINGS, DEFAULTS
-from utils import get_llm_client, merge_line_maps, compare_characters, natural_sort_key
+from .config import LLM_SETTINGS, DEFAULTS
+from .utils import get_llm_client, merge_line_maps, compare_characters, natural_sort_key
 
 def normalize_key_value_pairs(json_str):
     """Normalize JSON by ensuring all keys and string values are properly quoted.

@@ -15,8 +15,8 @@ from typing import Dict, List, Optional, Tuple
 from openai import OpenAI
 from functools import lru_cache
 
-from config import LLM_SETTINGS, OUTPUT_DIR
-from utils import get_llm_client, compare_characters, get_characters_from_map_files, natural_sort_key
+from .config import LLM_SETTINGS, OUTPUT_DIR
+from .utils import get_llm_client, compare_characters, get_characters_from_map_files, natural_sort_key
 
 
 # Default prompt for character description (OmniVoice format)

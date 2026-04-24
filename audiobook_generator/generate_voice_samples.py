@@ -17,11 +17,11 @@ from typing import Optional
 from openai import OpenAI
 
 # Import config for default values
-from config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
-from utils import get_validation_client
+from .config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
+from .utils import get_validation_client
 
 # Import VoiceMapper for centralized TTS management
-from voice_mapper import VoiceMapper
+from .voice_mapper import VoiceMapper
 
 
 def load_character_descriptions(descriptions_file):

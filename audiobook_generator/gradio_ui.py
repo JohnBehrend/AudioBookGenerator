@@ -43,11 +43,11 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
 
 # Import from package modules - using clean public interfaces
-import parse_chapter
-from llm_label_speakers import label_speakers  # Clean public function
-from llm_describe_character import describe_characters as describe_chars  # Clean public function
-from generate_voice_samples import generate_voice_samples as gen_voice_samples
-from utils import (
+from . import parse_chapter
+from .llm_label_speakers import label_speakers  # Clean public function
+from .llm_describe_character import describe_characters as describe_chars  # Clean public function
+from .generate_voice_samples import generate_voice_samples as gen_voice_samples
+from .utils import (
     natural_sort_key,
     get_chapters_dir,
     get_temp_dir,
@@ -64,13 +64,13 @@ from utils import (
     parse_map_file,
     count_lines_per_character,
 )
-from audiobook_generator import (
+from .audiobook_generator import (
     PipelineState,
     generate_audiobook_from_chapters,
     get_non_silent_audio_from_wavs,
     VoiceMapper,
 )
-from config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS, DEFAULT_EPUB_FILE
+from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS, DEFAULT_EPUB_FILE
 
 
 # ============================================================================

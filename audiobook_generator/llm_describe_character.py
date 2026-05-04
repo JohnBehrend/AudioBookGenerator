@@ -12,81 +12,52 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from openai import OpenAI
-from functools import lru_cache
 
 from .config import LLM_SETTINGS, OUTPUT_DIR
 from .utils import get_llm_client, compare_characters, get_characters_from_map_files, natural_sort_key
 
 
-# Default prompt for character description (OmniVoice format)
-CHARACTER_DESCRIPTION_PROMPT_OMNI = """You are an expert voice actor. Create VERY SHORT voice profiles optimized for TTS (text-to-speech) synthesis.
+class ChapterTextCache:
+    """Cache for chapter texts with explicit management.
 
-CRITICAL: Output MUST be in OmniVoice format - comma-separated attributes only.
+    This replaces the lru_cache approach to allow proper test isolation.
+    Create a new instance per test or use with a pytest fixture.
+    """
 
-OMNIVOICE SUPPORTED ATTRIBUTES:
-- Gender: male, female
-- Age: child, teenager, young adult, middle-aged, elderly
-- Pitch: very low pitch, low pitch, moderate pitch, high pitch, very high pitch
-- Style: whisper
-- English Accents: american accent, british accent, australian accent, canadian accent, indian accent, chinese accent, korean accent, japanese accent, portuguese accent, russian accent
+    def __init__(self):
+        self._cache: Dict[str, Tuple[List[str], Tuple[Path, ...]]] = {}
 
-CRITICAL RULES:
-- Output ONLY comma-separated attributes (no other text)
-- NO markdown, NO sentences, NO "a", NO "with", NO "voice"
-- Use ONLY the supported attributes listed above
-- 2-5 attributes max, comma-separated
-- ONE gender only (male OR female, NOT both)
-- ONE age only (child OR teenager OR young adult OR middle-aged OR elderly)
-- ONE pitch only
-- ONE accent only (or omit if not applicable)
-- NEVER combine multiple genders, ages, or pitches in one description
+    def get(self, chapters_dir: Path) -> Tuple[List[str], List[Path]]:
+        """Get or load chapter texts for a directory.
 
-Format: <gender>, <age>, <pitch>, <accent>
+        Args:
+            chapters_dir: Path to the chapters directory
 
-Good Examples (OmniVoice format):
-- male, middle-aged, moderate pitch
-- female, young adult, high pitch, british accent
-- male, elderly, low pitch
-- female, young adult, moderate pitch, american accent
-- male, middle-aged, high pitch
+        Returns:
+            Tuple of (list of chapter texts, list of chapter file paths)
+        """
+        cache_key = str(chapters_dir.resolve())
+        if cache_key not in self._cache:
+            self._cache[cache_key] = self._load_chapter_texts(chapters_dir)
+        texts, files = self._cache[cache_key]
+        return texts, list(files)
 
-BAD Examples (do NOT use):
-- A middle-aged male with a smooth voice.
-- male. middle aged. high
-- An elderly male with a gravelly voice.
-- male, female, young adult (conflicting genders)
-- male, young adult, middle-aged, elderly (multiple ages)
-- male, middle-aged, high pitch, low pitch (conflicting pitches)
+    def _load_chapter_texts(self, chapters_dir: Path) -> Tuple[List[str], Tuple[Path, ...]]:
+        """Load chapter texts from a directory.
 
-For group characters like "crowd", "voices", or "people", pick ONE representative voice (e.g., "male, middle-aged, moderate pitch").
-"""
+        Args:
+            chapters_dir: Path to the chapters directory
 
-# VoxCPM format prompt
-CHARACTER_DESCRIPTION_PROMPT_VOX = """You are an expert voice actor. Create SHORT voice profiles for VoxCPM TTS synthesis.
+        Returns:
+            Tuple of (list of chapter texts, tuple of chapter file paths)
+        """
+        chapter_files = tuple(sorted(chapters_dir.glob("chapter_*.txt"), key=natural_sort_key))
+        chapter_texts = [load_chapter_text(str(f)) for f in chapter_files]
+        return chapter_texts, chapter_files
 
-CRITICAL: Output concise descriptions WITHOUT parentheses.
-
-VOXCPM FORMATTING:
-- NO parentheses - just plain text
-- 5-15 words max, comma-separated
-- Combine: basic identity + key voice trait + delivery style
-
-Good Examples (VoxCPM format):
-- young female, clear bright voice, rapid rhythmic pacing
-- middle-aged male, low gravelly voice, calm measured tone
-- elderly woman, warm raspy voice, gentle slow delivery
-- deep-voiced male, smooth magnetic voice, intense urgent gravity
-- cheerful child, high-pitched bright voice, energetic rapid speech
-
-BAD Examples (do NOT use):
-- (young female mystic with a street-smart edge...) - too long with parens
-- male, middle-aged, high pitch - too brief
-- A middle-aged male with a smooth voice - not comma-separated
-
-For group characters like "crowd" or "voices", use a single representative voice (e.g., "male, moderate pitch, energetic delivery").
-"""
-
-# get_characters_from_map_files is now imported from utils (uses glob with sorted output)
+    def clear(self) -> None:
+        """Clear all cached data."""
+        self._cache.clear()
 
 
 def load_characters(characters_file: str) -> list:
@@ -94,9 +65,6 @@ def load_characters(characters_file: str) -> list:
     with open(characters_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return data.get('characters', [])
-
-
-# compare_characters is now imported from utils (uses simple substring matching)
 
 
 def find_duplicate_characters(characters: list) -> dict:
@@ -178,6 +146,9 @@ def load_chapter_text(chapter_file: str) -> str:
         return f.read()
 
 
+_global_chapter_cache = ChapterTextCache()
+
+
 def load_chapter_texts_with_cache(chapters_dir: Path) -> Tuple[List[str], List[Path]]:
     """Load chapter texts with module-level caching.
 
@@ -187,26 +158,12 @@ def load_chapter_texts_with_cache(chapters_dir: Path) -> Tuple[List[str], List[P
     Returns:
         Tuple of (list of chapter texts, list of chapter file paths)
     """
-    chapters_dir_str = str(chapters_dir)
-
-    # Use lru_cache for bounded caching instead of unbounded module-level cache
-    return _load_chapter_texts_cached(chapters_dir_str)
+    return _global_chapter_cache.get(chapters_dir)
 
 
-@lru_cache(maxsize=32)
-def _load_chapter_texts_cached(chapters_dir_str: str) -> Tuple[List[str], Tuple[Path, ...]]:
-    """Load and cache chapter texts using bounded LRU cache.
-
-    Args:
-        chapters_dir_str: String path to chapters directory
-
-    Returns:
-        Tuple of (list of chapter texts, tuple of chapter file paths)
-    """
-    chapters_dir = Path(chapters_dir_str)
-    chapter_files = tuple(sorted(chapters_dir.glob("chapter_*.txt"), key=natural_sort_key))
-    chapter_texts = [load_chapter_text(str(f)) for f in chapter_files]
-    return chapter_texts, chapter_files
+def clear_chapter_cache() -> None:
+    """Clear the global chapter texts cache (for testing)."""
+    _global_chapter_cache.clear()
 
 
 def find_chapters_with_character(chapter_texts: list, chapter_files: list, character_name: str) -> list:

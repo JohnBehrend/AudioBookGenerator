@@ -18,7 +18,6 @@ Usage:
     python -m audiobook_generator --gradio
 """
 
-import argparse
 import os
 import sys
 import time
@@ -30,44 +29,19 @@ import traceback
 from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
 
-import torch
-import torchaudio
-from scipy.io import wavfile
-import numpy as np
-import soundfile as sf
-
-# Import flash-attn availability check
 from .utils import _get_attn_implementation
-
-# Import config for default values
 from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
-
-# Import natural sort helper
 from .utils import natural_sort_key
 
-# Text to speech generation - imports moved to setup_tts_engine() for lazy loading
 TTS_ENGINE = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
 
-# Voice to Text for validation
 from difflib import SequenceMatcher
-from faster_whisper import WhisperModel
 
-# combine audio files
-import pydub
-from pydub import AudioSegment
-
-import pandas as pd
-
-# consistent seeding
-from transformers import set_seed
-
-# Import modular stage functions - using clean public interfaces
 from . import parse_chapter
-from .llm_label_speakers import label_speakers  # Clean public function
-from .llm_describe_character import describe_characters  # Clean public function
+from .llm_label_speakers import label_speakers
+from .llm_describe_character import describe_characters
 from .generate_voice_samples import generate_voice_samples as gen_voice_samples
 
-# Import shared utilities for consistent temp directory handling
 from .utils import (
     get_chapters_dir,
     get_temp_dir,
@@ -98,7 +72,7 @@ from .voice_mapper import VoiceMapper
 # ============================================================================
 
 
-def setup_validation_model(device: str, cpu: bool = False) -> WhisperModel:
+def setup_validation_model(device: str, cpu: bool = False):
     """Setup the Whisper validation model for audio transcription.
 
     Args:
@@ -108,23 +82,23 @@ def setup_validation_model(device: str, cpu: bool = False) -> WhisperModel:
     Returns:
         WhisperModel instance for audio validation
     """
+    from faster_whisper import WhisperModel
+
     model_name = DEFAULTS["validation_model_name"]
     if cpu:
-        # Use CPU with float32
         return WhisperModel(model_name, device="cpu", compute_type="float32")
     else:
-        # Normalize device for Whisper: faster-whisper only supports 'cuda', not 'cuda:0', 'cuda:1', etc.
         whisper_device = "cuda" if device.startswith("cuda") else device
-        # Use GPU for Whisper for faster transcription
         return WhisperModel(model_name, device=whisper_device, compute_type="float16")
 
 
 def get_non_silent_audio_from_wavs(wav_filepath_list, min_silence_len=1250, silence_thresh=-60):
     """Remove silent audio from list of wave filepaths of wavs together. Return AudioSegment."""
+    import pydub
+
     all_audio_segments = None
     for wav in wav_filepath_list:
         raw_audio_segment = pydub.AudioSegment.from_wav(wav)
-        # remove silence
         this_audio_segment = pydub.AudioSegment.empty()
         for (start_time, end_time) in pydub.silence.detect_nonsilent(raw_audio_segment, min_silence_len=min_silence_len, silence_thresh=silence_thresh):
             this_audio_segment += raw_audio_segment[start_time:end_time]
@@ -319,6 +293,7 @@ def generate_tts_for_line(
     retries = 0
     input_string = distill_string(full_script)
 
+    from transformers import set_seed
     set_seed(42)
     while ratio < 0.85 and retries < 2:
         set_seed(42 + retries)
@@ -351,9 +326,10 @@ def generate_tts_for_line(
             continue
 
         gc.collect()
+        import torch
         torch.cuda.empty_cache()
 
-        # send through a cleaning ML algo
+        from scipy.io import wavfile
         sample_rate, waveform = wavfile.read(output_path)
         wavfile.write(output_path, sample_rate, waveform)
 
@@ -418,6 +394,7 @@ def generate_tts_for_line(
                     clip_end1 = start_times[::-1][postfix_start_index]
                     if verbose:
                         print(f"\nPOSTFIX DETECTED CLIPPING to {clip_end1} - {clip_end2}\n")
+                    import pydub
                     audio = pydub.AudioSegment.from_wav(output_path)
                     trimmed_audio = audio[0:((clip_end1 + clip_end2) * 500)]
                     trimmed_audio.export(output_path, format="wav")
@@ -431,6 +408,7 @@ def generate_tts_for_line(
                     clip_end1 = end_times[::-1][lastvalid_index]
                     if verbose:
                         print(f"\nERROR: POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1}\n")
+                    import pydub
                     audio = pydub.AudioSegment.from_wav(output_path)
                     trimmed_audio = audio[0:(clip_end1 * 1000)]
                     trimmed_audio.export(output_path, format="wav")
@@ -674,6 +652,7 @@ def generate_audiobook_from_chapters(
                 print(f"[CHAPTER_COMPLETE] Chapter {i}/{len(chapters_to_process)}")
 
             # Clear cache after each chapter to free VRAM
+            import torch
             torch.cuda.empty_cache()
             gc.collect()
 

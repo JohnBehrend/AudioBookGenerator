@@ -17,49 +17,6 @@ from .config import LLM_SETTINGS, OUTPUT_DIR
 from .utils import get_llm_client, compare_characters, get_characters_from_map_files, natural_sort_key
 
 
-class ChapterTextCache:
-    """Cache for chapter texts with explicit management.
-
-    This replaces the lru_cache approach to allow proper test isolation.
-    Create a new instance per test or use with a pytest fixture.
-    """
-
-    def __init__(self):
-        self._cache: Dict[str, Tuple[List[str], Tuple[Path, ...]]] = {}
-
-    def get(self, chapters_dir: Path) -> Tuple[List[str], List[Path]]:
-        """Get or load chapter texts for a directory.
-
-        Args:
-            chapters_dir: Path to the chapters directory
-
-        Returns:
-            Tuple of (list of chapter texts, list of chapter file paths)
-        """
-        cache_key = str(chapters_dir.resolve())
-        if cache_key not in self._cache:
-            self._cache[cache_key] = self._load_chapter_texts(chapters_dir)
-        texts, files = self._cache[cache_key]
-        return texts, list(files)
-
-    def _load_chapter_texts(self, chapters_dir: Path) -> Tuple[List[str], Tuple[Path, ...]]:
-        """Load chapter texts from a directory.
-
-        Args:
-            chapters_dir: Path to the chapters directory
-
-        Returns:
-            Tuple of (list of chapter texts, tuple of chapter file paths)
-        """
-        chapter_files = tuple(sorted(chapters_dir.glob("chapter_*.txt"), key=natural_sort_key))
-        chapter_texts = [load_chapter_text(str(f)) for f in chapter_files]
-        return chapter_texts, chapter_files
-
-    def clear(self) -> None:
-        """Clear all cached data."""
-        self._cache.clear()
-
-
 def load_characters(characters_file: str) -> list:
     """Load characters from a JSON file."""
     with open(characters_file, 'r', encoding='utf-8') as f:
@@ -146,11 +103,8 @@ def load_chapter_text(chapter_file: str) -> str:
         return f.read()
 
 
-_global_chapter_cache = ChapterTextCache()
-
-
-def load_chapter_texts_with_cache(chapters_dir: Path) -> Tuple[List[str], List[Path]]:
-    """Load chapter texts with module-level caching.
+def load_chapter_texts(chapters_dir: Path) -> Tuple[List[str], List[Path]]:
+    """Load chapter texts from a directory.
 
     Args:
         chapters_dir: Path to the chapters directory
@@ -158,12 +112,9 @@ def load_chapter_texts_with_cache(chapters_dir: Path) -> Tuple[List[str], List[P
     Returns:
         Tuple of (list of chapter texts, list of chapter file paths)
     """
-    return _global_chapter_cache.get(chapters_dir)
-
-
-def clear_chapter_cache() -> None:
-    """Clear the global chapter texts cache (for testing)."""
-    _global_chapter_cache.clear()
+    chapter_files = sorted(chapters_dir.glob("chapter_*.txt"), key=natural_sort_key)
+    chapter_texts = [load_chapter_text(str(f)) for f in chapter_files]
+    return chapter_texts, chapter_files
 
 
 def find_chapters_with_character(chapter_texts: list, chapter_files: list, character_name: str) -> list:
@@ -656,7 +607,7 @@ def describe_characters(
     # Load chapter texts for context (with caching)
     chapters_dir_path = Path(chapters_dir)
     if chapters_dir_path.is_dir():
-        chapter_texts, chapter_files = load_chapter_texts_with_cache(chapters_dir_path)
+        chapter_texts, chapter_files = load_chapter_texts(chapters_dir_path)
         if verbose:
             print(f"Loaded {len(chapter_texts)} chapter files for context")
     else:

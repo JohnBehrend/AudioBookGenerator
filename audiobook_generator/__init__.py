@@ -29,7 +29,6 @@ from .gradio_ui import (
     cleanup_temp_dir,
 )
 from .utils import TempDirContext
-from .llm_describe_character import ChapterTextCache, clear_chapter_cache
 from .testing import MockTTSEngine, MockLLMClient
 
 __all__ = [
@@ -55,9 +54,6 @@ __all__ = [
     "cleanup_temp_dir",
     # Temp directory management
     "TempDirContext",
-    # Chapter text caching
-    "ChapterTextCache",
-    "clear_chapter_cache",
     # Testing utilities
     "MockTTSEngine",
     "MockLLMClient",

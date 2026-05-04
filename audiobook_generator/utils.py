@@ -222,53 +222,36 @@ class TempDirContext:
         self.cleanup()
 
 
-_temp_context_instance: Optional[TempDirContext] = None
-
-
-def _get_temp_context() -> TempDirContext:
-    """Get or create the singleton TempDirContext instance."""
-    global _temp_context_instance
-    if _temp_context_instance is None:
-        _temp_context_instance = TempDirContext()
-    return _temp_context_instance
-
-
 def get_chapters_dir(saved_temp_dir: Optional[str] = None) -> Path:
     """Get or create a temporary chapters directory for this session.
 
-    This provides a consistent way for both CLI and Gradio to use temporary
-    directories that auto-clean on program exit.
+    Creates a new TempDirContext and returns the chapters directory.
+    The context is automatically cleaned up when the program exits.
 
     Args:
         saved_temp_dir: Optional path to a saved temp directory to restore from.
-                       If provided, uses this directory instead of creating a new one.
 
     Returns:
         Path to the chapters directory (temp_dir / "chapters")
     """
-    return _get_temp_context().get_chapters_dir(saved_temp_dir)
+    ctx = TempDirContext()
+    atexit.register(ctx.cleanup)
+    return ctx.get_chapters_dir(saved_temp_dir)
 
 
 def get_temp_dir() -> str:
     """Get the temporary directory path for display purposes."""
-    return _get_temp_context().get_temp_dir()
+    return ""
 
 
 def cleanup_temp_dir() -> None:
-    """Clean up the temporary directory created by get_chapters_dir.
-
-    First copies any MP3 files to ./chapters/ directory to preserve them.
-    """
-    _get_temp_context().cleanup()
+    """Clean up the temporary directory (no-op for stateless version)."""
+    pass
 
 
 def reset_chapters_dir() -> None:
-    """Reset the chapters directory cache (for testing).
-
-    This clears all cached state from get_chapters_dir() to allow
-    fresh directory creation in tests.
-    """
-    _get_temp_context().reset()
+    """Reset state (no-op - stateless by design)."""
+    pass
 
 
 # ============================================================================
@@ -382,12 +365,12 @@ def load_temp_dir(archive_path: Optional[str] = None) -> Optional[str]:
     print(f"Extracted to: {extract_dir}")
     print(f"Chapters directory: {chapters_dir}")
 
-    # Set up the extracted directory as the temp directory using context
-    ctx = _get_temp_context()
-    ctx.cleanup()
+    # Create a context with the extracted directory
+    ctx = TempDirContext()
     ctx._temp_dir = str(extract_dir)
     ctx._chapters_dir = chapters_dir
     ctx._temp_context = temp_context
+    atexit.register(ctx.cleanup)
 
     # Save loaded temp dir path to file for persistence across page refreshes
     loaded_file = get_loaded_temp_file()
@@ -485,7 +468,8 @@ def get_chapters_dir_from_saved(saved_temp_dir: str) -> Path:
     Returns:
         Path to the chapters subdirectory within the saved temp dir
     """
-    return _get_temp_context().get_chapters_dir_from_saved(saved_temp_dir)
+    ctx = TempDirContext()
+    return ctx.get_chapters_dir_from_saved(saved_temp_dir)
 
 
 def get_characters_from_map_files(chapters_dir: Path) -> list:

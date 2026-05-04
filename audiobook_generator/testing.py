@@ -33,7 +33,7 @@ class MockLLMClient:
 
     def __init__(self):
         """Initialize mock client."""
-        self.chat = ChatCompletionsMock(self)
+        self.chat = _ChatCompletionsWrapper(self)
         self.base_url = "http://localhost:1234/v1"
         self.api_key = "mock-key"
 
@@ -66,7 +66,7 @@ class MockLLMClient:
         return {"role": "assistant", "content": "{}"}
 
 
-class ChatCompletionsMock:
+class _ChatCompletionsMock:
     """Mock for openai.ChatCompletions."""
 
     def __init__(self, client: MockLLMClient):
@@ -85,7 +85,25 @@ class ChatCompletionsMock:
 
         response_content = self._client.get_next_response()
 
-        return ChatCompletionChoice(response_content)
+        return ChatCompletion(response_content)
+
+
+class _ChatCompletionsWrapper:
+    """Wrapper that provides both .completions and .chat.completions access patterns."""
+
+    def __init__(self, client: MockLLMClient):
+        self._client = client
+        self._completions = _ChatCompletionsMock(client)
+
+    @property
+    def completions(self):
+        """Provide .completions access (for newer OpenAI API)."""
+        return self._completions
+
+    @property
+    def chat(self):
+        """Provide .chat access for chained .chat.completions pattern."""
+        return self
 
 
 class ChatCompletionChoice:
@@ -93,6 +111,14 @@ class ChatCompletionChoice:
 
     def __init__(self, message: dict):
         self.message = MockMessage(message)
+        self.choices = [self]
+
+
+class ChatCompletion:
+    """Mock for openai.ChatCompletion response object."""
+
+    def __init__(self, message: dict):
+        self.choices = [ChatCompletionChoice(message)]
 
 
 class MockMessage:

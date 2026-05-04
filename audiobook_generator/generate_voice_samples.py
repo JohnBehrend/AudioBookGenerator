@@ -2,6 +2,7 @@
 """
 Module to generate voice samples for audiobook characters.
 """
+import json
 import os
 import sys
 import shutil

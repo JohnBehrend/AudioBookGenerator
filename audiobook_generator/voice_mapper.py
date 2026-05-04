@@ -43,7 +43,14 @@ class VoiceMapper:
     after first load/generation.
     """
 
-    def __init__(self, output_dir: str, device: str = "cuda:0", tts_engine: str = None, duplicate_replacement_map: Dict[str, str] = None):
+    def __init__(
+        self,
+        output_dir: str,
+        device: str = "cuda:0",
+        tts_engine: str = None,
+        duplicate_replacement_map: Dict[str, str] = None,
+        engine: Optional[Any] = None,
+    ):
         """Initialize the VoiceMapper.
 
         Args:
@@ -52,6 +59,7 @@ class VoiceMapper:
             tts_engine: TTS engine to use ('vibevoice', 'moss', 'echo-tts', 'omni', 'vox')
                        Defaults to AUDIO_SETTINGS['default_tts_engine']
             duplicate_replacement_map: Optional dict mapping duplicate character names to canonical names
+            engine: Optional pre-created TTS engine instance for injection (for testing/mocking)
         """
         self.output_dir = Path(output_dir)
         self.device = device
@@ -64,6 +72,9 @@ class VoiceMapper:
         self.voice_paths: Dict[str, str] = {}  # Cached voice file paths
         self.voice_clone_prompts: Dict[str, Any] = {}  # Pre-built prompts for voice cloning
         self._cached_engine: Optional[Any] = None  # Cached TTS engine instance
+
+        # Engine injection - allows mocking in tests
+        self._injected_engine: Optional[Any] = engine
 
         # Create output directory if needed
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -216,15 +227,25 @@ class VoiceMapper:
     def get_engine(self):
         """Get or create a cached TTS engine instance.
 
-        The engine is created once and reused across all line generations
-        to avoid repeatedly loading models.
+        If an engine was injected via __init__, returns that engine.
+        Otherwise creates and caches an engine using get_engine().
 
         Returns:
             TTSEngine instance.
         """
+        if self._injected_engine is not None:
+            return self._injected_engine
         if self._cached_engine is None:
             self._cached_engine = get_engine(self.tts_engine, device=self.device)
         return self._cached_engine
+
+    def set_engine(self, engine: Any) -> None:
+        """Set a TTS engine instance (for testing/mocking).
+
+        Args:
+            engine: TTS engine instance to use
+        """
+        self._injected_engine = engine
 
     def cleanup_engines(self) -> None:
         """Release cached engine instance and shutdown worker."""

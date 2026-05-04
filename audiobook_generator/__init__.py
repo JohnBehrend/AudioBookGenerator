@@ -30,6 +30,7 @@ from .gradio_ui import (
 )
 from .utils import TempDirContext
 from .llm_describe_character import ChapterTextCache, clear_chapter_cache
+from .testing import MockTTSEngine
 
 __all__ = [
     "DEFAULTS",
@@ -57,4 +58,6 @@ __all__ = [
     # Chapter text caching
     "ChapterTextCache",
     "clear_chapter_cache",
+    # Testing utilities
+    "MockTTSEngine",
 ]

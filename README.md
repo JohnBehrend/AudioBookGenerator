@@ -55,22 +55,35 @@ uv run python audiobook_generator.py --gradio
 
 Each pipeline stage can also be run independently:
 
+**Stage 1: Parse EPUB**
 ```bash
-# Stage 1: Parse EPUB (handled automatically by CLI)
-# Uses: audiobook_generator.parse_chapter.parse_epub_to_chapters()
-
-# Stage 2: Label Speakers
-uv run python audiobook_generator/llm_label_speakers.py -txt_file chapters/chapter_0.txt
-
-# Stage 3: Describe Characters
-uv run python audiobook_generator/llm_describe_character.py chapters
-
-# Stage 4: Generate Voice Samples
-uv run python audiobook_generator/generate_voice_samples.py
-
-# Stage 5: Generate Audiobook (handled automatically by CLI)
-# Uses: audiobook_generator.audiobook_generator.generate_audiobook_from_chapters()
+uv run python audiobook_generator.py <epub_file>
 ```
+Output: `chapters/chapter_*.txt`
+
+**Stage 2: Label Speakers**
+```bash
+uv run python audiobook_generator/llm_label_speakers.py -txt_file chapters/chapter_0.txt
+```
+Output: `chapters/chapter_*.map.json`
+
+**Stage 3: Describe Characters**
+```bash
+uv run python audiobook_generator/llm_describe_character.py chapters
+```
+Output: `characters_descriptions.json`
+
+**Stage 4: Generate Voice Samples**
+```bash
+uv run python audiobook_generator/generate_voice_samples.py
+```
+Output: `chapters/chapter_*.wav`
+
+**Stage 5: Generate Audiobook**
+```bash
+uv run python audiobook_generator.py <epub_file>
+```
+Output: `chapters/chapter_*.mp3`
 
 ## Requirements
 

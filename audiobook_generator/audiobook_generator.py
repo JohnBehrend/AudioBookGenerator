@@ -66,6 +66,20 @@ from .utils import (
 # Import VoiceMapper for centralized TTS management
 from .voice_mapper import VoiceMapper
 
+# Import pipeline pure functions
+from .pipeline import (
+    normalize_script,
+    add_postfix,
+    prepare_script_for_tts,
+    score_strings_pop,
+    calculate_clip_points,
+    should_retry,
+    generate_output_filename,
+    is_generation_success,
+    MIN_RATIO_THRESHOLD,
+    MAX_RETRIES,
+)
+
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -184,49 +198,6 @@ def _get_ref_text_for_voice(voice_path: str, validation_model, voice_name: str, 
         return DEFAULTS["static_voice_text"]
 
 
-def score_strings_pop(i_str, d_str, lookahead=5, postfix="and also with you"):
-    # Ensure lookahead is non-negative
-    lookahead = max(0, lookahead)
-    prev_undetected = False
-    results = []
-    input_tokens = i_str.split(" ")
-    detected_tokens = d_str.split(" ")
-    diff_list = []
-    for i, i_tok in enumerate(input_tokens):
-        if i_tok in diff_list:
-            detected = True
-            this_idx = diff_list.index(i_tok)
-            detected_tokens = diff_list[this_idx+1:] + detected_tokens
-            diff_list = diff_list[:this_idx]
-        else:
-            detected = False
-            if prev_undetected and len(diff_list) > 0:
-                diff_list.pop(0)
-            else:
-                diff_list = []
-
-            if detected_tokens:
-                n = max(min(lookahead, len(detected_tokens) - len(diff_list)), 0)
-                for j in range(n):
-                    d_tok = detected_tokens.pop(0)
-                    diff_list.append(d_tok)
-                    if i_tok in diff_list:
-                        detected = True
-                        break
-                if not detected:
-                    prev_undetected = True
-
-        diff_str = " ".join(diff_list)
-        results.append((i, i_tok, diff_str, detected, " ".join(detected_tokens[:lookahead])))
-    df_temp = pd.DataFrame(results, columns=["i", "i_tok", "diff", "found", "next_tokens"])
-    last_valid_token_index = df_temp[df_temp["found"] == True]["i"].max()
-    last_valid_token = df_temp[df_temp["i"] == last_valid_token_index]["i_tok"]
-    if len(last_valid_token.values) == 0:
-        return 0, None
-    else:
-        return float(df_temp["found"].mean()) - 0.5 * (postfix not in d_str[-len(postfix):]), last_valid_token.values[0]
-
-
 # ============================================================================
 # STAGE 5: TTS AUDIO GENERATION
 # ============================================================================
@@ -277,16 +248,8 @@ def generate_tts_for_line(
             print(f"  Skipping line {line_idx} (empty text: '{text}')")
         return (True, 1.0)  # Return success to avoid blocking the pipeline
 
-    end_characters = ["?", ".", "-", ";", ",", "!"]
-
-    full_script = str(text[0].upper() + text[1:])
-    full_script = re.sub(r"(\s\.)+", r".", full_script)
-
-    # Only add short_text_postfix when validation_model is provided
-    postfix_detect_token = None
-    if short_text_postfix:
-        full_script = full_script + (" " if full_script[-1] in end_characters else ". ") + short_text_postfix
-        postfix_detect_token = distill_string(short_text_postfix.strip().split(" ")[0]) # first word, ideal separator
+    # Use pipeline pure functions for text preparation
+    full_script, postfix_detect_token = prepare_script_for_tts(text, short_text_postfix)
 
     ratio = 0.0
     max_ratio = float('-inf')  # Initialize to lowest possible value to ensure first attempt is always saved
@@ -295,10 +258,10 @@ def generate_tts_for_line(
 
     from transformers import set_seed
     set_seed(42)
-    while ratio < 0.85 and retries < 2:
+    while should_retry(ratio, max_ratio, retries, MAX_RETRIES, MIN_RATIO_THRESHOLD):
         set_seed(42 + retries)
 
-        output_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.tmp.wav")
+        output_path = generate_output_filename(output_dir, chapter_idx, line_idx, is_final=False)
 
         # Resolve voice path if not provided
         if voice_path is None:
@@ -419,7 +382,7 @@ def generate_tts_for_line(
 
         if ratio > max_ratio:
             max_ratio = ratio
-            final_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.wav")
+            final_path = generate_output_filename(output_dir, chapter_idx, line_idx, is_final=True)
             if os.path.exists(final_path):
                 os.unlink(final_path)
             time.sleep(2)
@@ -427,11 +390,11 @@ def generate_tts_for_line(
 
         retries += 1
     # Clean up temp file if it exists
-    temp_path = os.path.join(output_dir, f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.tmp.wav")
+    temp_path = generate_output_filename(output_dir, chapter_idx, line_idx, is_final=False)
     if os.path.exists(temp_path):
         os.unlink(temp_path)
 
-    return max_ratio >= 0.85, max_ratio
+    return is_generation_success(max_ratio, MIN_RATIO_THRESHOLD), max_ratio
 
 
 # ============================================================================

@@ -28,6 +28,7 @@ from .gradio_ui import (
     update_button_visibility_from_state,
     cleanup_temp_dir,
 )
+from .utils import TempDirContext
 
 __all__ = [
     "DEFAULTS",
@@ -45,9 +46,11 @@ __all__ = [
     "run_full_pipeline",
     "VoiceMapper",
     "get_non_silent_audio_from_wavs",
-    
+    # UI
     "create_interface",
     "update_character_table",
     "update_button_visibility_from_state",
     "cleanup_temp_dir",
+    # Temp directory management
+    "TempDirContext",
 ]

@@ -108,20 +108,129 @@ class ProgressHandler:
         self.close()
 
 
-def _reset_chapters_dir_internal() -> None:
-    """Internal function to reset cached state from get_chapters_dir.
+class TempDirContext:
+    """Context manager for temporary directory management.
 
-    Clears all cached attributes and cleans up the temp context.
-    This is an internal helper used by get_chapters_dir_from_saved and load_temp_dir.
+    This class encapsulates all temp directory state and provides proper
+    isolation for unit testing. Use as a context manager or via module-level
+    functions for backward compatibility.
+
+    Usage:
+        # As context manager (recommended for tests)
+        with TempDirContext() as ctx:
+            chapters_dir = ctx.get_chapters_dir()
+            # ... use chapters_dir ...
+
+        # Module-level functions (backward compatible)
+        chapters_dir = get_chapters_dir()
     """
-    if hasattr(get_chapters_dir, "_temp_context") and get_chapters_dir._temp_context:
-        try:
-            get_chapters_dir._temp_context.cleanup()
-        except Exception:
-            pass
-    for attr in ["_temp_dir", "_chapters_dir", "_temp_context"]:
-        if hasattr(get_chapters_dir, attr):
-            delattr(get_chapters_dir, attr)
+
+    _instance: Optional["TempDirContext"] = None
+
+    def __init__(self):
+        self._temp_context: Optional[tempfile.TemporaryDirectory] = None
+        self._temp_dir: Optional[str] = None
+        self._chapters_dir: Optional[Path] = None
+        self._cleanup_registered = False
+
+    def get_chapters_dir(self, saved_temp_dir: Optional[str] = None) -> Path:
+        """Get or create a temporary chapters directory.
+
+        Args:
+            saved_temp_dir: Optional path to restore from.
+
+        Returns:
+            Path to the chapters directory
+        """
+        if saved_temp_dir:
+            return self.get_chapters_dir_from_saved(saved_temp_dir)
+
+        if self._temp_dir is None:
+            self._temp_context = tempfile.TemporaryDirectory(prefix="jbab_chapters_")
+            self._temp_dir = self._temp_context.name
+            if not self._cleanup_registered:
+                atexit.register(self.cleanup)
+                self._cleanup_registered = True
+
+        if self._chapters_dir is None:
+            self._chapters_dir = Path(self._temp_dir) / "chapters"
+            self._chapters_dir.mkdir(parents=True, exist_ok=True)
+
+        return self._chapters_dir
+
+    def get_temp_dir(self) -> str:
+        """Get the temp directory path for display purposes."""
+        return self._temp_dir or ""
+
+    def cleanup(self) -> None:
+        """Clean up the temporary directory.
+
+        Copies MP3 files to ./chapters/ before cleanup.
+        """
+        if self._temp_dir:
+            temp_chapters_dir = self._temp_dir
+            mp3_files = sorted(glob.glob(os.path.join(temp_chapters_dir, "chapter_*.mp3")), key=natural_sort_key)
+            if mp3_files:
+                os.makedirs("chapters", exist_ok=True)
+                for mp3_path in mp3_files:
+                    filename = os.path.basename(mp3_path)
+                    dest_path = os.path.join("chapters", filename)
+                    shutil.copy2(mp3_path, dest_path)
+                    print(f"Copied {filename} to chapters/")
+
+        if self._temp_context:
+            try:
+                self._temp_context.cleanup()
+            except Exception:
+                pass
+
+        self._temp_dir = None
+        self._chapters_dir = None
+        self._temp_context = None
+
+    def reset(self) -> None:
+        """Reset all state for fresh directory creation."""
+        self.cleanup()
+
+    def get_chapters_dir_from_saved(self, saved_temp_dir: str) -> Path:
+        """Get chapters directory from a saved temp directory.
+
+        Args:
+            saved_temp_dir: Path to the saved temp directory
+
+        Returns:
+            Path to the chapters subdirectory
+        """
+        existing_temp = getattr(self, "_temp_dir", None)
+        if existing_temp == saved_temp_dir and self._chapters_dir:
+            return self._chapters_dir
+
+        saved_path = Path(saved_temp_dir)
+        chapters_path = saved_path / "chapters"
+        chapters_path.mkdir(parents=True, exist_ok=True)
+
+        self._temp_dir = str(saved_path)
+        self._chapters_dir = chapters_path
+        self._temp_context = None
+
+        return chapters_path
+
+    def __enter__(self) -> "TempDirContext":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.cleanup()
+
+
+_temp_context_instance: Optional[TempDirContext] = None
+
+
+def _get_temp_context() -> TempDirContext:
+    """Get or create the singleton TempDirContext instance."""
+    global _temp_context_instance
+    if _temp_context_instance is None:
+        _temp_context_instance = TempDirContext()
+    return _temp_context_instance
 
 
 def get_chapters_dir(saved_temp_dir: Optional[str] = None) -> Path:
@@ -137,26 +246,12 @@ def get_chapters_dir(saved_temp_dir: Optional[str] = None) -> Path:
     Returns:
         Path to the chapters directory (temp_dir / "chapters")
     """
-    if saved_temp_dir:
-        return get_chapters_dir_from_saved(saved_temp_dir)
-
-    if not hasattr(get_chapters_dir, "_temp_dir"):
-        # Use TemporaryDirectory which auto-cleans on program exit
-        get_chapters_dir._temp_context = tempfile.TemporaryDirectory(prefix="jbab_chapters_")
-        get_chapters_dir._temp_dir = get_chapters_dir._temp_context.name
-        # Register cleanup on normal exit
-        atexit.register(cleanup_temp_dir)
-    if not hasattr(get_chapters_dir, "_chapters_dir"):
-        get_chapters_dir._chapters_dir = Path(get_chapters_dir._temp_dir) / "chapters"
-        get_chapters_dir._chapters_dir.mkdir(parents=True, exist_ok=True)
-    return get_chapters_dir._chapters_dir
+    return _get_temp_context().get_chapters_dir(saved_temp_dir)
 
 
 def get_temp_dir() -> str:
     """Get the temporary directory path for display purposes."""
-    if hasattr(get_chapters_dir, "_temp_dir") and get_chapters_dir._temp_dir:
-        return get_chapters_dir._temp_dir
-    return ""
+    return _get_temp_context().get_temp_dir()
 
 
 def cleanup_temp_dir() -> None:
@@ -164,26 +259,7 @@ def cleanup_temp_dir() -> None:
 
     First copies any MP3 files to ./chapters/ directory to preserve them.
     """
-    if hasattr(get_chapters_dir, "_temp_dir") and get_chapters_dir._temp_dir:
-        temp_chapters_dir = get_chapters_dir._temp_dir
-        # Find and copy any MP3 files from temp directory to ./chapters/
-        mp3_files = sorted(glob.glob(os.path.join(temp_chapters_dir, "chapter_*.mp3")), key=natural_sort_key)
-        if mp3_files:
-            os.makedirs("chapters", exist_ok=True)
-            for mp3_path in mp3_files:
-                filename = os.path.basename(mp3_path)
-                dest_path = os.path.join("chapters", filename)
-                shutil.copy2(mp3_path, dest_path)
-                print(f"Copied {filename} to chapters/")
-
-    if hasattr(get_chapters_dir, "_temp_context") and get_chapters_dir._temp_context:
-        try:
-            get_chapters_dir._temp_context.cleanup()
-        except Exception:
-            pass
-        get_chapters_dir._temp_dir = None
-        get_chapters_dir._chapters_dir = None
-        get_chapters_dir._temp_context = None
+    _get_temp_context().cleanup()
 
 
 def reset_chapters_dir() -> None:
@@ -192,7 +268,7 @@ def reset_chapters_dir() -> None:
     This clears all cached state from get_chapters_dir() to allow
     fresh directory creation in tests.
     """
-    _reset_chapters_dir_internal()
+    _get_temp_context().reset()
 
 
 # ============================================================================
@@ -306,22 +382,18 @@ def load_temp_dir(archive_path: Optional[str] = None) -> Optional[str]:
     print(f"Extracted to: {extract_dir}")
     print(f"Chapters directory: {chapters_dir}")
 
-    # Save the new temp dir path for get_chapters_dir to use
-    _reset_chapters_dir_internal()
-
-    # Set up the extracted directory as the temp directory
-    get_chapters_dir._temp_dir = str(extract_dir)
-    get_chapters_dir._chapters_dir = chapters_dir
-    get_chapters_dir._temp_context = temp_context  # Register cleanup on exit
+    # Set up the extracted directory as the temp directory using context
+    ctx = _get_temp_context()
+    ctx.cleanup()
+    ctx._temp_dir = str(extract_dir)
+    ctx._chapters_dir = chapters_dir
+    ctx._temp_context = temp_context
 
     # Save loaded temp dir path to file for persistence across page refreshes
     loaded_file = get_loaded_temp_file()
     loaded_file.parent.mkdir(parents=True, exist_ok=True)
     with open(loaded_file, "w", encoding="utf-8") as f:
         json.dump({"temp_dir": str(extract_dir)}, f, indent=2)
-
-    # Register cleanup on normal exit
-    atexit.register(cleanup_temp_dir)
 
     return str(extract_dir)
 
@@ -413,25 +485,7 @@ def get_chapters_dir_from_saved(saved_temp_dir: str) -> Path:
     Returns:
         Path to the chapters subdirectory within the saved temp dir
     """
-    # Check if we're restoring from a directory that's already set up
-    existing_temp = getattr(get_chapters_dir, "_temp_dir", None)
-    if existing_temp == saved_temp_dir:
-        # Already set up - just return the existing chapters path
-        if hasattr(get_chapters_dir, "_chapters_dir"):
-            return get_chapters_dir._chapters_dir
-
-    # Set up the saved directory as the temp directory
-    saved_path = Path(saved_temp_dir)
-    chapters_path = saved_path / "chapters"
-
-    # Create the chapters directory if it doesn't exist
-    chapters_path.mkdir(parents=True, exist_ok=True)
-
-    get_chapters_dir._temp_dir = str(saved_path)
-    get_chapters_dir._chapters_dir = chapters_path
-    get_chapters_dir._temp_context = None  # No context - we're using an existing directory
-
-    return chapters_path
+    return _get_temp_context().get_chapters_dir_from_saved(saved_temp_dir)
 
 
 def get_characters_from_map_files(chapters_dir: Path) -> list:

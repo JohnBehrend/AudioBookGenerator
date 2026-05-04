@@ -57,19 +57,19 @@ Each pipeline stage can also be run independently:
 
 ```bash
 # Stage 1: Parse EPUB (handled automatically by CLI)
-# Uses: parse_chapter.parse_epub_to_chapters()
+# Uses: audiobook_generator.parse_chapter.parse_epub_to_chapters()
 
 # Stage 2: Label Speakers
-uv run python llm_label_speakers.py -txt_file chapters/chapter_0.txt
+uv run python audiobook_generator/llm_label_speakers.py -txt_file chapters/chapter_0.txt
 
 # Stage 3: Describe Characters
-uv run python llm_describe_character.py chapters
+uv run python audiobook_generator/llm_describe_character.py chapters
 
 # Stage 4: Generate Voice Samples
-uv run python generate_voice_samples.py
+uv run python audiobook_generator/generate_voice_samples.py
 
 # Stage 5: Generate Audiobook (handled automatically by CLI)
-# Uses: audiobook_generator.generate_audiobook_from_chapters()
+# Uses: audiobook_generator.audiobook_generator.generate_audiobook_from_chapters()
 ```
 
 ## Requirements
@@ -153,18 +153,51 @@ The pipeline uses an OpenAI-compatible API (LM Studio by default):
 
 ## File Structure
 
-| File | Purpose |
-|------|---------|
-| `audiobook_generator.py` | Main entry point - CLI pipeline + TTS generation + Gradio launcher |
-| `audiobook_generator/gradio_ui.py` | Gradio UI components and event handlers |
-| `parse_chapter.py` | EPUB parsing + `write_chapters_to_txt()` helper |
-| `llm_label_speakers.py` | Stage 2 - LLM speaker labeling |
-| `llm_describe_character.py` | Stage 3 - Character descriptions |
-| `generate_voice_samples.py` | Stage 4 - Voice sample generation |
-| `config.py` | Shared configuration |
+```
+AudioBookGenerator/
+├── audiobook_generator.py              # Main CLI entry point
+├── audiobook_generator/
+│   ├── __init__.py                     # Package initialization
+│   ├── audiobook_generator.py          # Stage 5: Full audiobook TTS generation
+│   ├── config.py                       # Shared configuration
+│   ├── engines/                        # TTS engine abstraction
+│   ├── generate_voice_samples.py       # Stage 4: Voice sample generation
+│   ├── gradio_ui.py                    # Gradio web interface
+│   ├── llm_describe_character.py       # Stage 3: Character descriptions
+│   ├── llm_label_speakers.py           # Stage 2: Speaker labeling
+│   ├── parse_chapter.py                # Stage 1: EPUB parsing
+│   ├── pipeline.py                     # Pure functions for TTS logic
+│   ├── testing.py                      # Test utilities (MockLLMClient, etc.)
+│   ├── utils.py                        # Utility functions
+│   └── voice_mapper.py                 # Voice mapping logic
+└── tests/                              # Test suite (227 tests)
+```
+
+## Testing
+
+Run the test suite:
+
+```bash
+uv run pytest tests/ -v
+```
+
+Run specific test files:
+
+```bash
+uv run pytest tests/test_pipeline.py -v
+```
+
+The test suite includes:
+- EPUB parsing tests
+- LLM speaker labeling tests
+- Character description tests
+- Voice mapper tests
+- Utility function tests
+- Pipeline pure function tests
 
 ## Notes
 
 - All generated audio files are in the `chapters/` directory (gitignored)
 - Linux line endings (LF) are used throughout the repository
 - Character names are normalized (lowercase, simplified)
+- Pure functions in `pipeline.py` are designed for unit testing without GPU

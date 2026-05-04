@@ -11,7 +11,7 @@ import json
 import os
 import subprocess
 import time
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, get_context
 from pathlib import Path
 from typing import Any, Optional
 
@@ -19,6 +19,8 @@ _ENVIRONMENTS_DIR = Path(__file__).parent / ".environments"
 
 _Request = dict[str, Any]
 _Response = dict[str, Any]
+
+_SPAWN_CONTEXT = get_context("spawn")
 
 
 def _run_cmd(cmd: list[str], cwd: str, env: dict[str, str], label: str, engine_name: str) -> None:
@@ -88,15 +90,15 @@ class EngineWorker:
         self._next_id = 0
 
     def start(self) -> None:
-        """Start the worker subprocess."""
+        """Start the worker subprocess using spawn context to avoid CUDA fork issues."""
         if self._worker is not None and self._worker.is_alive():
             return
 
         self._python = _ensure_env(self.engine_name)
-        self._request_queue = Queue()
-        self._response_queue = Queue()
+        self._request_queue = _SPAWN_CONTEXT.Queue()
+        self._response_queue = _SPAWN_CONTEXT.Queue()
 
-        self._worker = Process(
+        self._worker = _SPAWN_CONTEXT.Process(
             target=_worker_entry,
             args=(self.engine_name, self.engine_class, self._request_queue, self._response_queue),
             daemon=True,

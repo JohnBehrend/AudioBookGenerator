@@ -86,14 +86,26 @@ class OmniEngine(TTSEngine):
                             class_temperature=0.5,
                             instruct=instruct,
                         )
-                        if audio is None or len(audio) == 0 or audio[0].numel() == 0:
+                        if audio is None or len(audio) == 0:
+                            response_queue.put({"id": req_id, "success": False})
+                            continue
+                        audio_arr = audio[0]
+                        if hasattr(audio_arr, 'numel'):
+                            audio_len = audio_arr.numel()
+                        else:
+                            audio_len = len(audio_arr)
+                        if audio_len == 0:
                             response_queue.put({"id": req_id, "success": False})
                             continue
 
                         out_dir = Path(output_dir)
                         out_dir.mkdir(parents=True, exist_ok=True)
                         output_file = str(out_dir / f"{character_name}.wav")
-                        torchaudio.save(output_file, audio[0].cpu(), 24000)
+                        if hasattr(audio[0], 'cpu'):
+                            audio_np = audio[0].cpu().numpy()
+                        else:
+                            audio_np = audio[0]
+                        sf.write(output_file, audio_np, 24000)
                         duration = len(audio[0]) / 24000
                         response_queue.put({"id": req_id, "success": True, "output_file": output_file, "duration": duration})
 
@@ -109,13 +121,22 @@ class OmniEngine(TTSEngine):
                                         class_temperature=3.0,
                                         instruct=fallback,
                                     )
-                                    if audio is None or len(audio) == 0 or audio[0].numel() == 0:
+                                    if audio is None or len(audio) == 0:
+                                        response_queue.put({"id": req_id, "success": False})
+                                        continue
+                                    audio_arr = audio[0]
+                                    audio_len = audio_arr.numel() if hasattr(audio_arr, 'numel') else len(audio_arr)
+                                    if audio_len == 0:
                                         response_queue.put({"id": req_id, "success": False})
                                         continue
                                     out_dir = Path(output_dir)
                                     out_dir.mkdir(parents=True, exist_ok=True)
                                     output_file = str(out_dir / f"{character_name}.wav")
-                                    torchaudio.save(output_file, audio[0].cpu(), 24000)
+                                    if hasattr(audio[0], 'cpu'):
+                                        audio_np = audio[0].cpu().numpy()
+                                    else:
+                                        audio_np = audio[0]
+                                    sf.write(output_file, audio_np, 24000)
                                     duration = len(audio[0]) / 24000
                                     response_queue.put({"id": req_id, "success": True, "output_file": output_file, "duration": duration})
                                 except Exception:
@@ -147,11 +168,19 @@ class OmniEngine(TTSEngine):
                         ref_text=ref_text,
                         preprocess_prompt=False,
                     )
-                    if audio is None or len(audio) == 0 or audio[0].numel() == 0:
+                    if audio is None or len(audio) == 0:
+                        response_queue.put({"id": req_id, "success": False})
+                        continue
+                    audio_arr = audio[0]
+                    audio_len = audio_arr.numel() if hasattr(audio_arr, 'numel') else len(audio_arr)
+                    if audio_len == 0:
                         response_queue.put({"id": req_id, "success": False})
                         continue
 
-                    torchaudio.save(output_path, audio[0].cpu(), 24000)
+                    if hasattr(audio[0], 'cpu'):
+                        sf.write(output_path, audio[0].cpu().numpy(), 24000)
+                    else:
+                        sf.write(output_path, audio[0], 24000)
                     response_queue.put({"id": req_id, "success": True})
 
                 else:

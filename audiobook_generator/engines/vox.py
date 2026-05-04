@@ -25,8 +25,6 @@ class VoxEngine(TTSEngine):
     def _run_worker(cls, request_queue: Queue, response_queue: Queue) -> None:
         from voxcpm import VoxCPM
         import torch
-        import torchaudio
-        import numpy as np
 
         model = None
 
@@ -111,7 +109,7 @@ class VoxEngine(TTSEngine):
                         continue
 
                     sr = 48000
-                    torchaudio.save(output_path, torch.from_numpy(wav), sr)
+                    sf.write(output_path, wav, sr)
                     response_queue.put({"id": req_id, "success": True})
 
                 else:

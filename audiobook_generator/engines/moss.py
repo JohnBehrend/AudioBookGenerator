@@ -24,7 +24,7 @@ class MossEngine(TTSEngine):
     def _run_worker(cls, request_queue: Queue, response_queue: Queue) -> None:
         from transformers import AutoModel, AutoProcessor
         import torch
-        import torchaudio
+        import soundfile as sf
 
         model = None
         processor = None
@@ -121,7 +121,13 @@ class MossEngine(TTSEngine):
                     out_dir = Path(output_dir)
                     out_dir.mkdir(parents=True, exist_ok=True)
                     output_file = str(out_dir / f"{character_name}.wav")
-                    torchaudio.save(output_file, audio.unsqueeze(0), sr)
+                    if hasattr(audio, 'cpu'):
+                        audio_np = audio.cpu().numpy()
+                    else:
+                        audio_np = audio
+                    if audio_np.ndim > 1:
+                        audio_np = audio_np.squeeze()
+                    sf.write(output_file, audio_np, sr)
                     duration = len(audio) / sr
                     response_queue.put({"id": req_id, "success": True, "output_file": output_file, "duration": duration})
 
@@ -153,7 +159,13 @@ class MossEngine(TTSEngine):
                         response_queue.put({"id": req_id, "success": False})
                         continue
 
-                    torchaudio.save(output_path, audio.unsqueeze(0), sr)
+                    if hasattr(audio, 'cpu'):
+                        audio_np = audio.cpu().numpy()
+                    else:
+                        audio_np = audio
+                    if audio_np.ndim > 1:
+                        audio_np = audio_np.squeeze()
+                    sf.write(output_path, audio_np, sr)
                     response_queue.put({"id": req_id, "success": True})
 
                 else:

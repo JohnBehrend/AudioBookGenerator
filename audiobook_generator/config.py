@@ -75,11 +75,6 @@ VOICE_GENDER_CORRECTION = {
 
 # TTS Model paths for each engine
 TTS_MODEL_PATHS = {
-    "kugelaudio": {
-        "base": "kugelaudio/kugel-2",
-        "old": "kugelaudio/kugelaudio-0-open",
-        "turbo": "kugel-1-turbo",
-    },
     "vibevoice": "Jmica/VibeVoice7B",
     "moss": "OpenMOSS-Team/MOSS-TTS-Local-Transformer",
     "echo-tts": "jordand/echo-tts-base",

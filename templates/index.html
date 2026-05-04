@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhysioTrack - Patient Exercise Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+                    colors: {
+                        primary: { DEFAULT: '#2563eb', light: '#3b82f6', dark: '#1d4ed8' },
+                        secondary: { DEFAULT: '#10b981', light: '#34d399' },
+                        accent: { DEFAULT: '#f59e0b', light: '#fbbf24' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white !important; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans">
+    <nav class="bg-white shadow-sm border-b border-slate-200 no-print">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <a href="/" class="flex items-center gap-2">
+                        <div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+                            <i data-lucide="heart-pulse" class="w-5 h-5 text-white"></i>
+                        </div>
+                        <span class="font-semibold text-xl text-slate-800">PhysioTrack</span>
+                    </a>
+                </div>
+                <div class="flex items-center gap-2">
+                    <a href="/" class="inline-flex items-center gap-1.5 px-3 py-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors">
+                        <i data-lucide="users" class="w-4 h-4"></i>
+                        <span class="hidden sm:inline">Patients</span>
+                    </a>
+                    <a href="/exercises" class="inline-flex items-center gap-1.5 px-3 py-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors">
+                        <i data-lucide="dumbbell" class="w-4 h-4"></i>
+                        <span class="hidden sm:inline">Exercises</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-4">
+        {% for category, message in messages %}
+        <div class="mb-4 px-4 py-3 rounded-lg {% if category == 'success' %}bg-green-50 text-green-800 border border-green-200{% elif category == 'error' %}bg-red-50 text-red-800 border border-red-200{% else %}bg-blue-50 text-blue-800 border border-blue-200{% endif %}">
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-800">Patients</h1>
+                <p class="text-slate-500 mt-1">{{ stats.total }} active patients with {{ stats.programs }} programs</p>
+            </div>
+            <button onclick="openModal('newPatientModal')" class="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors shadow-sm">
+                <i data-lucide="plus" class="w-4 h-4"></i>
+                Add Patient
+            </button>
+        </div>
+
+        {% if patients %}
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {% for patient in patients %}
+            <a href="{{ url_for('patient', id=patient.id) }}" class="block bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:shadow-md hover:border-primary/30 transition-all group">
+                <div class="flex items-start gap-4">
+                    <div class="w-12 h-12 bg-gradient-to-br from-primary to-secondary rounded-full flex items-center justify-center text-white font-semibold text-lg shrink-0">
+                        {{ patient.name.split()[0][0] }}{{ patient.name.split()[-1][0] if patient.name.split()|length > 1 else '' }}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <h3 class="font-semibold text-slate-800 group-hover:text-primary transition-colors truncate">{{ patient.name }}</h3>
+                        {% if patient.programs %}
+                        <p class="text-sm text-slate-500 mt-1">{{ patient.programs|length }} program{{ 's' if patient.programs|length != 1 else '' }}</p>
+                        {% else %}
+                        <p class="text-sm text-slate-400 mt-1 italic">No programs yet</p>
+                        {% endif %}
+                        {% if patient.phone %}
+                        <p class="text-xs text-slate-400 mt-2">{{ patient.phone }}</p>
+                        {% endif %}
+                    </div>
+                    <i data-lucide="chevron-right" class="w-5 h-5 text-slate-300 group-hover:text-primary transition-colors shrink-0"></i>
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-16 bg-white rounded-xl border border-slate-200">
+            <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i data-lucide="users" class="w-8 h-8 text-slate-400"></i>
+            </div>
+            <h3 class="text-lg font-medium text-slate-700">No patients yet</h3>
+            <p class="text-slate-500 mt-1 mb-6">Add your first patient to get started</p>
+            <button onclick="openModal('newPatientModal')" class="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors">
+                <i data-lucide="plus" class="w-4 h-4"></i>
+                Add Patient
+            </button>
+        </div>
+        {% endif %}
+    </main>
+
+    <div id="newPatientModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-xl shadow-xl max-w-md w-full">
+            <div class="flex items-center justify-between p-4 border-b border-slate-200">
+                <h2 class="text-lg font-semibold text-slate-800">Add New Patient</h2>
+                <button onclick="closeModal('newPatientModal')" class="p-1 text-slate-400 hover:text-slate-600 rounded">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form action="{{ url_for('new_patient') }}" method="POST" class="p-4 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Full Name *</label>
+                    <input type="text" name="name" required class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-colors" placeholder="Nik's patient">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                    <input type="email" name="email" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-colors" placeholder="patient@email.com">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Phone</label>
+                    <input type="tel" name="phone" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-colors" placeholder="(555) 123-4567">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Notes</label>
+                    <textarea name="notes" rows="3" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-colors resize-none" placeholder="Initial assessment notes..."></textarea>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="button" onclick="closeModal('newPatientModal')" class="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
+                    <button type="submit" class="flex-1 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors">Add Patient</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function openModal(id) {
+            document.getElementById(id).classList.remove('hidden');
+            document.getElementById(id).classList.add('flex');
+        }
+        function closeModal(id) {
+            document.getElementById(id).classList.add('hidden');
+            document.getElementById(id).classList.remove('flex');
+        }
+        document.getElementById('newPatientModal').addEventListener('click', function(e) {
+            if (e.target === this) closeModal('newPatientModal');
+        });
+        lucide.createIcons();
+    </script>
+</body>
+</html>

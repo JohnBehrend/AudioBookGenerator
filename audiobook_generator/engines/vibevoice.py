@@ -22,6 +22,27 @@ class VibeVoiceEngine(TTSEngine):
 
     @classmethod
     def _run_worker(cls, request_queue: Queue, response_queue: Queue) -> None:
+        import site
+        import re
+        
+        vibevoice_pkg = None
+        for site_pkg in site.getsitepackages():
+            vibevoice_path = Path(site_pkg) / "vibevoice"
+            if vibevoice_path.exists():
+                vibevoice_pkg = vibevoice_path
+                break
+        
+        if vibevoice_pkg:
+            tokenizer_file = vibevoice_pkg / "modular" / "modular_vibevoice_tokenizer.py"
+            if tokenizer_file.exists():
+                content = tokenizer_file.read_text()
+                if "exist_ok=True" not in content:
+                    content = content.replace(
+                        "AutoModel.register(VibeVoiceAcousticTokenizerConfig, VibeVoiceAcousticTokenizerModel)",
+                        "AutoModel.register(VibeVoiceAcousticTokenizerConfig, VibeVoiceAcousticTokenizerModel, exist_ok=True)"
+                    )
+                    tokenizer_file.write_text(content)
+        
         from vibevoice.processor.vibevoice_processor import VibeVoiceProcessor
         from vibevoice.modular.modeling_vibevoice_inference import VibeVoiceForConditionalGenerationInference
         import torch

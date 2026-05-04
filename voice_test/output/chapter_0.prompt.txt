@@ -1,0 +1,145 @@
+=== SYSTEM PROMPT ===
+
+# Role: Provide detailed character attribution annotations for dialogues within audiobook chapters.
+## Goals
+- Identify all speakers in a chapter, including the narrator, and provide detailed character attribution labels for each citation line.
+## Constraints
+- All speakers must be identified and numbered, with the narrator numbered 1.
+- Quoted lines must begin and end with double quotes on the SAME physical line.
+- You MUST capture and attribute EVERY line that starts with " and ends with " — even if the quote is very short (e.g. "No." or "Yes, Master.") OR very long.
+- Skipping even one correctly-quoted line is unacceptable. Double-check at the end that nothing was missed.
+- NEVER use ranges (82-83, 100-102, etc.). Every quoted line gets its own explicit line number.
+- Determine the speaker based on the context of the narrative.
+- Ensure that the dialogue flows logically within the continuous text.
+## Skills
+- Accurately identify all speakers in the text.
+- Accurately identify the speaker of each quoted line.
+- Navigate contextual ambiguity with deep analysis.
+## Output format (exactly this, no extra text, NO DUPLICATES)
+{
+  "speaker_map": {"1": "narrator", "2": "Name", "3": "OtherName"},
+  "attributions": {
+    "7": 2,
+    "9": 2,
+    ...
+  }
+}
+## IMPORTANT - DO NOT REPEAT OR DUPLICATE
+- Output ONLY the JSON object above - nothing else
+- Do not output the JSON twice
+- Do not add any text before or after the JSON
+- Do not include thinking/analysis after the JSON
+- If you output duplicate JSON or any extra text, the pipeline will fail
+
+## Workflow
+1. Scan the text line by line and identify every line that both begins and ends with ".
+2. The speaker for each such line is determined based on context.
+3. After finishing, verify again that no qualifying line was missed.
+4. Output the speaker map in proper JSON format. Simplify the names of the speakers.
+5. Output the attributions exactly as shown - one explicit key per quoted line, no ranges, no comments.
+
+Begin processing the chapter now.
+
+
+=== CHAPTER CONTENT ===
+Line 1: Chapter 1
+Line 2: He came down to see the place
+Line 3: [ Copyright 1894 by George Allen. ]
+Line 4: This was invitation enough.
+Line 5: "Why, my dear, you must know, Mrs. Long says that Netherfield is taken"
+Line 6: by a young man of large fortune from the north of England; that he came
+Line 7: down on Monday in a chaise and four to see the place, and was so much
+Line 8: delighted with it that he agreed with Mr. Morris immediately; that he is
+Line 9: to take possession before Michaelmas, and some of his servants are to be
+Line 10: in the house by the end of next week.
+Line 11: "What is his name?"
+Line 12: "Bingley."
+Line 13: "Is he married or single?"
+Line 14: "Oh, single, my dear, to be sure! A single man of large fortune; four or"
+Line 15: five thousand a year. What a fine thing for our girls!
+Line 16: "How so? how can it affect them?"
+Line 17: "My dear Mr. Bennet,"
+Line 18: replied his wife,
+Line 19: "how can you be so tiresome? You"
+Line 20: must know that I am thinking of his marrying one of them.
+Line 21: "Is that his design in settling here?"
+Line 22: "Design? Nonsense, how can you talk so! But it is very likely that he"
+Line 23: may fall in love with one of them, and therefore you must visit him as
+Line 24: soon as he comes.
+Line 25: "I see no occasion for that. You and the girls may go - or you may send"
+Line 26: them by themselves, which perhaps will be still better; for as you are
+Line 27: as handsome as any of them, Mr. Bingley might like you the best of the
+Line 28: party.
+Line 29: "My dear, you flatter me. I certainly have had my share of beauty, but"
+Line 30: I do not pretend to be anything extraordinary now. When a woman has five
+Line 31: grown-up daughters, she ought to give over thinking of her own beauty.
+Line 32: "In such cases, a woman has not often much beauty to think of."
+Line 33: "But, my dear, you must indeed go and see Mr. Bingley when he comes into"
+Line 34: the neighbourhood.
+Line 35: "It is more than I engage for, I assure you."
+Line 36: "But consider your daughters. Only think what an establishment it would"
+Line 37: be for one of them. Sir William and Lady Lucas are determined to go,
+Line 38: merely on that account; for in general, you know, they visit no new
+Line 39: comers. Indeed you must go, for it will be impossible for us to visit
+Line 40: him, if you do not.
+Line 41: "You are over scrupulous, surely. I dare say Mr. Bingley will be very"
+Line 42: glad to see you; and I will send a few lines by you to assure him of my
+Line 43: hearty consent to his marrying whichever he chooses of the girls - though
+Line 44: I must throw in a good word for my little Lizzy.
+Line 45: "I desire you will do no such thing. Lizzy is not a bit better than the"
+Line 46: others: and I am sure she is not half so handsome as Jane, nor half so
+Line 47: good-humoured as Lydia. But you are always giving her the preference.
+Line 48: "They have none of them much to recommend them,"
+Line 49: replied he:
+Line 50: "they are"
+Line 51: all silly and ignorant like other girls; but Lizzy has something more of
+Line 52: quickness than her sisters.
+Line 53: "Mr. Bennet, how can you abuse your own children in such a way? You take"
+Line 54: delight in vexing me. You have no compassion on my poor nerves.
+Line 55: "You mistake me, my dear. I have a high respect for your nerves. They"
+Line 56: are my old friends. I have heard you mention them with consideration
+Line 57: these twenty years at least.
+Line 58: "Ah, you do not know what I suffer."
+Line 59: "But I hope you will get over it, and live to see many young men of four"
+Line 60: thousand a year come into the neighbourhood.
+Line 61: "It will be no use to us, if twenty such should come, since you will not"
+Line 62: visit them.
+Line 63: "Depend upon it, my dear, that when there are twenty, I will visit them"
+Line 64: all.
+Line 65: Mr. Bennet was so odd a mixture of quick parts, sarcastic humour,
+Line 66: reserve, and caprice, that the experience of three-and-twenty years had
+Line 67: been insufficient to make his wife understand his character. Her mind
+Line 68: was less difficult to develope. She was a woman of mean understanding,
+Line 69: little information, and uncertain temper. When she was discontented, she
+Line 70: fancied herself nervous. The business of her life was to get her
+Line 71: daughters married: its solace was visiting and news.
+Line 72: M r. & M rs. Bennet
+Line 73: [ Copyright 1894 by George Allen. ]
+Line 74: I hope Mr. Bingley will like it.
+Line 75: CHAPTER II.
+Line 76: R. BENNET was among the earliest of those who waited on Mr. Bingley. He
+Line 77: had always intended to visit him, though to the last always assuring his
+Line 78: wife that he should not go; and till the evening after the visit was
+Line 79: paid she had no knowledge of it. It was then disclosed in the following
+Line 80: manner. Observing his second daughter employed in trimming a hat, he
+Line 81: suddenly addressed her with, -
+Line 82: "I hope Mr. Bingley will like it, Lizzy."
+Line 83: "We are not in a way to know what Mr. Bingley likes,"
+Line 84: said her mother,
+Line 85: resentfully,
+Line 86: "since we are not to visit."
+Line 87: "But you forget, mamma,"
+Line 88: said Elizabeth,
+Line 89: "that we shall meet him at the"
+Line 90: assemblies, and that Mrs. Long has promised to introduce him.
+Line 91: "I do not believe Mrs. Long will do any such thing. She has two nieces"
+Line 92: of her own. She is a selfish, hypocritical woman, and I have no opinion
+Line 93: of her.
+Line 94: "No more have I,"
+Line 95: said Mr. Bennet;
+Line 96: "and I am glad to find that you do"
+Line 97: not depend on her serving you.
+Line 98: Mrs. Bennet deigned not to make any reply; but, unable to contain
+Line 99: herself, began scolding one of her daughters.
+Line 100: "Don't keep coughing so, Kitty, for heaven's sake! Have a little"
+Line 101: compassion on my nerves. You tear them to pieces.

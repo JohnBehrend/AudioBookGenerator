@@ -135,8 +135,8 @@ class EchoTTSAdapter(TTSEngine):
                         for chunk in audio_chunks[1:]:
                             audio_final = torch.cat([audio_final, silence, chunk], dim=1)
 
-                    import torchaudio
-                    torchaudio.save(output_path, audio_final.cpu(), 44100)
+                    import soundfile as sf
+                    sf.write(output_path, audio_final.cpu().numpy(), 44100)
                     response_queue.put({"id": req_id, "success": True})
 
                 else:

@@ -49,7 +49,7 @@ class VoiceMapper:
         Args:
             output_dir: Directory to save/load voice samples and maps
             device: Device to run TTS models ('cuda:0', 'cuda:1', etc.)
-            tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts', 'omni', 'vox')
+            tts_engine: TTS engine to use ('vibevoice', 'moss', 'echo-tts', 'omni', 'vox')
                        Defaults to AUDIO_SETTINGS['default_tts_engine']
             duplicate_replacement_map: Optional dict mapping duplicate character names to canonical names
         """
@@ -183,7 +183,7 @@ class VoiceMapper:
         Models are cached after first load to avoid reloading.
 
         Args:
-            turbo: Use KugelAudio turbo model (ignored for non-kugelaudio engines)
+            turbo: Reserved for future use
 
         Returns:
             Tuple of (model, processor, model_path, None) for backward compatibility.
@@ -343,7 +343,7 @@ class VoiceMapper:
         """Unload models for a specific TTS engine.
 
         Args:
-            engine_name: Name of the TTS engine to unload (e.g., 'kugelaudio', 'moss')
+            engine_name: Name of the TTS engine to unload
         """
         keys_to_remove = [k for k in self.tts_models if k.startswith(f"{engine_name}_")]
         for key in keys_to_remove:

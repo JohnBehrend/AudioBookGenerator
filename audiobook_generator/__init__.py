@@ -21,7 +21,6 @@ from .audiobook_generator import (
     generate_audiobook_from_chapters,
     VoiceMapper,
     get_non_silent_audio_from_wavs,
-    main,
 )
 from .gradio_ui import (
     create_interface,
@@ -46,7 +45,7 @@ __all__ = [
     "run_full_pipeline",
     "VoiceMapper",
     "get_non_silent_audio_from_wavs",
-    "main",
+    
     "create_interface",
     "update_character_table",
     "update_button_visibility_from_state",

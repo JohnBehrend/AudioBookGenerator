@@ -284,7 +284,7 @@ def generate_tts_for_line(
         voice_name: Name of the voice/character
         voice_mapper: VoiceMapper instance
         device: Device to run on
-        tts_engine: 'kugelaudio', 'vibevoice', 'moss', 'echo-tts', 'omni', or 'vox'
+        tts_engine: 'vibevoice', 'moss', 'echo-tts', 'omni', or 'vox'
         voice_path: Optional path to voice sample file. If not provided, uses voice_mapper.
         cfg_scale: CFG scale value
         output_dir: Output directory for audio files
@@ -495,7 +495,7 @@ def generate_audiobook_from_chapters(
         voices_map: Dict mapping character names to voice file paths (wav)
         output_dir: Output directory for audio files
         device: Device to run on
-        tts_engine: 'kugelaudio', 'vibevoice', 'moss', 'echo-tts', 'omni', or 'voxcpm'
+        tts_engine: 'vibevoice', 'moss', 'echo-tts', 'omni', or 'vox'
         cfg_scale: CFG scale value
         max_chapters: Maximum number of chapters to process
         verbose: Print verbose output
@@ -739,7 +739,7 @@ class PipelineState:
 
     def get_characters(self) -> List[str]:
         """Extract unique character names from map files."""
-        from utils import get_characters_from_map_files
+        from .utils import get_characters_from_map_files
         self.characters = get_characters_from_map_files(self.chapters_dir)
         return self.characters
 
@@ -794,7 +794,7 @@ class PipelineState:
 
     def write_chapter_text_files(self, chapters):
         """Write chapter objects to text files."""
-        from parse_chapter import write_chapters_to_txt
+        from .parse_chapter import write_chapters_to_txt
         return write_chapters_to_txt(chapters, str(self.chapters_dir))
 
 
@@ -805,7 +805,7 @@ class PipelineState:
 
 def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       verbose: bool = False, api_key: str = None, llm_port: str = None,
-                      voice_engine: str = "moss", tts_engine: str = "kugelaudio", turbo: bool = False,
+                      voice_engine: str = "moss", tts_engine: str = "omni", turbo: bool = False,
                       device: str = AUDIO_SETTINGS["default_device"], seed_voice_map: str = None,
                       num_llm_attempts: int = DEFAULTS["num_llm_attempts"],
                       resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
@@ -822,8 +822,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         api_key: LLM API key for speaker labeling and character descriptions
         llm_port: LLM endpoint port (e.g., LM Studio)
         voice_engine: TTS engine for voice sample generation ('moss', 'omni', 'vox')
-        tts_engine: TTS engine for audiobook generation ('kugelaudio', 'vibevoice', 'moss', 'echo-tts', 'omni', 'vox')
-        turbo: Use KugelAudio turbo model (kugel-1-turbo)
+        tts_engine: TTS engine for audiobook generation ('vibevoice', 'moss', 'echo-tts', 'omni', 'vox')
+        turbo: Reserved for future turbo models
         device: CUDA device (e.g., 'cuda', 'cuda:1')
         seed_voice_map: Path to existing voices_map.json to seed voices
         num_llm_attempts: Number of LLM attempts for speaker labeling
@@ -920,7 +920,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             print(f"[STAGE 1] Skipping - EPUB already parsed ({len(chapter_files)} chapters found)")
         # Load existing chapters from text files (don't re-parse EPUB)
         if not state.chapters:
-            from parse_chapter import load_chapters_from_txt
+            from .parse_chapter import load_chapters_from_txt
             state.chapters = load_chapters_from_txt(
                 str(state.output_dir),
                 max_chapters=max_chapters
@@ -1085,10 +1085,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
     if verbose:
         print(f"  TTS engine: {tts_engine}")
-        if turbo and tts_engine == "kugelaudio":
-            print(f"  Using turbo model (kugel-1-turbo)")
-        elif turbo and tts_engine != "kugelaudio":
-            print(f"  Warning: --turbo flag is only valid for kugelaudio engine, ignoring for {tts_engine}")
+        if turbo:
+            print(f"  Warning: --turbo flag is reserved for future use")
         print(f"  Device: {device}")
 
     # Generate TTS for all chapters
@@ -1170,7 +1168,7 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         seed_voice_map: Path to existing voices_map.json to seed voices
         epub_file: Path to EPUB file to pre-load in the interface
         saved_temp_dir: Optional path to a saved temp directory to restore from
-        tts_engine: TTS engine to use ('kugelaudio', 'vibevoice', 'moss', 'echo-tts')
+        tts_engine: TTS engine to use ('vibevoice', 'moss', 'echo-tts', 'omni', 'vox')
     """
     # Set TTS_ENGINE environment variable for Gradio UI
     if tts_engine:
@@ -1251,182 +1249,4 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         print(f"Make sure the module is in place: {e}")
 
 
-# ============================================================================
-# MAIN
-# ============================================================================
 
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Audiobook Generator - Parse EPUB and generate audiobook audio",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Run full pipeline with temp folder kept for later resume
-  audiobook_generator.py book.epub --keep_temp
-
-  # Resume from a specific temp directory
-  audiobook_generator.py --resume_from /path/to/temp/dir
-
-  # Launch Gradio with saved state
-  audiobook_generator.py --gradio --resume_from /path/to/temp/dir
-        """
-    )
-    parser.add_argument("epub_file", nargs="?", help="Path to the EPUB file")
-    parser.add_argument("-output_dir", default=None, help="Output directory for generated files (default: temp directory)")
-    parser.add_argument("-max_chapters", type=int, help="Maximum number of chapters to process")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Print verbose output")
-    parser.add_argument("-api_key", help="LLM API key for speaker labeling")
-    parser.add_argument("-llm_port", default=str(LLM_SETTINGS["port"]), help="LLM endpoint port (for LM Studio)")
-    parser.add_argument("--voice-engine", default="moss", choices=["moss", "omni", "vox"],
-                        help="TTS engine for voice sample generation (Stage 4)")
-    parser.add_argument("--tts-engine", default=AUDIO_SETTINGS["default_tts_engine"], choices=["kugelaudio", "vibevoice", "moss", "echo-tts", "omni", "vox"],
-                        help="TTS engine for audiobook generation (Stage 5, voice cloning)")
-    parser.add_argument("--turbo", action="store_true", help="Use KugelAudio turbo model (kugel-1-turbo)")
-    parser.add_argument("-device", default=AUDIO_SETTINGS["default_device"], help="CUDA device to use")
-    parser.add_argument("--whisper_cpu", action="store_true", help="Use CPU with float32 for Whisper validation model (instead of GPU with float16)")
-    parser.add_argument("--gradio", action="store_true", help="Launch Gradio interface instead of CLI")
-    parser.add_argument("-num_llm_attempts", type=int, default=DEFAULTS["num_llm_attempts"], help="Number of LLM attempts for speaker labeling")
-    parser.add_argument("-gradio_port", type=int, default=None, help="Port for Gradio web interface")
-    parser.add_argument("-seed_voice_map", help="Path to existing voices_map.json to seed voices")
-    parser.add_argument("--keep_temp", action="store_true", help="Keep temp directory on exit (don't clean up or copy to ./chapters/)")
-    parser.add_argument("--resume_from", help="Resume from a specific temp directory path")
-    parser.add_argument("--debug_tts", action="store_true", help="Print Chapter C, Line L, Speaker S instead of generating audio; skips validation")
-    parser.add_argument("--validate", action="store_true",
-                        help="Enable LLM validation to judge generated audio quality")
-    parser.add_argument("--validate_clean", action="store_true",
-                        help="Enable clean audio validation (no music/SFX) when --validate is also enabled")
-    parser.add_argument("--max-retries", type=int, default=None, help="Max retries for failed lines (default: use config)")
-    parser.add_argument("--no-postfix", action="store_true", help="Skip postfix text for faster generation")
-    parser.add_argument("--validation-interval", type=int, default=1, help="Validate every Nth line (default: 1 = every line)")
-
-    args = parser.parse_args()
-
-    # Handle --resume_from
-    saved_temp_dir = None
-    output_dir = args.output_dir
-
-    if args.resume_from:
-        resume_path = Path(args.resume_from)
-        if resume_path.is_dir():
-            saved_temp_dir = args.resume_from
-            print(f"Resuming from temp directory: {saved_temp_dir}")
-        elif resume_path.exists():
-            saved_temp_dir = load_temp_dir(str(resume_path))
-            if not saved_temp_dir:
-                print("Error: Failed to load archive.")
-                sys.exit(1)
-            output_dir = saved_temp_dir
-            print(f"Resuming from archive: {args.resume_from}")
-        else:
-            print(f"Error: Path not found: {args.resume_from}")
-            sys.exit(1)
-
-    if args.gradio:
-        # Launch Gradio interface
-        create_gradio_interface(
-            output_dir=output_dir,
-            api_key=args.api_key,
-            llm_port=args.llm_port,
-            gradio_port=args.gradio_port,
-            num_attempts=args.num_llm_attempts,
-            max_chapters=args.max_chapters or DEFAULTS.get("max_chapters", 10),
-            seed_voice_map=args.seed_voice_map,
-            epub_file=args.epub_file,
-            saved_temp_dir=saved_temp_dir if args.resume_from else None,
-            voice_engine=args.voice_engine
-        )
-    else:
-        # Run CLI pipeline
-        if not args.epub_file:
-            parser.print_help()
-            print("\nError: EPUB file is required for CLI mode.")
-            sys.exit(1)
-
-        if not os.path.exists(args.epub_file):
-            print(f"Error: EPUB file not found: {args.epub_file}")
-            sys.exit(1)
-
-        # Determine whisper device
-        whisper_device = args.device
-        whisper_cpu = args.whisper_cpu
-
-        # Use temp directory by default, or user-specified output_dir if provided
-        used_temp_dir = False
-        if output_dir is None:
-            used_temp_dir = True
-            # Check for saved_temp_dir (from --resume_from with archive or dir)
-            if saved_temp_dir:
-                print(f"Using saved temp directory: {saved_temp_dir}")
-                output_dir = saved_temp_dir
-            else:
-                output_dir = str(get_chapters_dir())
-                print(f"Using temporary directory: {get_temp_dir()}")
-
-        # Wrap pipeline execution to handle Ctrl-C during processing
-        def run_pipeline_with_interrupt():
-            """Run pipeline and return (status, interrupted) tuple."""
-            try:
-                status = run_full_pipeline(
-                    epub_path=args.epub_file,
-                    output_dir=output_dir,
-                    max_chapters=args.max_chapters,
-                    verbose=args.verbose,
-                    api_key=args.api_key,
-                    llm_port=args.llm_port,
-                    voice_engine=args.voice_engine,
-                    tts_engine=args.tts_engine,
-                    turbo=args.turbo,
-                    device=args.device,
-                    seed_voice_map=args.seed_voice_map,
-                    num_llm_attempts=args.num_llm_attempts,
-                    resume=(saved_temp_dir is not None),
-                    whisper_device=whisper_device,
-                    whisper_cpu=whisper_cpu,
-                    debug_tts=args.debug_tts,
-                    validate=args.validate,
-                    validate_clean=args.validate_clean
-                )
-                return status, False
-            except KeyboardInterrupt:
-                print("\n\nInterrupted by user (Ctrl-C)")
-                return None, True
-
-        status, interrupted = run_pipeline_with_interrupt()
-
-        if not interrupted:
-            print(status)
-
-        # Handle temp directory cleanup - offer to save before cleaning up
-        if used_temp_dir and not args.keep_temp:
-            # Offer to save temp directory before cleanup
-            print(f"\nTemp directory: {output_dir}")
-            print("\nOptions before cleanup:")
-            print("  's' - Save temp directory as zip archive for later resume")
-            print("  anything else (or Ctrl-C) - Discard and clean up")
-
-            try:
-                choice = input("\nPress 's' to save or any other key to discard: ").strip().lower()
-                if choice == 's':
-                    saved_path = save_temp_dir(output_dir)
-                    print(f"\nSaved to: {saved_path}")
-                    print("To resume later: --resume_from " + saved_path)
-                else:
-                    print("\nDiscarding temp directory...")
-            except (EOFError, KeyboardInterrupt):
-                print("\nDiscarding temp directory...")
-
-            # Clean up after offering save option
-            cleanup_temp_dir()
-        elif used_temp_dir and args.keep_temp:
-            print(f"\nTemp directory kept: {output_dir}")
-            print(f"Use --resume_from {output_dir} to resume from this directory.")
-        elif not used_temp_dir:
-            # Not using temp dir - just copy files if we have an output_dir
-            if output_dir:
-                copy_mp3_files_to_chapters(output_dir)
-                print(f"\nMP3 files have been copied to ./chapters/ directory.")
-
-
-if __name__ == "__main__":
-    main()

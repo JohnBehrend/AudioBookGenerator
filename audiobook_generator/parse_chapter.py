@@ -5,7 +5,6 @@ Module to parse chapter content and return chapter objects.
 import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
-import argparse
 import re
 from .utils import natural_sort_key
 
@@ -248,38 +247,3 @@ def load_chapter_objs_from_file(text: str) -> list:
             pass
 
     return chapter_objs
-
-
-def main():
-    """CLI entry point for EPUB parsing."""
-    parser = argparse.ArgumentParser(description="Parse an EPUB file into chapter text files.")
-    parser.add_argument("epub_file", help="Path to the EPUB file")
-    parser.add_argument("--output-dir", "-o", default="chapters", help="Output directory for chapter files")
-    parser.add_argument("--max-chapters", type=int, help="Maximum number of chapters to process")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
-    args = parser.parse_args()
-
-    if not os.path.exists(args.epub_file):
-        print(f"Error: EPUB file not found: {args.epub_file}", file=sys.stderr)
-        sys.exit(1)
-
-    chapters = parse_epub_to_chapters(args.epub_file, max_chapters=args.max_chapters)
-
-    if not chapters:
-        print("Error: No chapters found in EPUB file.", file=sys.stderr)
-        sys.exit(1)
-
-    written_files = write_chapters_to_txt(chapters, args.output_dir)
-
-    if args.verbose:
-        print(f"Parsed {len(chapters)} chapters, written to {args.output_dir}/")
-        for f in written_files:
-            print(f"  {os.path.basename(f)}")
-
-    print(f"EPUB parsing complete! Generated {len(written_files)} chapter files.")
-
-
-if __name__ == "__main__":
-    import sys
-    import os
-    main()

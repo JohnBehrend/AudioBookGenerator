@@ -2,7 +2,6 @@
 """
 Module to take a chapter and automate sending through LLM for labeling characters.
 """
-import argparse
 import os
 import sys
 import json
@@ -769,104 +768,6 @@ def create_prompt_with_context(prompt_template, existing_characters=None, chapte
 
     # If no output format section found, append context at the end
     return prompt_template + "\n" + context_text
-
-#- Do NOT base attribution solely on the quote content itself
-#- Print with final format in mind.
-#- Do not stop until the full text is processed!
-#- Do not summarize, go thought the entire text!
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Label a chapter file by character. Speaker (Narrator) for non quoted lines. Speaker (char_name) for spoken lines.")
-    parser.add_argument("-txt_file", help="Path to the chapter text file")
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose printing for debug.")
-    parser.add_argument("--skip_llm", action="store_true", help="Skip call to LLM and just try to process files into character maps.")
-    parser.add_argument("-num_llm_attempts", type=int, default=DEFAULTS["num_llm_attempts"], help="Number of llm attempts submitted.")
-    parser.add_argument("--old_format", action="store_true", help="Use older format for LLM query and parsing.")
-    parser.add_argument("-api_key", metavar="lm-studio", default=LLM_SETTINGS["api_key"], help="Provide custom api key.")
-    parser.add_argument("-port", metavar="1234", default=LLM_SETTINGS["port"], help="Provide custom port for invference.")
-    args = parser.parse_args()
-
-    client = get_llm_client(args.api_key, args.port)
-
-    if not os.path.exists(args.txt_file):
-        print("Invalid txt_file. Please specify a valid text file and retry.", args.txt_file, file=sys.stderr)
-        exit()
-
-    chapter_file_base, _ = os.path.splitext(args.txt_file)
-
-    # Load existing character map from previous chapter for naming consistency
-    existing_characters = load_all_previous_chapter_maps(chapter_file_base)
-
-    # Extract chapter number from filename for context
-    chapter_num = None
-    chapter_match = re.search(r'chapter[_\s]?(\d+)', args.txt_file, re.IGNORECASE)
-    if chapter_match:
-        chapter_num = int(chapter_match.group(1))
-
-    if not args.skip_llm:
-        with open(args.txt_file, "r", encoding='utf-8') as f:
-            lines = f.readlines()
-        # Define your chat messages
-        if args.old_format:
-            prompt_content = "You are a helpful assistant." + OLD_PROMPT_TXT
-            messages = [
-                {"role": "system", "content": prompt_content}]
-        else:
-            # Create prompt with context from existing character map
-            prompt_content = create_prompt_with_context(PROMPT_TXT, existing_characters, chapter_num)
-            messages = [
-                {"role": "system", "content": prompt_content}]
-        [messages.append({"role": "user", "content": x}) for x in lines]
-
-        # Save the full prompt text when verbose is enabled
-        if args.verbose:
-            prompt_file = chapter_file_base + ".prompt.txt"
-            with open(prompt_file, "w", encoding='utf-8') as f:
-                # Write system prompt
-                f.write("=== SYSTEM PROMPT ===\n")
-                f.write(prompt_content + "\n\n")
-                # Write chapter content
-                f.write("=== CHAPTER CONTENT ===\n")
-                f.write("".join(lines))
-            print(f"[VERBOSE] Saved prompt to {prompt_file}")
-
-        for a, attempt in enumerate(range(args.num_llm_attempts)):
-            # Send the chat completion request
-            print(f"Processing attempt {a}")
-            response = client.chat.completions.create(
-                model=LLM_SETTINGS["default_model"],
-                messages=messages,
-                temperature=0.7,
-                #stream=True # Set to True for streaming responses
-            ).choices[0].message
-            try:
-                if "</think>" in response.content:
-                    thought_process, result = response.content.split("</think>")
-                else:
-                    result = response.content
-                    thought_process = response.reasoning
-            except:
-                result = response.content
-                thought_process = None
-            # Save think files
-            if thought_process is not None:
-                with open(chapter_file_base + f".think.{a}.txt", "w", encoding='utf-8') as f:
-                    f.write(thought_process)
-            # Save result files
-            with open(chapter_file_base + f".result.{a}.txt", "w", encoding='utf-8') as f:
-                f.write(result)
-
-    # Use the public function for processing
-    status_msg, character_map, line_map = label_speakers(
-        txt_file=chapter_file_base + ".txt",
-        api_key=args.api_key,
-        port=args.port,
-        num_attempts=args.num_llm_attempts,
-        old_format=args.old_format,
-        skip_llm=args.skip_llm,
-        verbose=args.verbose
-    )
-    print(status_msg)
-
 
 def label_speakers(
     txt_file: str,

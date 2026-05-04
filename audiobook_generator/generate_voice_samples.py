@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 """
-Voice Sample Generator for Audiobook Characters
-
-Generates short voice sample .wav files for each character based on their
-description. Uses TTS engine from AUDIO_SETTINGS (default: kugelaudio).
+Module to generate voice samples for audiobook characters.
 """
-
-import argparse
-import json
 import os
 import sys
 import shutil
@@ -96,93 +90,6 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
         return False, None, 0, False, "Exception during generation"
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Generate voice samples for audiobook characters"
-    )
-    parser.add_argument(
-        "--descriptions",
-        default="characters_descriptions.json",
-        help="Path to characters_descriptions.json"
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=VOICE_SAMPLES_DIR,
-        help="Directory to save voice samples"
-    )
-    parser.add_argument(
-        "--device",
-        default=AUDIO_SETTINGS["default_device"],
-        help="CUDA device (e.g., cuda:0, cpu)"
-    )
-    parser.add_argument(
-        "--max-tokens",
-        type=int,
-        default=DEFAULTS["max_new_tokens"],
-        help="Max tokens for generation"
-    )
-    parser.add_argument(
-        "--single-character",
-        help="Generate only one character"
-    )
-    parser.add_argument(
-        "--seed-voice-map",
-        help="Path to existing voices_map.json to seed voices"
-    )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose printing for debug."
-    )
-    parser.add_argument(
-        "--voice-engine",
-        default=AUDIO_SETTINGS.get("default_tts_engine", "moss"),
-        help="TTS engine for voice sample generation ('moss', 'omni')"
-    )
-
-    args = parser.parse_args()
-
-    if not os.path.exists(args.descriptions):
-        print(f"Error: Descriptions file not found: {args.descriptions}", file=sys.stderr)
-        sys.exit(1)
-
-    descriptions = load_character_descriptions(args.descriptions)
-
-    if args.single_character:
-        if args.single_character not in descriptions:
-            print(f"Error: Character '{args.single_character}' not found.", file=sys.stderr)
-            sys.exit(1)
-        descriptions = {args.single_character: descriptions[args.single_character]}
-
-    # Load seed voices if provided
-    seed_characters = None
-    if args.seed_voice_map:
-        if os.path.exists(args.seed_voice_map):
-            with open(args.seed_voice_map, 'r', encoding='utf-8') as f:
-                seed_characters = json.load(f)
-
-    status, generated = generate_voice_samples(
-        descriptions=descriptions,
-        output_dir=args.output_dir,
-        device=args.device,
-        max_tokens=args.max_tokens,
-        single_character=args.single_character,
-        verbose=args.verbose,
-        seed_characters=seed_characters,
-        voice_engine=args.voice_engine,
-        validate=False
-    )
-
-    print(status)
-
-
-# ============================================================================
-# PUBLIC FUNCTIONS
-# ============================================================================
-# generate_voice_samples is the public function used by both CLI and Gradio UI.
-# The CLI main() function above calls this function to do the actual work.
-# This provides a single, consistent interface for all callers.
-
 from typing import Dict, Tuple
 
 
@@ -197,7 +104,7 @@ def generate_voice_samples(
     seed_characters: Dict[str, str] = None,
     voice_engine: str = "moss",
     force_regenerate: bool = False,
-    validate: bool = False  # Deprecated - ignored
+    validate: bool = False
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters via VoiceMapper.
 
@@ -344,5 +251,3 @@ def generate_voice_samples(
         if verbose:
             print(error_msg)
         return error_msg, {}
-if __name__ == "__main__":
-    main()

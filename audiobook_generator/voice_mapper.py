@@ -13,14 +13,10 @@ import os
 import json
 import gc
 import traceback
-import torch
-import torchaudio
-import soundfile as sf
 from typing import Dict, Tuple, Optional, Any
 from pathlib import Path
 from openai import OpenAI
 
-# Import config for default values
 from .config import DEFAULTS, AUDIO_SETTINGS, VOICE_VALIDATION, TTS_MODEL_PATHS
 
 # Import engine registry
@@ -222,6 +218,7 @@ class VoiceMapper:
         """Clean up all cached TTS models from GPU memory."""
         self.tts_models.clear()
         gc.collect()
+        import torch
         torch.cuda.empty_cache()
 
     def get_engine(self):
@@ -371,6 +368,7 @@ class VoiceMapper:
             del self.tts_models[key]
         if keys_to_remove:
             gc.collect()
+            import torch
             torch.cuda.empty_cache()
 
     def reset(self) -> None:
@@ -467,7 +465,9 @@ class VoiceMapper:
                 if verbose:
                     print(f"  Warning: auto_transcribe failed: {e}")
 
-        # Load the voice sample
+        import soundfile as sf
+        import torch
+
         voice_audio, sr = sf.read(voice_path)
         # Convert numpy array to torch tensor (OmniVoice expects tensor, not numpy array)
         voice_audio = torch.from_numpy(voice_audio)

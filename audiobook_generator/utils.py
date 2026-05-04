@@ -8,8 +8,6 @@ import os
 import re
 import tempfile
 import atexit
-from scipy import stats
-import numpy as np
 import glob
 import shutil
 import zipfile
@@ -1044,6 +1042,9 @@ def classify_gender_statistical(
         - confidence: 0.0-1.0 confidence score (higher = more certain)
         - reason: Human-readable explanation of classification
     """
+    import numpy as np
+    from scipy import stats
+
     sample_mean = np.mean(voiced_f0)
     sample_std = np.std(voiced_f0, ddof=1) if len(voiced_f0) > 1 else 0
     sample_size = len(voiced_f0)
@@ -1052,7 +1053,6 @@ def classify_gender_statistical(
         print(f"    Pitch distribution: n={sample_size}, mean={sample_mean:.1f}Hz, std={sample_std:.1f}Hz")
         print(f"    Reference: male={male_ref_mean}Hz, female={female_ref_mean}Hz")
 
-    # Perform one-sample t-tests against each reference
     t_stat_male, p_value_male = stats.ttest_1samp(voiced_f0, male_ref_mean)
     t_stat_female, p_value_female = stats.ttest_1samp(voiced_f0, female_ref_mean)
 

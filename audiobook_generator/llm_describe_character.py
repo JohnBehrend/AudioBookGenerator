@@ -587,7 +587,8 @@ def describe_characters(
     verbose: bool = False,
     seed_characters: Dict[str, str] = None,
     progress_callback: callable = None,
-    voice_engine: str = None
+    voice_engine: str = None,
+    client: "OpenAI" = None
 ) -> Tuple[str, Dict[str, str]]:
     """Describe characters from an audiobook using an LLM.
 
@@ -608,6 +609,7 @@ def describe_characters(
         seed_characters: Dict mapping character names to voice paths from seed voices_map
         progress_callback: Optional callback(progress, desc) for progress updates
         voice_engine: TTS engine for voice generation ('omni', 'vox', etc.) - affects prompt format
+        client: Optional LLM client for injection (for testing)
 
     Returns:
         Tuple of (status message, dict of character descriptions)
@@ -661,7 +663,8 @@ def describe_characters(
         chapter_texts, chapter_files = [], []
 
     # Initialize client
-    client = get_llm_client(api_key or LLM_SETTINGS["api_key"], port or LLM_SETTINGS["port"])
+    if client is None:
+        client = get_llm_client(api_key or LLM_SETTINGS["api_key"], port or LLM_SETTINGS["port"])
 
     # Use shared logic
     descriptions = describe_characters_shared(

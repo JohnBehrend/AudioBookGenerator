@@ -1,13 +1,107 @@
 #!/usr/bin/env python3
-"""Mock TTS engine for unit testing."""
+"""Testing utilities for audiobook_generator."""
 
 import os
+import json
 import numpy as np
 from pathlib import Path
 from typing import Any, Optional, Tuple
+from unittest.mock import MagicMock
 
 import torch
 import torchaudio
+
+
+class MockLLMClient:
+    """Mock LLM client for testing without a running LLM server.
+
+    This mock captures chat.completions.create() calls and returns
+    configurable responses.
+
+    Usage:
+        from audiobook_generator.testing import MockLLMClient
+
+        mock = MockLLMClient()
+        mock.set_response({"role": "assistant", "content": '{"speaker_map": {"1": "narrator"}}'})
+
+        # Use in label_speakers
+        label_speakers(txt_file, api_key, port, client=mock)
+
+        # Check what was sent
+        print(mock.last_request)
+    """
+
+    def __init__(self):
+        """Initialize mock client."""
+        self.chat = ChatCompletionsMock(self)
+        self.base_url = "http://localhost:1234/v1"
+        self.api_key = "mock-key"
+
+    def set_response(self, response: dict) -> None:
+        """Set the response for the next chat.completions.create() call.
+
+        Args:
+            response: Response dict with 'content' field for assistant message
+        """
+        self._next_response = response
+
+    def set_responses(self, responses: list) -> None:
+        """Set multiple responses for sequential calls.
+
+        Args:
+            responses: List of response dicts
+        """
+        self._responses = responses
+        self._response_index = 0
+
+    def get_next_response(self) -> dict:
+        """Get the next response from the queue."""
+        if hasattr(self, "_responses") and self._responses:
+            if self._response_index < len(self._responses):
+                response = self._responses[self._response_index]
+                self._response_index += 1
+                return response
+        if hasattr(self, "_next_response"):
+            return self._next_response
+        return {"role": "assistant", "content": "{}"}
+
+
+class ChatCompletionsMock:
+    """Mock for openai.ChatCompletions."""
+
+    def __init__(self, client: MockLLMClient):
+        self._client = client
+
+    def create(self, model: str, messages: list, **kwargs):
+        """Mock chat.completions.create().
+
+        Captures the request and returns a mock response.
+        """
+        self._client.last_request = {
+            "model": model,
+            "messages": messages,
+            "kwargs": kwargs,
+        }
+
+        response_content = self._client.get_next_response()
+
+        return ChatCompletionChoice(response_content)
+
+
+class ChatCompletionChoice:
+    """Mock for openai.ChatCompletionChoice."""
+
+    def __init__(self, message: dict):
+        self.message = MockMessage(message)
+
+
+class MockMessage:
+    """Mock for openai.types.chat.ChatCompletionMessage."""
+
+    def __init__(self, message: dict):
+        self.content = message.get("content", "{}")
+        self.role = message.get("role", "assistant")
+        self.reasoning = None
 
 
 class MockTTSEngine:

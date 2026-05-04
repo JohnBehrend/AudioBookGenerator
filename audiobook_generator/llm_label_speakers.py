@@ -6,7 +6,7 @@ import os
 import sys
 import json
 import re
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 from collections import Counter
 from openai import OpenAI
 
@@ -777,7 +777,8 @@ def label_speakers(
     old_format: bool = False,
     skip_llm: bool = False,
     verbose: bool = False,
-    seed_characters: Dict[str, str] = None
+    seed_characters: Dict[str, str] = None,
+    client: Any = None
 ) -> Tuple[str, Dict, Dict]:
     """Label speakers in a chapter file using LLM.
 
@@ -791,14 +792,14 @@ def label_speakers(
         num_attempts: Number of LLM attempts to make
         old_format: Use older format for LLM query and parsing
         skip_llm: Skip call to LLM and just try to process existing files
-        verbose: Print verbose output
         seed_characters: Dict of character names -> voice paths from seed voices_map
 
     Returns:
         Tuple of (status_message, character_map, line_map)
     """
     chapter_file_base, _ = os.path.splitext(txt_file)
-    client = get_llm_client(api_key, port)
+    if client is None:
+        client = get_llm_client(api_key, port)
 
     # Load existing character map from previous chapter for naming consistency
     existing_characters = load_all_previous_chapter_maps(chapter_file_base)

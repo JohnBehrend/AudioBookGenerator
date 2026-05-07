@@ -396,6 +396,217 @@ class TestValidateVoiceWithLLM:
         assert is_valid is True
 
 
+class TestDescribeVoiceWithLLM:
+    """Tests for describe_voice_with_llm static method."""
+
+    def test_returns_description(self, temp_dir, mock_tts_engine, mock_llm_client):
+        """Test that voice description is returned."""
+        voice_file = temp_dir / "test_voice.wav"
+        import numpy as np
+        import torch
+        import torchaudio
+        audio = np.zeros(22050, dtype=np.float32)
+        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": "male, middle-aged, moderate pitch, american accent"
+        })
+
+        from audiobook_generator.voice_mapper import VoiceMapper
+        description = VoiceMapper.describe_voice_with_llm(
+            voice_path=str(voice_file),
+            client=mock_llm_client,
+            verbose=False
+        )
+
+        assert isinstance(description, str)
+        assert "male" in description
+        assert "middle-aged" in description
+        assert "moderate pitch" in description
+
+    def test_strips_markdown(self, temp_dir, mock_tts_engine, mock_llm_client):
+        """Test that markdown code blocks are stripped from response."""
+        voice_file = temp_dir / "test_voice.wav"
+        import numpy as np
+        import torch
+        import torchaudio
+        audio = np.zeros(22050, dtype=np.float32)
+        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": "```python\nfemale, young adult, high pitch, british accent\n```"
+        })
+
+        from audiobook_generator.voice_mapper import VoiceMapper
+        description = VoiceMapper.describe_voice_with_llm(
+            voice_path=str(voice_file),
+            client=mock_llm_client,
+            verbose=False
+        )
+
+        assert "female" in description
+        assert "young adult" in description
+        assert "```" not in description
+
+    def test_strips_quotes(self, temp_dir, mock_tts_engine, mock_llm_client):
+        """Test that quotes are stripped from response."""
+        voice_file = temp_dir / "test_voice.wav"
+        import numpy as np
+        import torch
+        import torchaudio
+        audio = np.zeros(22050, dtype=np.float32)
+        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": '"male, elderly, low pitch"'
+        })
+
+        from audiobook_generator.voice_mapper import VoiceMapper
+        description = VoiceMapper.describe_voice_with_llm(
+            voice_path=str(voice_file),
+            client=mock_llm_client,
+            verbose=False
+        )
+
+        assert "male" in description
+        assert '"' not in description
+
+    def test_returns_empty_on_error(self, temp_dir, mock_tts_engine, mock_llm_client):
+        """Test that empty string is returned on API error."""
+        voice_file = temp_dir / "test_voice.wav"
+        import numpy as np
+        import torch
+        import torchaudio
+        audio = np.zeros(22050, dtype=np.float32)
+        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+
+        def raise_error(*args, **kwargs):
+            raise Exception("API Error")
+
+        mock_llm_client.chat.completions.create = raise_error
+
+        from audiobook_generator.voice_mapper import VoiceMapper
+        description = VoiceMapper.describe_voice_with_llm(
+            voice_path=str(voice_file),
+            client=mock_llm_client,
+            verbose=False
+        )
+
+        assert description == ""
+
+    def test_sends_correct_request(self, temp_dir, mock_tts_engine, mock_llm_client):
+        """Test that correct request is sent to the API."""
+        voice_file = temp_dir / "test_voice.wav"
+        import numpy as np
+        import torch
+        import torchaudio
+        audio = np.zeros(22050, dtype=np.float32)
+        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": "female, young adult, high pitch"
+        })
+
+        from audiobook_generator.voice_mapper import VoiceMapper
+        VoiceMapper.describe_voice_with_llm(
+            voice_path=str(voice_file),
+            client=mock_llm_client,
+            verbose=False
+        )
+
+        # Check that the request was captured
+        assert mock_llm_client.last_request is not None
+        messages = mock_llm_client.last_request["messages"]
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
+        # Check content is a list with audio_url and text
+        content = messages[0]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 2
+        assert content[0]["type"] == "audio_url"
+        assert content[1]["type"] == "text"
+        # Check text prompt includes required attributes
+        text = content[1]["text"]
+        assert "GENDER" in text
+        assert "AGE" in text
+        assert "PITCH" in text
+        assert "ACCENT" in text
+
+    def test_handles_relative_path(self, temp_dir, mock_tts_engine, mock_llm_client):
+        """Test that relative path is converted to absolute for file URL."""
+        voice_file = temp_dir / "test_voice.wav"
+        import numpy as np
+        import torch
+        import torchaudio
+        audio = np.zeros(22050, dtype=np.float32)
+        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": "male, middle-aged, moderate pitch"
+        })
+
+        from audiobook_generator.voice_mapper import VoiceMapper
+        description = VoiceMapper.describe_voice_with_llm(
+            voice_path=str(voice_file),
+            client=mock_llm_client,
+            verbose=False
+        )
+
+        assert "male" in description
+
+    def test_verbose_output(self, temp_dir, mock_tts_engine, mock_llm_client, capsys):
+        """Test that verbose output is printed."""
+        voice_file = temp_dir / "test_voice.wav"
+        import numpy as np
+        import torch
+        import torchaudio
+        audio = np.zeros(22050, dtype=np.float32)
+        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": "male, middle-aged, moderate pitch"
+        })
+
+        from audiobook_generator.voice_mapper import VoiceMapper
+        VoiceMapper.describe_voice_with_llm(
+            voice_path=str(voice_file),
+            client=mock_llm_client,
+            verbose=True
+        )
+
+        captured = capsys.readouterr()
+        assert "Voice description:" in captured.out
+
+    def test_with_default_model(self, temp_dir, mock_tts_engine, mock_llm_client):
+        """Test that default model is used when not specified."""
+        voice_file = temp_dir / "test_voice.wav"
+        import numpy as np
+        import torch
+        import torchaudio
+        audio = np.zeros(22050, dtype=np.float32)
+        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": "female, elderly, low pitch"
+        })
+
+        from audiobook_generator.voice_mapper import VoiceMapper
+        description = VoiceMapper.describe_voice_with_llm(
+            voice_path=str(voice_file),
+            client=mock_llm_client,
+            verbose=False
+        )
+
+        assert "female" in description
+
+
 class TestDuplicateReplacementMap:
     """Tests for duplicate_replacement_map functionality."""
 

@@ -43,10 +43,10 @@ class VoiceMapper:
         self,
         output_dir: str,
         device: str = "cuda:0",
-        tts_engine: str = None,
-        duplicate_replacement_map: Dict[str, str] = None,
+        tts_engine: Optional[str] = None,
+        duplicate_replacement_map: Optional[Dict[str, str]] = None,
         engine: Optional[Any] = None,
-    ):
+    ) -> None:
         """Initialize the VoiceMapper.
 
         Args:
@@ -357,6 +357,98 @@ class VoiceMapper:
             # On error, return True to allow generation to continue
             return True, error_msg
 
+    @staticmethod
+    def describe_voice_with_llm(
+        voice_path: str,
+        client: Optional[OpenAI] = None,
+        model: Optional[str] = None,
+        verbose: bool = False
+    ) -> str:
+        """Describe a voice sample using LLM audio analysis.
+
+        Analyzes a WAV file and returns a voice description in the same format
+        used for voice generation (comma-separated attributes: gender, age, pitch, accent).
+
+        Args:
+            voice_path: Path to the voice .wav file to describe
+            client: OpenAI client for the LLM
+            model: Model name for analysis (defaults to VOICE_VALIDATION["model"])
+            verbose: Print verbose output
+
+        Returns:
+            Voice description string (e.g., "male, middle-aged, moderate pitch, american accent")
+        """
+        if client is None:
+            client = get_validation_client()
+
+        if model is None:
+            model = VOICE_VALIDATION["model"]
+
+        abs_voice_path = os.path.abspath(voice_path)
+        file_url = f"file://{abs_voice_path}"
+
+        prompt = (
+            "Analyze this voice sample and describe it using these EXACT attributes:\n\n"
+            "GENDER: male OR female\n"
+            "AGE: child OR teenager OR young adult OR middle-aged OR elderly\n"
+            "PITCH: very low pitch OR low pitch OR moderate pitch OR high pitch OR very high pitch\n"
+            "ACCENT: american accent OR british accent OR australian accent OR canadian accent OR indian accent OR chinese accent OR korean accent OR japanese accent OR portuguese accent OR russian accent\n\n"
+            "RULES:\n"
+            "- Output ONLY comma-separated attributes (no other text)\n"
+            "- NO markdown, NO sentences, NO \"a\", NO \"with\", NO \"voice\"\n"
+            "- Use ONLY the supported attributes listed above\n"
+            "- ONE gender only (male OR female)\n"
+            "- ONE age only\n"
+            "- ONE pitch only\n"
+            "- ONE accent only (or omit if not applicable)\n"
+            "- 2-5 attributes max, comma-separated\n\n"
+            "Format: <gender>, <age>, <pitch>, <accent>\n\n"
+            "Examples:\n"
+            "- male, middle-aged, moderate pitch\n"
+            "- female, young adult, high pitch, british accent\n"
+            "- male, elderly, low pitch\n"
+            "- female, young adult, moderate pitch, american accent\n"
+        )
+
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "audio_url",
+                                "audio_url": {"url": file_url}
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=256
+            )
+
+            result = response.choices[0].message.content.strip()
+
+            # Clean up the result: remove markdown, quotes, extra whitespace
+            result = result.replace('"', '').replace("'", "").strip()
+            if result.startswith("```"):
+                result = result.split("\n", 1)[-1].rstrip("```").strip()
+
+            if verbose:
+                print(f"    Voice description: {result}")
+
+            return result
+
+        except Exception as e:
+            error_msg = f"Description error: {str(e)}"
+            if verbose:
+                print(f"    {error_msg}")
+            return ""
+
     def unload_model(self, engine_name: str) -> None:
         """Unload models for a specific TTS engine.
 
@@ -390,8 +482,8 @@ class VoiceMapper:
         self,
         character_name: str,
         description: str,
-        output_dir: str = None,
-        max_new_tokens: int = None,
+        output_dir: Optional[str] = None,
+        max_new_tokens: Optional[int] = None,
         verbose: bool = False
     ) -> Tuple[bool, Optional[str], float]:
         """Generate a voice sample for a character using the configured TTS engine.
@@ -413,7 +505,7 @@ class VoiceMapper:
         if max_new_tokens is None:
             max_new_tokens = DEFAULTS["max_new_tokens"]
 
-        engine = get_engine(self.tts_engine, device=self.device)
+        engine = self.get_engine()
         success, output_file, duration = engine.generate_voice_sample(
             character_name=character_name,
             description=description,
@@ -431,8 +523,8 @@ class VoiceMapper:
     def build_voice_clone_prompt(
         self,
         voice_path: str,
-        ref_text: str = None,
-        validation_model = None,
+        ref_text: Optional[str] = None,
+        validation_model: Optional[Any] = None,
         auto_transcribe: bool = False,
         verbose: bool = False
     ) -> Any:
@@ -489,8 +581,8 @@ class VoiceMapper:
     def get_voice_clone_prompt(
         self,
         character_name: str,
-        ref_text: str = None,
-        validation_model = None,
+        ref_text: Optional[str] = None,
+        validation_model: Optional[Any] = None,
         auto_transcribe: bool = False,
         verbose: bool = False
     ) -> Optional[Any]:
@@ -532,7 +624,7 @@ class VoiceMapper:
 
     def get_all_clone_prompts(
         self,
-        validation_model = None,
+        validation_model: Optional[Any] = None,
         auto_transcribe: bool = False,
         verbose: bool = False
     ) -> Dict[str, Any]:

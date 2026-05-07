@@ -66,7 +66,7 @@ class TTSEngine(ABC):
         voice_path: Optional[str],
         output_path: str,
         device: str,
-        validation_model,
+        validation_model: Optional[Any] = None,
         cfg_scale: float = 1.3,
         max_new_tokens: int = 19200,
         verbose: bool = False,

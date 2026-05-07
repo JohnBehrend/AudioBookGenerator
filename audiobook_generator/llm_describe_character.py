@@ -17,14 +17,14 @@ from .config import LLM_SETTINGS, OUTPUT_DIR
 from .utils import get_llm_client, compare_characters, get_characters_from_map_files, natural_sort_key
 
 
-def load_characters(characters_file: str) -> list:
+def load_characters(characters_file: str) -> List[str]:
     """Load characters from a JSON file."""
     with open(characters_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return data.get('characters', [])
 
 
-def find_duplicate_characters(characters: list) -> dict:
+def find_duplicate_characters(characters: List[str]) -> Dict[str, List[str]]:
     """Find groups of duplicate characters based on name similarity.
 
     Returns a dict mapping canonical character name to list of duplicate names.
@@ -50,7 +50,7 @@ def find_duplicate_characters(characters: list) -> dict:
     return {k: v for k, v in canonical_to_duplicates.items() if v}
 
 
-def create_duplicate_replacement_map(duplicates: dict) -> dict:
+def create_duplicate_replacement_map(duplicates: Dict[str, List[str]]) -> Dict[str, str]:
     """Create a mapping from each duplicate name to its canonical name.
 
     Args:
@@ -66,7 +66,7 @@ def create_duplicate_replacement_map(duplicates: dict) -> dict:
     return replacement_map
 
 
-def deduplicate_descriptions(descriptions: dict, duplicates: dict, verbose: bool = False) -> dict:
+def deduplicate_descriptions(descriptions: Dict[str, str], duplicates: Dict[str, List[str]], verbose: bool = False) -> Dict[str, str]:
     """Deduplicate character descriptions based on duplicate character mappings.
 
     For each group of duplicate characters:
@@ -117,7 +117,7 @@ def load_chapter_texts(chapters_dir: Path) -> Tuple[List[str], List[Path]]:
     return chapter_texts, chapter_files
 
 
-def find_chapters_with_character(chapter_texts: list, chapter_files: list, character_name: str) -> list:
+def find_chapters_with_character(chapter_texts: List[str], chapter_files: List[Path], character_name: str) -> List[Tuple[Path, str]]:
     """Find chapters where a character is mentioned.
 
     Args:
@@ -138,7 +138,7 @@ def find_chapters_with_character(chapter_texts: list, chapter_files: list, chara
     return chapters_with_char
 
 
-def load_chapter_lines(chapter_file: str) -> list:
+def load_chapter_lines(chapter_file: str) -> List[str]:
     """Load a chapter file and return lines as a list (1-indexed for convenience).
 
     Args:
@@ -163,7 +163,7 @@ def load_chapter_lines(chapter_file: str) -> list:
     return cleaned_lines
 
 
-def extract_character_dialogue(chapters_dir: Path, character_name: str, max_examples: int = None) -> list:
+def extract_character_dialogue(chapters_dir: Path, character_name: str, max_examples: Optional[int] = None) -> List[Tuple[str, str]]:
     """Extract actual dialogue lines spoken by a character from map files.
 
     Args:
@@ -236,8 +236,8 @@ def extract_character_dialogue(chapters_dir: Path, character_name: str, max_exam
     return dialogue_examples
 
 
-def build_character_context(characters: list, chapter_texts: list, chapter_files: list = [],
-                           chapters_dir: Path = None, wiki_url_template: str = "") -> Tuple[str, list]:
+def build_character_context(characters: List[str], chapter_texts: List[str], chapter_files: List[Path] = [],
+                           chapters_dir: Optional[Path] = None, wiki_url_template: str = "") -> Tuple[str, List[str]]:
     """Build context string with character names and their actual dialogue.
 
     Args:
@@ -289,7 +289,7 @@ def build_character_context(characters: list, chapter_texts: list, chapter_files
     return context, chapter_messages
 
 
-def _get_description_prompt(voice_engine: str) -> str:
+def _get_description_prompt(voice_engine: Optional[str]) -> str:
     """Get the appropriate character description prompt based on voice engine.
 
     Args:
@@ -303,7 +303,7 @@ def _get_description_prompt(voice_engine: str) -> str:
     return CHARACTER_DESCRIPTION_PROMPT_OMNI
 
 
-def describe_character(client: OpenAI, model: str, character: str, context: str, chapter_messages: list = None, voice_engine: str = None) -> str:
+def describe_character(client: OpenAI, model: str, character: str, context: str, chapter_messages: Optional[List[str]] = None, voice_engine: Optional[str] = None) -> str:
     """Ask the LLM to describe a single character.
 
     Args:
@@ -339,7 +339,7 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
         return f"Error describing character: {e}"
 
 
-def describe_all_characters(client: OpenAI, model: str, characters: list, context: str, voice_engine: str = None) -> dict:
+def describe_all_characters(client: OpenAI, model: str, characters: List[str], context: str, voice_engine: Optional[str] = None) -> Dict[str, str]:
     """Ask the LLM to describe all characters at once."""
     system_prompt = _get_description_prompt(voice_engine)
 
@@ -396,17 +396,17 @@ def describe_all_characters(client: OpenAI, model: str, characters: list, contex
 # ============================================================================
 
 def describe_characters_shared(
-    characters: list,
-    chapter_texts: list,
-    chapter_files: list,
+    characters: List[str],
+    chapter_texts: List[str],
+    chapter_files: List[Path],
     output_dir: str,
     client: OpenAI,
     model: str,
     wiki_url_template: str = "",
     verbose: bool = False,
-    progress_callback: callable = None,
-    voice_engine: str = None
-) -> dict:
+    progress_callback: Optional[callable] = None,
+    voice_engine: Optional[str] = None
+) -> Dict[str, str]:
     """Shared logic for describing characters.
 
     Args:

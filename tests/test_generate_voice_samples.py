@@ -143,7 +143,8 @@ class TestGenerateVoiceSamples:
             output_dir=str(temp_dir),
             device="cpu",
             verbose=False,
-            voice_engine="mock"
+            voice_engine="mock",
+            engine=mock_tts_engine
         )
 
         assert "narrator" in voices or len(voices) > 0

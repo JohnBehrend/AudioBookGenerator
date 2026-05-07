@@ -14,7 +14,7 @@ import zipfile
 import datetime
 from pathlib import Path
 from collections import Counter
-from typing import Dict, Optional, Tuple, List, Union
+from typing import Any, Dict, Optional, Tuple, List, Union
 from openai import OpenAI
 
 from .config import LLM_SETTINGS
@@ -42,7 +42,7 @@ class ProgressHandler:
         desc: Default description for progress updates
     """
 
-    def __init__(self, progress=None, use_tqdm: bool = True, total: int = None, desc: str = ""):
+    def __init__(self, progress: Optional[Any] = None, use_tqdm: bool = True, total: Optional[int] = None, desc: str = ""):
         self.progress = progress
         self.use_tqdm = use_tqdm
         self.total = total
@@ -470,7 +470,7 @@ def get_chapters_dir_from_saved(saved_temp_dir: str) -> Path:
     return ctx.get_chapters_dir_from_saved(saved_temp_dir)
 
 
-def get_characters_from_map_files(chapters_dir: Path) -> list:
+def get_characters_from_map_files(chapters_dir: Path) -> List[str]:
     """Extract unique character names from map.json files.
 
     Args:
@@ -531,7 +531,7 @@ def compare_characters(character_name: str, other_character: str) -> bool:
     return False
 
 
-def merge_line_maps(line_maps: list, verbose: bool = False) -> dict:
+def merge_line_maps(line_maps: List[Dict[int, int]], verbose: bool = False) -> Dict[int, int]:
     """Take multiple line maps and determine the most common mapping for each line.
 
     If there is only one value for a line, we will pick that value.
@@ -604,11 +604,12 @@ def load_json_file(filepath: str) -> Optional[dict]:
     return None
 
 
-def copy_mp3_files_to_chapters(source_dir: str) -> int:
-    """Copy MP3 files from source_dir to ./chapters/ directory.
+def copy_mp3_files_to_chapters(source_dir: str, dest_dir: str = "chapters") -> int:
+    """Copy MP3 files from source_dir to dest_dir.
 
     Args:
         source_dir: Source directory containing chapter MP3 files
+        dest_dir: Destination directory (default: "chapters")
 
     Returns:
         Number of files copied
@@ -618,13 +619,13 @@ def copy_mp3_files_to_chapters(source_dir: str) -> int:
     if not mp3_files:
         return 0
 
-    os.makedirs("chapters", exist_ok=True)
+    os.makedirs(dest_dir, exist_ok=True)
 
     for mp3_path in mp3_files:
         filename = os.path.basename(mp3_path)
-        dest_path = os.path.join("chapters", filename)
+        dest_path = os.path.join(dest_dir, filename)
         shutil.copy2(mp3_path, dest_path)
-        print(f"Copied {filename} to chapters/")
+        print(f"Copied {filename} to {dest_dir}/")
 
     return len(mp3_files)
 
@@ -708,7 +709,7 @@ def distill_string(input_str: str) -> str:
             .replace("!", ""))).strip()
 
 
-def transcribe_audio_with_whisper(validation_model, audio_path: str) -> Tuple[str, list, list]:
+def transcribe_audio_with_whisper(validation_model: Any, audio_path: str) -> Tuple[str, List[float], List[float]]:
     """Transcribe audio using Whisper with word-level timestamps.
 
     This function reuses the transcription logic from audiobook_generator.py
@@ -874,7 +875,7 @@ def parse_map_file(map_file: Path) -> Optional[Tuple[Dict[int, str], Dict[int, i
         return None
 
 
-def get_chapter_map_files(chapters_dir: Path) -> list:
+def get_chapter_map_files(chapters_dir: Path) -> List[Path]:
     """Get sorted list of chapter map files.
 
     Args:
@@ -888,7 +889,7 @@ def get_chapter_map_files(chapters_dir: Path) -> list:
                   key=natural_sort_key)
 
 
-def extract_characters_from_maps(chapters_dir: Path) -> list:
+def extract_characters_from_maps(chapters_dir: Path) -> List[str]:
     """Extract unique character names from all map files in a directory.
 
     Args:

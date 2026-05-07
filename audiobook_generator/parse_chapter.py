@@ -6,10 +6,12 @@ import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
 import re
+from pathlib import Path
+from typing import List, Optional
 from .utils import natural_sort_key
 
 class ChapterObj:
-    def __init__(self, has_quotes: bool, text: str, line_num: int):
+    def __init__(self, has_quotes: bool, text: str, line_num: int) -> None:
         self.has_quotes = has_quotes
         self.speaker = "narrator" # default to narrator
         self.text = text.strip()
@@ -21,7 +23,7 @@ class ChapterObj:
     def set_speaker(self, speaker):
         self.speaker = speaker
 
-def get_chapter_objs(text: str):
+def get_chapter_objs(text: str) -> List[ChapterObj]:
     """
     Parse a chapter's text and return a list of chapter objects with the required properties.
     
@@ -59,7 +61,7 @@ def get_chapter_objs(text: str):
                 chapter_objs.append(ChapterObj(False, cleanup_text(paragraph), line_num))
     return chapter_objs
 
-def parse_epub_to_chapters(epub_path, max_chapters=None):
+def parse_epub_to_chapters(epub_path: str, max_chapters: Optional[int] = None) -> List[List[ChapterObj]]:
     """
     Parse an EPUB file into an array of chapters.
 
@@ -129,14 +131,14 @@ def parse_epub_to_chapters(epub_path, max_chapters=None):
         print(f"Error parsing EPUB file: {e}")
         return []
 
-def cleanup_text(txt):
+def cleanup_text(txt: str) -> str:
     txt = txt.replace("   ", " ")
     txt = txt.replace("  ", " ")
     # Strip "Line N:" prefix if present (from saved chapter files)
     txt = re.sub(r"^Line \d+: ?", "", txt, flags=re.IGNORECASE)
     return txt
 
-def write_chapters_to_txt(chapters, output_dir, prefix="chapter_"):
+def write_chapters_to_txt(chapters: List[List[ChapterObj]], output_dir: str, prefix: str = "chapter_") -> List[str]:
     """Write chapter objects to text files.
 
     Args:
@@ -168,7 +170,7 @@ def write_chapters_to_txt(chapters, output_dir, prefix="chapter_"):
     return written_files
 
 
-def load_chapters_from_txt(output_dir: str, max_chapters: int = None, prefix: str = "chapter_") -> list:
+def load_chapters_from_txt(output_dir: str, max_chapters: Optional[int] = None, prefix: str = "chapter_") -> List[List[ChapterObj]]:
     """Load chapters from existing text files.
 
     Args:
@@ -202,7 +204,7 @@ def load_chapters_from_txt(output_dir: str, max_chapters: int = None, prefix: st
     return chapters
 
 
-def load_chapter_objs_from_file(text: str) -> list:
+def load_chapter_objs_from_file(text: str) -> List[ChapterObj]:
     """
     Load chapter objects from text file content, preserving original line numbers.
 

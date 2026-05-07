@@ -9,7 +9,7 @@ audiobook_generator.py for testability. These functions handle:
 """
 
 import re
-from typing import List, Tuple, Optional
+from typing import Any, List, Tuple, Optional
 
 
 END_CHARACTERS = ["?", ".", "-", ";", ",", "!"]
@@ -279,7 +279,7 @@ def is_generation_success(
 
 
 def collect_transcription_segments(
-    segments_list,
+    segments_list: Any,
 ) -> Tuple[List[str], List[float], List[float]]:
     """Collect word segments and timestamps from Whisper transcription.
 

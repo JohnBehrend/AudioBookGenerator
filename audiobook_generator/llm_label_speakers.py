@@ -6,14 +6,14 @@ import os
 import sys
 import json
 import re
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from collections import Counter
 from openai import OpenAI
 
 from .config import LLM_SETTINGS, DEFAULTS
 from .utils import get_llm_client, merge_line_maps, compare_characters, natural_sort_key
 
-def normalize_key_value_pairs(json_str):
+def normalize_key_value_pairs(json_str: str) -> str:
     """Normalize JSON by ensuring all keys and string values are properly quoted.
 
     Handles cases like: {1: "narrator", 2: "char1"}
@@ -63,7 +63,7 @@ def normalize_key_value_pairs(json_str):
     return "{" + ", ".join(normalized_entries) + "}"
 
 
-def _normalize_entry(entry):
+def _normalize_entry(entry: str) -> str:
     """Normalize a single key-value pair entry."""
     entry = entry.strip()
     if ':' not in entry:
@@ -90,7 +90,7 @@ def _normalize_entry(entry):
     return f"{key}: {value}"
 
 
-def extract_json_from_text(text):
+def extract_json_from_text(text: str) -> Optional[str]:
     """Extract the first valid JSON object from text.
 
     Handles:
@@ -145,7 +145,7 @@ def extract_json_from_text(text):
     return None
 
 
-def parse_json_output(text, attempt_num):
+def parse_json_output(text: str, attempt_num: int) -> Tuple[Dict[int, str], Dict[int, int]]:
     """Parse LLM output containing JSON with robust error handling.
 
     This is the unified JSON parsing function that handles both the new format
@@ -208,7 +208,7 @@ def parse_json_output(text, attempt_num):
     return char_map, line_map
 
 
-def _normalize_character_map(speaker_map):
+def _normalize_character_map(speaker_map: Dict) -> Dict[int, str]:
     """Normalize character/speaker map keys to int and values to lowercase."""
     result = {}
     for k, v in speaker_map.items():
@@ -221,7 +221,7 @@ def _normalize_character_map(speaker_map):
     return result
 
 
-def _normalize_line_map(attributions):
+def _normalize_line_map(attributions: Dict) -> Dict[int, int]:
     """Normalize line attribution map keys and values to int."""
     line_map = {}
     for line_num_str, char_num in attributions.items():
@@ -239,7 +239,7 @@ def _normalize_line_map(attributions):
     return line_map
 
 
-def parse_old_format_lines(result_lines, char_map):
+def parse_old_format_lines(result_lines: List[str], char_map: Dict[int, str]) -> Dict[int, int]:
     """Parse old format line:speaker mappings from result lines.
 
     Handles format like:
@@ -290,7 +290,7 @@ def parse_old_format_lines(result_lines, char_map):
     return line_map
 
 
-def interpret_new_result(result, attempt_num, seed_characters=None):
+def interpret_new_result(result: List[str], attempt_num: int, seed_characters: Optional[Dict[str, str]] = None) -> Tuple[Dict[int, str], Dict[int, int]]:
     """Process result of new LLM query using unified JSON parsing.
 
     Handles the new format:
@@ -356,7 +356,7 @@ def interpret_new_result(result, attempt_num, seed_characters=None):
 
     return char_map, line_map 
 
-def interpret_result(result, attempt_num):
+def interpret_result(result: List[str], attempt_num: int) -> Tuple[Dict[int, str], Dict[int, int]]:
     """Process result of a LLM query in old format (char_map + line mappings).
 
     Handles format:
@@ -409,7 +409,7 @@ def interpret_result(result, attempt_num):
     return char_map, line_map
 
 
-def _parse_old_format_fallback(result, attempt_num):
+def _parse_old_format_fallback(result: List[str], attempt_num: int) -> Tuple[Dict[int, str], Dict[int, int]]:
     """Fallback parsing for old format (original implementation).
 
     This preserves the original behavior as a fallback when the unified
@@ -480,7 +480,7 @@ def _parse_old_format_fallback(result, attempt_num):
     return char_map, line_map
 
 
-def _parse_unquoted_keys_fallback(json_body):
+def _parse_unquoted_keys_fallback(json_body: str) -> Dict[int, str]:
     """Parse JSON with unquoted keys using simple string manipulation.
 
     This is a fallback for the old add_quotes_around_keys function.
@@ -533,7 +533,7 @@ def _parse_unquoted_keys_fallback(json_body):
     except ValueError:
         return result
 
-def is_same_character_by_line_mapping(character_key, character, line_map, merged_character_map, merged_line_map):
+def is_same_character_by_line_mapping(character_key: int, character: str, line_map: Dict[int, int], merged_character_map: Dict[int, str], merged_line_map: Dict[int, int]) -> Tuple[bool, Optional[int]]:
     """
     Determine if two characters are actually the same based on their line mappings.
     Returns True if at least half of the lines in the current character's map
@@ -651,7 +651,7 @@ Begin processing the chapter now.
 #TODO: Update prompt to ensre we give non numbered, first name driven naming for characters...And narrator for occasions where it is too difficult to determine.
 
 
-def load_all_previous_chapter_maps(chapter_file_base) -> Dict[str, str] | None:
+def load_all_previous_chapter_maps(chapter_file_base: str) -> Optional[Dict[str, str]]:
     """Load all previous chapter character maps to seed character names for consistent naming.
 
     Args:
@@ -712,7 +712,7 @@ def load_all_previous_chapter_maps(chapter_file_base) -> Dict[str, str] | None:
 
 # create_prompt_with_context(): Builds LLM prompt by inserting character context into PROMPT_TXT.
 # It inserts the existing character names before the "## Output format" section.
-def create_prompt_with_context(prompt_template, existing_characters=None, chapter_num=None, seed_characters=None):
+def create_prompt_with_context(prompt_template: str, existing_characters: Optional[Dict[str, str]] = None, chapter_num: Optional[int] = None, seed_characters: Optional[Dict[str, str]] = None) -> str:
     """Create LLM prompt with optional context from existing character names and seed characters.
 
     Args:

@@ -36,6 +36,7 @@ class MockLLMClient:
         self.chat = _ChatCompletionsWrapper(self)
         self.base_url = "http://localhost:1234/v1"
         self.api_key = "mock-key"
+        self.last_request: Optional[dict] = None
 
     def set_response(self, response: dict) -> None:
         """Set the response for the next chat.completions.create() call.

@@ -210,22 +210,23 @@ class TestCopyMp3FilesToChapters:
         """Test that MP3 files are copied."""
         source_dir = temp_dir / "source"
         source_dir.mkdir()
+        dest_dir = temp_dir / "chapters"
 
         for i in range(3):
             mp3_file = source_dir / f"chapter_{i}.mp3"
             mp3_file.write_bytes(b"fake mp3 content")
 
-        result = copy_mp3_files_to_chapters(str(source_dir))
+        result = copy_mp3_files_to_chapters(str(source_dir), str(dest_dir))
         assert result == 3
 
-        chapters_dir = Path("chapters")
-        assert chapters_dir.exists()
+        assert dest_dir.exists()
         for i in range(3):
-            assert (chapters_dir / f"chapter_{i}.mp3").exists()
+            assert (dest_dir / f"chapter_{i}.mp3").exists()
 
     def test_no_files_returns_zero(self, temp_dir):
         """Test that zero is returned when no files."""
-        result = copy_mp3_files_to_chapters(str(temp_dir))
+        dest_dir = temp_dir / "chapters"
+        result = copy_mp3_files_to_chapters(str(temp_dir), str(dest_dir))
         assert result == 0
 
 

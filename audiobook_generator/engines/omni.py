@@ -223,7 +223,7 @@ class OmniEngine(TTSEngine):
         voice_path: Optional[str],
         output_path: str,
         device: str,
-        validation_model,
+        validation_model: Optional[Any] = None,
         cfg_scale: float = 1.3,
         max_new_tokens: int = 19200,
         verbose: bool = False,
@@ -241,7 +241,7 @@ class OmniEngine(TTSEngine):
         self._clear_cuda_cache()
         return resp.get("success", False)
 
-    def _get_ref_text(self, voice_path: str, validation_model, verbose: bool) -> str:
+    def _get_ref_text(self, voice_path: str, validation_model: Optional[Any], verbose: bool) -> str:
         try:
             from ..utils import transcribe_audio_with_whisper
             ref_text, _, _ = transcribe_audio_with_whisper(validation_model, voice_path)

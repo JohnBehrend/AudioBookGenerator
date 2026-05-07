@@ -8,7 +8,7 @@ import sys
 import shutil
 import traceback
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional, Tuple
 from openai import OpenAI
 
 # Import config for default values
@@ -19,15 +19,15 @@ from .utils import get_validation_client
 from .voice_mapper import VoiceMapper
 
 
-def load_character_descriptions(descriptions_file):
+def load_character_descriptions(descriptions_file: str) -> Dict[str, str]:
     """Load character descriptions from JSON file."""
     with open(descriptions_file, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
 def generate_voice_sample(character_name: str, description: str, voice_mapper: VoiceMapper,
-                          output_dir: str, max_new_tokens: int = None, verbose: bool = False,
-                          validate: bool = False, validation_client: OpenAI = None) -> tuple:
+                          output_dir: str, max_new_tokens: Optional[int] = None, verbose: bool = False,
+                          validate: bool = False, validation_client: Optional[OpenAI] = None) -> Tuple[bool, Optional[str], float, bool, str]:
     """Generate a short voice sample for a character using VoiceDesign model via VoiceMapper.
 
     Uses voice design with an instruct prompt to generate speech
@@ -105,7 +105,8 @@ def generate_voice_samples(
     seed_characters: Dict[str, str] = None,
     voice_engine: str = "moss",
     force_regenerate: bool = False,
-    validate: bool = False
+    validate: bool = False,
+    engine=None
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters via VoiceMapper.
 
@@ -178,7 +179,7 @@ def generate_voice_samples(
             print("=" * 60 + "\n")
 
         # Create VoiceMapper once to cache the TTS model across all characters
-        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=voice_engine)
+        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=voice_engine, engine=engine)
 
         try:
             for i, (char_name, char_desc) in enumerate(descriptions.items()):

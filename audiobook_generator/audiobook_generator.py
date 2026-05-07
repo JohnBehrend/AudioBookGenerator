@@ -28,6 +28,7 @@ import gc
 import traceback
 from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
+from dataclasses import dataclass, field
 
 from .utils import _get_attn_implementation
 from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
@@ -82,11 +83,29 @@ from .pipeline import (
 
 
 # ============================================================================
+# CONFIGURATION DATACLASSES
+# ============================================================================
+
+@dataclass
+class TTSConfig:
+    """Configuration for TTS generation."""
+    device: str = "cuda"
+    tts_engine: str = "vibevoice"
+    cfg_scale: float = 1.3
+    output_dir: str = ""
+    short_text_postfix: Optional[str] = DEFAULTS["short_text_postfix"]
+    validation_model: Optional[Any] = None
+    validation_client: Optional[Any] = None
+    validate_clean: bool = False
+    verbose: bool = False
+
+
+# ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
 
-def setup_validation_model(device: str, cpu: bool = False):
+def setup_validation_model(device: str, cpu: bool = False) -> Any:
     """Setup the Whisper validation model for audio transcription.
 
     Args:
@@ -106,7 +125,7 @@ def setup_validation_model(device: str, cpu: bool = False):
         return WhisperModel(model_name, device=whisper_device, compute_type="float16")
 
 
-def get_non_silent_audio_from_wavs(wav_filepath_list, min_silence_len=1250, silence_thresh=-60):
+def get_non_silent_audio_from_wavs(wav_filepath_list: List[str], min_silence_len: int = 1250, silence_thresh: int = -60) -> Any:
     """Remove silent audio from list of wave filepaths of wavs together. Return AudioSegment."""
     import pydub
 
@@ -123,7 +142,7 @@ def get_non_silent_audio_from_wavs(wav_filepath_list, min_silence_len=1250, sile
     return all_audio_segments
 
 
-def color_word(word, score):
+def color_word(word: str, score: float) -> str:
     """
     Annotates terminal color strings around word.
     The gradient progresses from red (score=0) to green (score=1).
@@ -184,7 +203,7 @@ def split_text_for_echo_tts(text: str, max_chunk_size: int = 500) -> list:
     return chunks
 
 
-def _get_ref_text_for_voice(voice_path: str, validation_model, voice_name: str, verbose: bool) -> str:
+def _get_ref_text_for_voice(voice_path: str, validation_model: Any, voice_name: str, verbose: bool) -> str:
     """Transcribe voice sample to get reference text for cloning, with fallback."""
     try:
         ref_text, _, _ = transcribe_audio_with_whisper(validation_model, voice_path)
@@ -209,17 +228,9 @@ def generate_tts_for_line(
     text: str,
     voice_name: str,
     voice_mapper: VoiceMapper,
-    device: str,
-    tts_engine: str,
-    cfg_scale: float,
-    output_dir: str,
-    short_text_postfix: str = DEFAULTS["short_text_postfix"],
-    validation_model = None,
-    verbose: bool = False,
-    voice_path: str = None,
-    validation_client = None,
-    validate_clean: bool = False,
-):
+    tts_config: TTSConfig,
+    voice_path: Optional[str] = None,
+) -> Tuple[bool, float]:
     """Generate TTS audio for a single line.
 
     Args:
@@ -228,28 +239,20 @@ def generate_tts_for_line(
         text: Text to synthesize
         voice_name: Name of the voice/character
         voice_mapper: VoiceMapper instance
-        device: Device to run on
-        tts_engine: 'vibevoice', 'moss', 'echo-tts', 'omni', or 'vox'
+        tts_config: TTS configuration (device, engine, cfg_scale, output_dir, etc.)
         voice_path: Optional path to voice sample file. If not provided, uses voice_mapper.
-        cfg_scale: CFG scale value
-        output_dir: Output directory for audio files
-        short_text_postfix: Postfix for validation
-        validation_model: Faster-whisper model for validation
-        verbose: Print verbose output
-        validation_client: OpenAI client for clean audio validation (created if None)
-        validate_clean: If True, validate audio contains only clean speech (no music/SFX)
 
     Returns:
         Tuple of (success: bool, ratio: float)
     """
     # Skip empty text to avoid infinite loops when Whisper can't transcribe
     if not text or not text.strip():
-        if verbose:
+        if tts_config.verbose:
             print(f"  Skipping line {line_idx} (empty text: '{text}')")
         return (True, 1.0)  # Return success to avoid blocking the pipeline
 
     # Use pipeline pure functions for text preparation
-    full_script, postfix_detect_token = prepare_script_for_tts(text, short_text_postfix)
+    full_script, postfix_detect_token = prepare_script_for_tts(text, tts_config.short_text_postfix)
 
     ratio = 0.0
     max_ratio = float('-inf')  # Initialize to lowest possible value to ensure first attempt is always saved
@@ -261,7 +264,7 @@ def generate_tts_for_line(
     while should_retry(ratio, max_ratio, retries, MAX_RETRIES, MIN_RATIO_THRESHOLD):
         set_seed(42 + retries)
 
-        output_path = generate_output_filename(output_dir, chapter_idx, line_idx, is_final=False)
+        output_path = generate_output_filename(tts_config.output_dir, chapter_idx, line_idx, is_final=False)
 
         # Resolve voice path if not provided
         if voice_path is None:
@@ -275,14 +278,14 @@ def generate_tts_for_line(
                 text=full_script,
                 voice_path=voice_path,
                 output_path=output_path,
-                device=device,
-                validation_model=validation_model,
-                cfg_scale=cfg_scale,
-                verbose=verbose,
+                device=tts_config.device,
+                validation_model=tts_config.validation_model,
+                cfg_scale=tts_config.cfg_scale,
+                verbose=tts_config.verbose,
             )
         except Exception as e:
             print(f"    Engine generation failed: {e}")
-            if verbose:
+            if tts_config.verbose:
                 traceback.print_exc()
             ratio = 0.0
             retries += 1
@@ -303,9 +306,9 @@ def generate_tts_for_line(
         end_times = []
         last_valid_token = None
 
-        if validation_model is not None:
+        if tts_config.validation_model is not None:
             # Use faster-whisper for validation with word timestamps for token-level matching
-            segments_list, info = validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+            segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
 
             # Collect segments (words) and timestamps
             # Whisper word_timestamps=True should give individual words, but we need to split on spaces just in case
@@ -319,33 +322,33 @@ def generate_tts_for_line(
                     end_times.append(word.end)
 
             detected_string = distill_string(" ".join(segments))
-            if verbose:
+            if tts_config.verbose:
                 print(f"  [STT] Original text: {input_string}")
                 print(f"  [STT] Whisper transcribed: {detected_string}")
-            postfix_for_score = distill_string(short_text_postfix) if short_text_postfix else ""
+            postfix_for_score = distill_string(tts_config.short_text_postfix) if tts_config.short_text_postfix else ""
             ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=postfix_for_score)
 
             # Clean audio validation (when validate_clean is enabled) - outside retry loop to avoid hot-path bloat
-            if validate_clean and validation_client is not None and ratio >= 0.85:
+            if tts_config.validate_clean and tts_config.validation_client is not None and ratio >= 0.85:
                 is_clean, clean_msg = validate_audio_clean(
                     audio_path=output_path,
-                    client=validation_client,
-                    verbose=verbose
+                    client=tts_config.validation_client,
+                    verbose=tts_config.verbose
                 )
                 if not is_clean:
-                    if verbose:
+                    if tts_config.verbose:
                         print(f"  [Clean Check] FAILED: {clean_msg}")
                     ratio = 0  # Force retry by setting ratio to 0
                 else:
-                    if verbose:
+                    if tts_config.verbose:
                         print(f"  [Clean Check] PASSED: {clean_msg}")
 
         # Clipping based on validation results (only when validation model is available)
-        if validation_model is not None:
+        if tts_config.validation_model is not None:
             # Postfix-specific clipping (only when postfix is configured)
-            if short_text_postfix and (distill_string(short_text_postfix) in detected_string) and (postfix_detect_token in segments):
-                if detected_string.startswith(distill_string(short_text_postfix)):
-                    if verbose:
+            if tts_config.short_text_postfix and (distill_string(tts_config.short_text_postfix) in detected_string) and (postfix_detect_token in segments):
+                if detected_string.startswith(distill_string(tts_config.short_text_postfix)):
+                    if tts_config.verbose:
                         print("\nERROR: POSTFIX DETECTED BUT ONLY POSTFIX! -> Ratio 0\n")
                     ratio = 0
                 else:
@@ -355,34 +358,34 @@ def generate_tts_for_line(
                     else:
                         clip_end2 = end_times[-1]
                     clip_end1 = start_times[::-1][postfix_start_index]
-                    if verbose:
+                    if tts_config.verbose:
                         print(f"\nPOSTFIX DETECTED CLIPPING to {clip_end1} - {clip_end2}\n")
                     import pydub
                     audio = pydub.AudioSegment.from_wav(output_path)
                     trimmed_audio = audio[0:((clip_end1 + clip_end2) * 500)]
                     trimmed_audio.export(output_path, format="wav")
-            elif short_text_postfix:
+            elif tts_config.short_text_postfix:
                 # Postfix not detected - clip to last valid token
                 if ((last_valid_token is None) or (last_valid_token == "")):
-                    if verbose:
+                    if tts_config.verbose:
                         print("\nERROR: POSTFIX UN-DETECTED and INVALID VALUES. SKIP.\n")
                 elif last_valid_token in segments:
                     lastvalid_index = segments[::-1].index(last_valid_token)
                     clip_end1 = end_times[::-1][lastvalid_index]
-                    if verbose:
+                    if tts_config.verbose:
                         print(f"\nERROR: POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1}\n")
                     import pydub
                     audio = pydub.AudioSegment.from_wav(output_path)
                     trimmed_audio = audio[0:(clip_end1 * 1000)]
                     trimmed_audio.export(output_path, format="wav")
                 else:
-                    if verbose:
+                    if tts_config.verbose:
                         print(f"\nERROR: POSTFIX UN-DETECTED even though last_valid_token = {last_valid_token} should be in {segments}\n")
             # When short_text_postfix is empty, no clipping is needed - the ratio determines if retry is needed
 
         if ratio > max_ratio:
             max_ratio = ratio
-            final_path = generate_output_filename(output_dir, chapter_idx, line_idx, is_final=True)
+            final_path = generate_output_filename(tts_config.output_dir, chapter_idx, line_idx, is_final=True)
             if os.path.exists(final_path):
                 os.unlink(final_path)
             time.sleep(2)
@@ -390,7 +393,7 @@ def generate_tts_for_line(
 
         retries += 1
     # Clean up temp file if it exists
-    temp_path = generate_output_filename(output_dir, chapter_idx, line_idx, is_final=False)
+    temp_path = generate_output_filename(tts_config.output_dir, chapter_idx, line_idx, is_final=False)
     if os.path.exists(temp_path):
         os.unlink(temp_path)
 
@@ -414,14 +417,14 @@ def generate_audiobook_from_chapters(
     verbose: bool = False,
     turbo: bool = False,
     progress: Optional[callable] = None,
-    duplicate_replacement_map: Dict[str, str] = None,
-    seed_voice_map: str = None,
-    whisper_device: str = None,
+    duplicate_replacement_map: Optional[Dict[str, str]] = None,
+    seed_voice_map: Optional[str] = None,
+    whisper_device: Optional[str] = None,
     whisper_alt_gpu: bool = False,
     whisper_cpu: bool = False,
     debug_tts: bool = False,
     validate_clean: bool = False,
-    max_retries: int = None,
+    max_retries: Optional[int] = None,
     enable_postfix: bool = True,
     validation_interval: int = 1,
 ) -> Tuple[str, int]:
@@ -572,12 +575,7 @@ def generate_audiobook_from_chapters(
                         raise Exception(f"No voice path found for '{voice}' (canonical: '{canonical_voice}')")
 
                     # Generate TTS for this line
-                    success, ratio = generate_tts_for_line(
-                        chapter_idx=i,
-                        line_idx=line_num,
-                        text=chapter_obj.text,
-                        voice_name=voice,
-                        voice_mapper=voice_mapper,
+                    tts_config = TTSConfig(
                         device=device,
                         tts_engine=tts_engine,
                         cfg_scale=cfg_scale,
@@ -585,9 +583,17 @@ def generate_audiobook_from_chapters(
                         short_text_postfix=(short_text_postfix if (validation_model is not None) else None),
                         validation_model=validation_model,
                         verbose=verbose,
-                        voice_path=voice_path,
                         validation_client=validation_client,
-                        validate_clean=validate_clean
+                        validate_clean=validate_clean,
+                    )
+                    success, ratio = generate_tts_for_line(
+                        chapter_idx=i,
+                        line_idx=line_num,
+                        text=chapter_obj.text,
+                        voice_name=voice,
+                        voice_mapper=voice_mapper,
+                        tts_config=tts_config,
+                        voice_path=voice_path,
                     )
                     progress_handler.update((j + 1)/len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j} Ratio {int(ratio * 100)}")
                     if verbose:

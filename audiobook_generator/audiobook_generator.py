@@ -1100,7 +1100,7 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
                             num_attempts: int = 2, max_chapters: int = 10,
                             seed_voice_map: str = None, epub_file: str = None,
                             saved_temp_dir: str = None, tts_engine: str = None,
-                            voice_engine: str = None) -> None:
+                            voice_engine: str = None, verbose: bool = False) -> None:
     """Create and launch the Gradio interface for the audiobook pipeline.
 
     This function launches the Gradio interface imported from the package's
@@ -1160,7 +1160,8 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
             epub_path_default=epub_path_default,
             saved_temp_dir=saved_temp_dir,
             tts_engine_default=tts_engine,
-            voice_engine_default=voice_engine
+            voice_engine_default=voice_engine,
+            verbose=verbose
         )
 
         try:
@@ -1195,6 +1196,51 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
     except ImportError as e:
         print(f"Error: Could not import gradio_ui module")
         print(f"Make sure the module is in place: {e}")
+
+
+def main():
+    """CLI entry point for the audiobook generator."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Audiobook Generator - Convert EPUB to Audiobook")
+    parser.add_argument("--gradio", action="store_true", help="Launch Gradio interface")
+    parser.add_argument("--output-dir", default="chapters", help="Output directory for generated files")
+    parser.add_argument("--api-key", default=None, help="LLM API key")
+    parser.add_argument("--port", dest="llm_port", default=None, help="Port for LLM endpoint (e.g., LM Studio)")
+    parser.add_argument("--gradio-port", type=int, default=None, help="Port for Gradio web interface")
+    parser.add_argument("--num-attempts", type=int, default=2, help="Number of LLM attempts")
+    parser.add_argument("--max-chapters", type=int, default=10, help="Maximum chapters to process")
+    parser.add_argument("--seed-voice-map", help="Path to existing voices_map.json to seed voices")
+    parser.add_argument("epub_file", nargs="?", help="Path to EPUB file to process")
+    parser.add_argument("--saved-temp-dir", help="Path to saved temp directory to restore from")
+    parser.add_argument("--tts-engine", choices=["vibevoice", "moss", "echo-tts", "omni", "vox"], help="TTS engine to use")
+    parser.add_argument("--voice-engine", choices=["omni", "vox"], default="omni", help="Voice engine for character descriptions")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
+
+    args = parser.parse_args()
+
+    if args.gradio:
+        create_gradio_interface(
+            output_dir=args.output_dir,
+            api_key=args.api_key,
+            llm_port=args.llm_port,
+            gradio_port=args.gradio_port,
+            num_attempts=args.num_attempts,
+            max_chapters=args.max_chapters,
+            seed_voice_map=args.seed_voice_map,
+            epub_file=args.epub_file,
+            saved_temp_dir=args.saved_temp_dir,
+            tts_engine=args.tts_engine,
+            voice_engine=args.voice_engine,
+            verbose=args.verbose
+        )
+    else:
+        parser.print_help()
+        print("\nFor now, only --gradio mode is supported. Use --gradio to launch the interface.")
+
+
+if __name__ == "__main__":
+    main()
 
 
 

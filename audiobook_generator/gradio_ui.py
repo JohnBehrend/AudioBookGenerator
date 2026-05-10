@@ -1142,6 +1142,7 @@ def create_interface(
     saved_temp_dir: Optional[str] = None,
     tts_engine_default: Optional[str] = None,
     voice_engine_default: Optional[str] = None,
+    verbose: bool = False,
 ):
     """Create the Gradio interface with all stages using a state machine pattern.
 

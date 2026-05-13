@@ -22,7 +22,8 @@ class TestEngineRegistry:
         assert "vox" in engines
         assert "vibevoice" in engines
         assert "echo-tts" in engines
-        assert len(engines) == 5
+        assert "dramabox" in engines
+        assert len(engines) == 6
 
     def test_get_engine_returns_correct_class(self):
         """get_engine should return the correct engine class."""
@@ -47,12 +48,14 @@ class TestEngineRegistry:
         from audiobook_generator.engines.vox import VoxEngine
         from audiobook_generator.engines.vibevoice import VibeVoiceEngine
         from audiobook_generator.engines.echo_tts import EchoTTSAdapter
+        from audiobook_generator.engines.dramabox import DramaboxEngine
 
         assert _ENGINE_REGISTRY["moss"] is MossEngine
         assert _ENGINE_REGISTRY["omni"] is OmniEngine
         assert _ENGINE_REGISTRY["vox"] is VoxEngine
         assert _ENGINE_REGISTRY["vibevoice"] is VibeVoiceEngine
         assert _ENGINE_REGISTRY["echo-tts"] is EchoTTSAdapter
+        assert _ENGINE_REGISTRY["dramabox"] is DramaboxEngine
 
 
 class TestTTSEngineBase:
@@ -110,6 +113,13 @@ class TestEngineInstances:
         engine = EchoTTSAdapter(device="cpu")
         assert engine._device == "cpu"
 
+    def test_dramabox_engine_creation(self):
+        """DramaboxEngine should be creatable."""
+        from audiobook_generator.engines.dramabox import DramaboxEngine
+        engine = DramaboxEngine(device="cpu")
+        assert engine._device == "cpu"
+        assert engine.ENV_NAME == "dramabox"
+
 
 class TestEngineFactory:
     """Tests for get_engine factory with different engines."""
@@ -143,3 +153,9 @@ class TestEngineFactory:
         engine = get_engine("echo-tts", device="cpu")
         from audiobook_generator.engines.echo_tts import EchoTTSAdapter
         assert isinstance(engine, EchoTTSAdapter)
+
+    def test_get_engine_dramabox(self):
+        """get_engine('dramabox') returns DramaboxEngine."""
+        engine = get_engine("dramabox", device="cpu")
+        from audiobook_generator.engines.dramabox import DramaboxEngine
+        assert isinstance(engine, DramaboxEngine)

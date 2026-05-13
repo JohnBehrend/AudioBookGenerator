@@ -6,6 +6,7 @@ from .omni import OmniEngine
 from .vox import VoxEngine
 from .vibevoice import VibeVoiceEngine
 from .echo_tts import EchoTTSAdapter
+from .dramabox import DramaboxEngine
 
 
 # Engine name -> class mapping
@@ -15,6 +16,7 @@ _ENGINE_REGISTRY = {
     "vox": VoxEngine,
     "vibevoice": VibeVoiceEngine,
     "echo-tts": EchoTTSAdapter,
+    "dramabox": DramaboxEngine,
 }
 
 

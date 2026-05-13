@@ -80,6 +80,7 @@ TTS_MODEL_PATHS = {
     "echo-tts": "jordand/echo-tts-base",
     "omni": "drbaph/OmniVoice-bf16",
     "vox": "openbmb/VoxCPM2",
+    "dramabox": "ResembleAI/Dramabox",
 }
 
 # Voice samples directory

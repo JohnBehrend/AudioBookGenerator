@@ -56,6 +56,7 @@ def main():
         ("vox", "male, middle aged, american accent"),
         ("kugelaudio", "a warm female voice with a gentle accent"),
         ("vibevoice", "young female voice, cheerful and energetic"),
+        ("dramabox", "A middle-aged man speaks calmly, his voice steady and measured."),
     ]
 
     results = {}

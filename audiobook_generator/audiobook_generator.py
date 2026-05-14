@@ -1218,10 +1218,19 @@ def main():
     parser.add_argument("epub_file", nargs="?", help="Path to EPUB file to process")
     parser.add_argument("--saved-temp-dir", help="Path to saved temp directory to restore from")
     parser.add_argument("--tts-engine", choices=["vibevoice", "moss", "echo-tts", "omni", "vox", "dramabox"], help="TTS engine to use")
-    parser.add_argument("--voice-engine", choices=["omni", "vox"], default="omni", help="Voice engine for character descriptions")
+    parser.add_argument("--model", default=None, help="LLM model name (e.g., coder-model)")
+    parser.add_argument("--voice-engine", choices=["omni", "vox", "dramabox"], default="omni", help="Voice engine for character descriptions")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
 
     args = parser.parse_args()
+
+    if args.epub_file is None and not args.gradio and args.saved_temp_dir is None:
+        parser.print_help()
+        print("\nError: Missing required argument. Provide an EPUB file, use --gradio, or use --saved-temp-dir.")
+        print("\nExamples:")
+        print("  audiobook-interface book.epub --tts-engine omni")
+        print("  audiobook-interface --gradio --tts-engine omni")
+        sys.exit(1)
 
     if args.gradio:
         create_gradio_interface(
@@ -1239,8 +1248,125 @@ def main():
             verbose=args.verbose
         )
     else:
-        parser.print_help()
-        print("\nFor now, only --gradio mode is supported. Use --gradio to launch the interface.")
+        # Non-interactive pipeline run
+        import json
+        import glob
+        import shutil
+        import torch
+        from pathlib import Path
+
+        from .parse_chapter import parse_epub_to_chapters, load_chapters_from_txt
+        from .llm_label_speakers import label_speakers
+        from .llm_describe_character import describe_characters as describe_chars
+        from .generate_voice_samples import generate_voice_samples as gen_voice_samples
+        from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
+        from .utils import (
+            get_chapters_dir, get_temp_dir, cleanup_temp_dir,
+            natural_sort_key, get_character_wav_file, load_seed_characters,
+            count_lines_per_character, ProgressHandler,
+        )
+
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        device = AUDIO_SETTINGS["default_device"] if torch.cuda.is_available() else "cpu"
+        api_key = args.api_key or LLM_SETTINGS["api_key"]
+        llm_port = args.llm_port or LLM_SETTINGS["port"]
+        llm_model = args.model or LLM_SETTINGS["default_model"]
+
+        # Stage 1: Parse EPUB
+        print(f"=== Stage 1: Parsing EPUB {args.epub_file} ===")
+        chapters = parse_epub_to_chapters(args.epub_file, max_chapters=args.max_chapters)
+        if not chapters:
+            print("Error: No chapters found in EPUB file.")
+            sys.exit(1)
+
+        for i, chapter in enumerate(chapters):
+            output_file = output_dir / f"chapter_{i}.txt"
+            with open(output_file, "w", encoding="utf-8") as f:
+                for cobj in chapter:
+                    f.write(f"Line {cobj.line_num}: ")
+                    if cobj.has_quotes:
+                        f.write('"')
+                    f.write(cobj.text)
+                    if cobj.has_quotes:
+                        f.write('"')
+                    f.write("\n")
+        print(f"Parsed {len(chapters)} chapters")
+
+        # Stage 2: Label speakers
+        print("=== Stage 2: Labeling speakers ===")
+        all_characters = set()
+        for i in range(len(chapters)):
+            chapter_file = output_dir / f"chapter_{i}.txt"
+            result_msg, char_map, line_map = label_speakers(
+                txt_file=chapter_file,
+                api_key=api_key,
+                port=llm_port,
+                model=llm_model,
+                num_attempts=args.num_attempts,
+                verbose=args.verbose,
+                seed_characters=load_seed_characters(args.seed_voice_map),
+            )
+            print(result_msg)
+            if char_map:
+                all_characters.update(char_map.values())
+
+        # Stage 3: Describe characters
+        print("=== Stage 3: Describing characters ===")
+        result_msg, descriptions = describe_chars(
+            output_dir=str(output_dir),
+            chapters_dir=str(output_dir),
+            api_key=api_key,
+            port=llm_port,
+            verbose=args.verbose,
+            seed_characters=load_seed_characters(args.seed_voice_map),
+            progress_callback=None,
+            voice_engine=args.voice_engine,
+        )
+        print(result_msg)
+
+        # Stage 4: Generate voice samples
+        print("=== Stage 4: Generating voice samples ===")
+        result_msg, generated = gen_voice_samples(
+            descriptions=descriptions,
+            output_dir=str(output_dir),
+            verbose=args.verbose,
+            progress=None,
+            seed_characters=load_seed_characters(args.seed_voice_map),
+            voice_engine=args.tts_engine,
+            validate=False,
+        )
+        print(result_msg)
+
+        # Stage 5: Generate audiobook
+        print("=== Stage 5: Generating audiobook ===")
+        chapter_maps = {}
+        for i in range(len(chapters)):
+            map_file = output_dir / f"chapter_{i}.map.json"
+            if map_file.exists():
+                with open(map_file) as f:
+                    chapter_maps[i] = json.load(f)
+
+        voices_map = {}
+        for char in descriptions:
+            wav_path = get_character_wav_file(char, output_dir)
+            if wav_path and Path(wav_path).exists():
+                voices_map[char] = Path(wav_path).name
+
+        status, processed = generate_audiobook_from_chapters(
+            chapters=chapters,
+            chapter_maps=chapter_maps,
+            voices_map=voices_map,
+            output_dir=str(output_dir),
+            device=device,
+            tts_engine=args.tts_engine,
+            cfg_scale=DEFAULTS["cfg_scale"],
+            max_chapters=args.max_chapters,
+            verbose=args.verbose,
+        )
+        print(status)
+        print(f"Done! Generated {processed} chapters.")
 
 
 if __name__ == "__main__":

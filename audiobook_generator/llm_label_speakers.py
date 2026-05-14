@@ -778,7 +778,8 @@ def label_speakers(
     skip_llm: bool = False,
     verbose: bool = False,
     seed_characters: Dict[str, str] = None,
-    client: Any = None
+    client: Any = None,
+    model: str = None
 ) -> Tuple[str, Dict, Dict]:
     """Label speakers in a chapter file using LLM.
 
@@ -843,7 +844,7 @@ def label_speakers(
             if verbose:
                 print(f"Processing attempt {a}")
             response = client.chat.completions.create(
-                model=LLM_SETTINGS["default_model"],
+                model=model or LLM_SETTINGS["default_model"],
                 messages=messages,
                 temperature=0.7,
             ).choices[0].message

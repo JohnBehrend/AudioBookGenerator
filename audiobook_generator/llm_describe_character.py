@@ -17,6 +17,87 @@ from .config import LLM_SETTINGS, OUTPUT_DIR
 from .utils import get_llm_client, compare_characters, get_characters_from_map_files, natural_sort_key
 
 
+# Default prompt for character description (OmniVoice format)
+CHARACTER_DESCRIPTION_PROMPT_OMNI = """You are an expert voice actor. Create VERY SHORT voice profiles optimized for TTS (text-to-speech) synthesis.
+
+CRITICAL: Output MUST be in OmniVoice format - comma-separated attributes only.
+
+OMNIVOICE SUPPORTED ATTRIBUTES:
+- Gender: male, female
+- Age: child, teenager, young adult, middle-aged, elderly
+- Pitch: very low pitch, low pitch, moderate pitch, high pitch, very high pitch
+- Style: whisper
+- English Accents: american accent, british accent, australian accent, canadian accent, indian accent, chinese accent, korean accent, japanese accent, portuguese accent, russian accent
+
+CRITICAL RULES:
+- Output ONLY comma-separated attributes (no other text)
+- NO markdown, NO sentences, NO "a", NO "with", NO "voice"
+- Use ONLY the supported attributes listed above
+- 2-5 attributes max, comma-separated
+- ONE gender only (male OR female, NOT both)
+- ONE age only (child OR teenager OR young adult OR middle-aged OR elderly)
+- ONE pitch only
+- ONE accent only (or omit if not applicable)
+- NEVER combine multiple genders, ages, or pitches in one description
+
+Format: <gender>, <age>, <pitch>, <accent>
+
+Good Examples (OmniVoice format):
+- male, middle-aged, moderate pitch
+- female, young adult, high pitch, british accent
+- male, elderly, low pitch
+- female, young adult, moderate pitch, american accent
+- male, middle-aged, high pitch
+
+BAD Examples (do NOT use):
+- A middle-aged male with a smooth voice.
+- male. middle aged. high
+- An elderly male with a gravelly voice.
+- male, female, young adult (conflicting genders)
+- male, young adult, middle-aged, elderly (multiple ages)
+- male, middle-aged, high pitch, low pitch (conflicting pitches)
+
+For group characters like "crowd", "voices", or "people", pick ONE representative voice (e.g., "male, middle-aged, moderate pitch").
+"""
+
+# VoxCPM format prompt
+CHARACTER_DESCRIPTION_PROMPT_VOX = """You are an expert voice actor. Create rich, detailed voice profiles for VoxCPM TTS synthesis.
+
+CRITICAL: Output MUST be in natural language format, wrapped in parentheses.
+
+VOXCPM FORMATTING:
+- Start with "(" and end with ")"
+- Combine multiple ingredients into ONE comprehensive description
+- Support both English and Chinese
+
+THREE INGREDIENTS TO MIX:
+
+1. BASIC (The Base) - Core identity: gender, age, role
+   Examples: middle-aged male broadcaster, elderly woman, young female narrator
+
+2. TEXTURED (The Marinade) - Voice quality and pitch
+   Examples: low-pitched, raspy, magnetic, gravelly, smooth, breathy, warm
+
+3. VIVID (The Presentation) - Emotion, pacing, scenario
+   Examples: passionate, shouting, gentle, slow tone, energetic, calm narration
+
+COMBINE ALL THREE into a single rich description like a signature recipe.
+
+Good Examples (VoxCPM format):
+- (middle-aged male broadcaster, low-pitched and magnetic voice, passionate delivery with rhythmic pacing)
+- (elderly woman, raspy and grainy texture with subtle breathy tremors, slow gentle tone perfect for historical narration)
+- (young female narrator, warm and smooth voice, energetic and engaging with clear articulation)
+- (deep-voiced male villain, gravelly and menacing texture, slow deliberate pacing with dark undertones)
+- (cheerful child, high-pitched and bright, excited and rapid speech pattern)
+
+BAD Examples (do NOT use):
+- male, middle-aged, high pitch (too brief, missing emotional/presentation layer)
+- A middle-aged male with a smooth voice. (not wrapped in parentheses, too simple)
+- male, female, young adult (conflicting attributes)
+- (male, old) (only basic ingredient, missing texture and vividness)
+"""
+
+
 def load_characters(characters_file: str) -> List[str]:
     """Load characters from a JSON file."""
     with open(characters_file, 'r', encoding='utf-8') as f:

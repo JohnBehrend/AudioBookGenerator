@@ -11,6 +11,31 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+
+def pytest_addoption(parser):
+    """Add --run-slow CLI option for real engine tests."""
+    parser.addoption(
+        "--run-slow",
+        action="store_true",
+        default=False,
+        help="Run slow integration tests that use real TTS models",
+    )
+
+
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line("markers", "slow: mark test as slow (requires --run-slow)")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip slow tests unless --run-slow is passed."""
+    if config.getoption("--run-slow"):
+        return
+    skip_slow = pytest.mark.skip(reason="requires --run-slow to run")
+    for item in items:
+        if item.fspath.basename == "test_real_engines.py":
+            item.add_marker(skip_slow)
+
 from audiobook_generator.testing import MockLLMClient, MockTTSEngine
 from audiobook_generator.parse_chapter import ChapterObj, get_chapter_objs
 

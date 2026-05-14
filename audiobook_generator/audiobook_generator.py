@@ -763,7 +763,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
                       whisper_cpu: bool = False, debug_tts: bool = False, validate: bool = False,
                       validate_clean: bool = False, max_retries: int = None,
-                      enable_postfix: bool = True, validation_interval: int = 1) -> str:
+                      enable_postfix: bool = True, validation_interval: int = 1,
+                      llm_model: str = None) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -930,6 +931,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                     txt_file=str(chapter_file),
                     api_key=api_key or LLM_SETTINGS["api_key"],
                     port=llm_port or str(LLM_SETTINGS["port"]),
+                    model=llm_model or LLM_SETTINGS["default_model"],
                     num_attempts=num_llm_attempts,
                     verbose=verbose,
                     seed_characters=seed_characters
@@ -980,6 +982,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 chapters_dir=str(state.output_dir),
                 api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
                 port=llm_port or str(LLM_SETTINGS["port"]),
+                model=llm_model or LLM_SETTINGS["default_model"],
                 verbose=verbose,
                 seed_characters=seed_characters,
                 progress_callback=handler.update,

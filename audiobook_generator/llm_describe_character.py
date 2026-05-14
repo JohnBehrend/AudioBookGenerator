@@ -97,6 +97,49 @@ BAD Examples (do NOT use):
 - (male, old) (only basic ingredient, missing texture and vividness)
 """
 
+# Dramabox format prompt - verbose, detailed descriptions for maximum voice diversity
+CHARACTER_DESCRIPTION_PROMPT_DRAMABOX = """You are an expert voice director casting actors for an audiobook. Create detailed, vivid voice descriptions that will produce distinct, diverse voices for each character.
+
+CRITICAL: Each character MUST have a unique, specific voice description. Avoid generic terms.
+
+YOUR DESCRIPTIONS SHOULD INCLUDE:
+
+1. GENDER AND AGE - Be specific: "elderly woman in her 70s", "young man in his early 20s", "middle-aged gentleman around 50"
+
+2. VOICE QUALITY - Use rich, specific adjectives:
+   - Texture: gravelly, silky, raspy, smooth, rough, warm, cool, husky, reedy, nasal, resonant
+   - Pitch: deep, low, high-pitched, mid-range, baritone, contralto, tenor, alto
+   - Timbre: bright, dark, mellow, sharp, muffled, clear, rich, thin
+
+3. SPEECH PATTERNS - How they talk:
+   - Pace: deliberate, rapid, measured, leisurely, rushed, unhurried
+   - Rhythm: staccato, flowing, sing-song, monotone, varied cadence
+   - Volume: soft-spoken, loud, commanding, whispered, moderate
+
+4. EMOTIONAL QUALITY - Their emotional tone:
+   - Warm and inviting, cold and distant, cheerful, melancholic, authoritative, gentle, sarcastic, earnest, weary, energetic
+
+5. ACCENT OR REGIONAL FLAVOR - If applicable:
+   - British upper class, Scottish brogue, Southern American, New York, rural, urban, posh, working class
+
+6. COMPARISONS - Help anchor the voice:
+   - "sounds like a seasoned theater actor", "like a radio DJ from the 1940s", "like a strict schoolteacher"
+
+FORMAT: Write 2-4 sentences of rich description. Be vivid and specific.
+
+Good Examples:
+- An elderly gentleman in his 70s with a deep, gravelly baritone voice that carries the weight of authority. His speech is slow and deliberate, with a refined British upper-class accent. There's a warm, paternal quality to his tone, like a wise grandfather telling stories by the fireplace.
+
+- A bright, energetic young woman in her early 20s with a clear, slightly high-pitched voice full of spirit and intelligence. She speaks at a brisk pace with animated inflections, her words tumbling out with enthusiasm. Her tone is witty and slightly mischievous, like someone who's always a step ahead of everyone else.
+
+- A middle-aged woman with a rich, warm contralto voice that's both commanding and nurturing. Her speech is measured and articulate, with a gentle Southern lilt that softens her words. There's an underlying tension in her delivery, as if she's constantly balancing between excitement and anxiety.
+
+BAD Examples (do NOT use):
+- A male voice. (too vague)
+- female, middle-aged, moderate pitch (too brief, no personality)
+- A nice voice. (no useful detail)
+"""
+
 
 def load_characters(characters_file: str) -> List[str]:
     """Load characters from a JSON file."""
@@ -374,13 +417,15 @@ def _get_description_prompt(voice_engine: Optional[str]) -> str:
     """Get the appropriate character description prompt based on voice engine.
 
     Args:
-        voice_engine: TTS engine name ('vox' or other)
+        voice_engine: TTS engine name ('vox', 'dramabox', or other)
 
     Returns:
         Appropriate system prompt string
     """
     if voice_engine == "vox":
         return CHARACTER_DESCRIPTION_PROMPT_VOX
+    if voice_engine == "dramabox":
+        return CHARACTER_DESCRIPTION_PROMPT_DRAMABOX
     return CHARACTER_DESCRIPTION_PROMPT_OMNI
 
 

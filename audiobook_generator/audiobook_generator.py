@@ -1217,7 +1217,7 @@ def main():
     parser.add_argument("--seed-voice-map", help="Path to existing voices_map.json to seed voices")
     parser.add_argument("epub_file", nargs="?", help="Path to EPUB file to process")
     parser.add_argument("--saved-temp-dir", help="Path to saved temp directory to restore from")
-    parser.add_argument("--tts-engine", choices=["vibevoice", "moss", "echo-tts", "omni", "vox"], help="TTS engine to use")
+    parser.add_argument("--tts-engine", choices=["vibevoice", "moss", "echo-tts", "omni", "vox", "dramabox"], help="TTS engine to use")
     parser.add_argument("--voice-engine", choices=["omni", "vox"], default="omni", help="Voice engine for character descriptions")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
 

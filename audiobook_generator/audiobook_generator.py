@@ -563,6 +563,7 @@ def generate_audiobook_from_chapters(
                     if duplicate_replacement_map and voice in duplicate_replacement_map:
                         canonical_voice = duplicate_replacement_map[voice]
                     # Use canonical voice for path lookup
+                    voice_path = None
                     if canonical_voice in voices_map:
                         # voices_map contains relative paths (basenames), prepend output_dir
                         voice_path = os.path.join(output_dir, voices_map[canonical_voice])
@@ -570,6 +571,9 @@ def generate_audiobook_from_chapters(
                         if not os.path.exists(voice_path):
                             # Fall back to VoiceMapper lookup (searches output_dir for matching .wav files)
                             voice_path = voice_mapper.get_voice_path(canonical_voice)
+                    else:
+                        # Fall back to VoiceMapper lookup
+                        voice_path = voice_mapper.get_voice_path(canonical_voice)
                     # If still not found, raise error
                     if voice_path is None:
                         raise Exception(f"No voice path found for '{voice}' (canonical: '{canonical_voice}')")

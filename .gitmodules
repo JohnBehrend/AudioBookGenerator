@@ -1,0 +1,6 @@
+[submodule "audiobook_generator/engines/dramabox"]
+	path = audiobook_generator/engines/dramabox
+	url = https://github.com/resemble-ai/Dramabox.git
+[submodule "audiobook_generator/engines/echo_tts"]
+	path = audiobook_generator/engines/echo_tts
+	url = https://github.com/jordandare/echo-tts.git

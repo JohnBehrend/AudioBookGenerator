@@ -7,8 +7,8 @@ from multiprocessing import Queue
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Tuple
 
-from ..base import TTSEngine
-from ..utils import split_text_for_echo_tts
+from .base import TTSEngine
+from .utils import split_text_for_echo_tts
 
 if TYPE_CHECKING:
     from ..config import DEFAULTS, TTS_MODEL_PATHS
@@ -27,7 +27,7 @@ class EchoTTSAdapter(TTSEngine):
     def _run_worker(cls, request_queue: Queue, response_queue: Queue) -> None:
         import torch
         from functools import partial
-        from . import inference as echo_inf
+        from .echo_tts import inference as echo_inf
 
         model = None
         fish_ae = None
@@ -118,8 +118,7 @@ class EchoTTSAdapter(TTSEngine):
                             rng_seed=42 + i,
                         )
                         if audio_out is None or audio_out.numel() == 0:
-                            response_queue.put({"id": req_id, "success": False})
-                            continue
+                            break
 
                         audio_chunks.append(audio_out[0])
 

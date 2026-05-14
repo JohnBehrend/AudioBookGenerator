@@ -11,7 +11,7 @@ from ..config import DEFAULTS
 from .base import TTSEngine
 
 
-DRAMABOX_DIR = Path(__file__).parent.parent.parent / "dramabox"
+DRAMABOX_DIR = Path(__file__).parent / "dramabox"
 
 
 class DramaboxEngine(TTSEngine):
@@ -29,10 +29,11 @@ class DramaboxEngine(TTSEngine):
         import soundfile as sf
         import torch
 
+        sys.path.insert(0, str(DRAMABOX_DIR))
         sys.path.insert(0, str(DRAMABOX_DIR / "ltx2"))
         sys.path.insert(0, str(DRAMABOX_DIR / "src"))
 
-        from src.inference_server import TTSServer
+        from inference_server import TTSServer
 
         server = None
 
@@ -42,14 +43,20 @@ class DramaboxEngine(TTSEngine):
                 return
             checkpoint = os.environ.get(
                 "DRAMABOX_CHECKPOINT",
-                str(DRAMABOX_DIR / "models" / "dramabox-dit-v1.safetensors"),
+                str(Path.home() / ".cache" / "huggingface" / "hub" / "models--ResembleAI--Dramabox" / "snapshots" / "404f967f653fa1170dc15a9d1ddd3fdb9a0a842d" / "dramabox-dit-v1.safetensors"),
             )
-            full_checkpoint = os.environ.get("LTX_FULL_CHECKPOINT", "")
-            gemma_root = os.environ.get("GEMMA_DIR", "")
+            full_checkpoint = os.environ.get(
+                "LTX_FULL_CHECKPOINT",
+                str(Path.home() / ".cache" / "huggingface" / "hub" / "models--Lightricks--LTX-2.3" / "snapshots" / "76730e634e70a28f4e8d51f5e29c08e40e2d8e74" / "ltx-2.3-22b-dev.safetensors"),
+            )
+            gemma_root = os.environ.get(
+                "GEMMA_DIR",
+                str(Path.home() / ".cache" / "dramabox" / "models--unsloth--gemma-3-12b-it-bnb-4bit" / "snapshots" / "826e729dbaeea4ecb143738eed2bcf3539ebf7bf"),
+            )
             server = TTSServer(
                 checkpoint=checkpoint,
                 full_checkpoint=full_checkpoint,
-                gemma_root=gemma_root if gemma_root else None,
+                gemma_root=gemma_root,
                 device=device,
                 dtype="bf16",
                 compile_model=True,

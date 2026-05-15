@@ -771,9 +771,9 @@ def create_prompt_with_context(prompt_template: str, existing_characters: Option
 
 def label_speakers(
     txt_file: str,
-    api_key: str,
-    port: str,
-    num_attempts: int = 10,
+    api_key: str = None,
+    port: str = None,
+    num_attempts: int = DEFAULTS["num_llm_attempts"],
     old_format: bool = False,
     skip_llm: bool = False,
     verbose: bool = False,
@@ -800,7 +800,7 @@ def label_speakers(
     """
     chapter_file_base, _ = os.path.splitext(txt_file)
     if client is None:
-        client = get_llm_client(api_key, port)
+        client = get_llm_client(api_key or LLM_SETTINGS["api_key"], port or str(LLM_SETTINGS["port"]))
 
     # Load existing character map from previous chapter for naming consistency
     existing_characters = load_all_previous_chapter_maps(chapter_file_base)

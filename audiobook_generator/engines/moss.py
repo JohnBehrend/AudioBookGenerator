@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import types
 from multiprocessing import Queue
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Tuple
@@ -57,6 +58,31 @@ class MossEngine(TTSEngine):
                 model.config.num_hidden_layers = getattr(
                     model.config, "num_layers",
                     getattr(model.config, "n_layers", 32)
+                )
+
+            # Patch: MOSS model calls _get_initial_cache_position with custom signature
+            # (cur_len, device, model_kwargs) but GenerationMixin expects (input_ids, model_kwargs).
+            # The method may also be missing in some transformers versions.
+            if not hasattr(model, "_get_initial_cache_position"):
+                def _get_initial_cache_position(*args, **kwargs):
+                    # Handle both old signature (cur_len, device, model_kwargs)
+                    # and new signature (input_ids, model_kwargs)
+                    if len(args) == 3:
+                        cur_len, device, model_kwargs = args
+                    elif len(args) == 2:
+                        input_ids, model_kwargs = args
+                        cur_len = input_ids.shape[-1]
+                        device = input_ids.device
+                    else:
+                        model_kwargs = kwargs.get("model_kwargs", {})
+                        cur_len = 0
+                        device = "cpu"
+                    model_kwargs["cache_position"] = torch.arange(
+                        cur_len, device=device
+                    )
+                    return model_kwargs
+                model._get_initial_cache_position = types.MethodType(
+                    _get_initial_cache_position, model
                 )
 
         response_queue.put({"type": "ready"})

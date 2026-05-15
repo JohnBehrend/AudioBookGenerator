@@ -788,6 +788,14 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     Returns:
         Status message
     """
+    # Apply CLI overrides to centralized config so all downstream functions pick them up
+    if api_key:
+        LLM_SETTINGS["api_key"] = api_key
+    if llm_port:
+        LLM_SETTINGS["port"] = int(llm_port)
+    if llm_model:
+        LLM_SETTINGS["default_model"] = llm_model
+
     # Initialize state
     state = PipelineState(output_dir)
 
@@ -929,9 +937,6 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
                 result_msg, char_map, line_map = label_speakers(
                     txt_file=str(chapter_file),
-                    api_key=api_key or LLM_SETTINGS["api_key"],
-                    port=llm_port or str(LLM_SETTINGS["port"]),
-                    model=llm_model or LLM_SETTINGS["default_model"],
                     num_attempts=num_llm_attempts,
                     verbose=verbose,
                     seed_characters=seed_characters
@@ -980,9 +985,6 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             result_msg, character_descriptions = describe_characters(
                 output_dir=str(state.output_dir),
                 chapters_dir=str(state.output_dir),
-                api_key=api_key or DEFAULTS.get("api_key", "lm-studio"),
-                port=llm_port or str(LLM_SETTINGS["port"]),
-                model=llm_model or LLM_SETTINGS["default_model"],
                 verbose=verbose,
                 seed_characters=seed_characters,
                 progress_callback=handler.update,
@@ -1272,10 +1274,14 @@ def main():
         output_dir = Path(args.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        if args.model:
+            LLM_SETTINGS["default_model"] = args.model
+        if args.api_key:
+            LLM_SETTINGS["api_key"] = args.api_key
+        if args.llm_port:
+            LLM_SETTINGS["port"] = int(args.llm_port)
+
         device = AUDIO_SETTINGS["default_device"] if torch.cuda.is_available() else "cpu"
-        api_key = args.api_key or LLM_SETTINGS["api_key"]
-        llm_port = args.llm_port or LLM_SETTINGS["port"]
-        llm_model = args.model or LLM_SETTINGS["default_model"]
 
         # Stage 1: Parse EPUB
         print(f"=== Stage 1: Parsing EPUB {args.epub_file} ===")
@@ -1304,9 +1310,6 @@ def main():
             chapter_file = output_dir / f"chapter_{i}.txt"
             result_msg, char_map, line_map = label_speakers(
                 txt_file=chapter_file,
-                api_key=api_key,
-                port=llm_port,
-                model=llm_model,
                 num_attempts=args.num_attempts,
                 verbose=args.verbose,
                 seed_characters=load_seed_characters(args.seed_voice_map),
@@ -1320,8 +1323,6 @@ def main():
         result_msg, descriptions = describe_chars(
             output_dir=str(output_dir),
             chapters_dir=str(output_dir),
-            api_key=api_key,
-            port=llm_port,
             verbose=args.verbose,
             seed_characters=load_seed_characters(args.seed_voice_map),
             progress_callback=None,

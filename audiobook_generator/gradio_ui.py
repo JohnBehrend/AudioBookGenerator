@@ -233,6 +233,9 @@ def process_chapters_for_labels(
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 2: Run LLM to label speakers in all chapters."""
+    LLM_SETTINGS["api_key"] = api_key
+    LLM_SETTINGS["port"] = int(port)
+
     if pipeline_state is None:
         progress(1.0, desc="Pipeline state not initialized. Please run Stage 1 (Parse EPUB) first.")
         log_output += "\nPipeline state not initialized. Please run Stage 1 (Parse EPUB) first."
@@ -283,8 +286,6 @@ def process_chapters_for_labels(
             # Import and call directly instead of subprocess
             result_msg, char_map, line_map = label_speakers(
                 txt_file=chapter_file,
-                api_key=api_key,
-                port=port,
                 num_attempts=num_attempts,
                 verbose=False,
                 seed_characters=load_seed_characters(seed_voice_map)
@@ -329,6 +330,9 @@ def describe_characters_ui(
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 3: Use LLM to describe characters."""
+    LLM_SETTINGS["api_key"] = api_key
+    LLM_SETTINGS["port"] = int(port)
+
     if pipeline_state is None:
         progress(1.0, desc="Pipeline state not initialized. Please run Stage 2 (Label Speakers) first.")
         log_output += "\nPipeline state not initialized. Please run Stage 2 (Label Speakers) first."
@@ -389,8 +393,6 @@ def describe_characters_ui(
         result_msg, character_descriptions = describe_chars(
             output_dir=str(chapters_dir),
             chapters_dir=str(chapters_dir),
-            api_key=api_key,
-            port=port,
             verbose=False,
             seed_characters=load_seed_characters(seed_voice_map),
             progress_callback=progress,
@@ -691,8 +693,6 @@ def generate_tts_audio(
 
         # Use the unified generate_audiobook_from_chapters function from package
         verbose = True
-        tts_engine = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
-        cfg_scale = DEFAULTS["cfg_scale"]
 
         # Load duplicate replacement map if available (from Stage 3)
         duplicate_replacement_map = {}
@@ -709,8 +709,6 @@ def generate_tts_audio(
             voices_map=voices_map,
             output_dir=str(chapters_dir),
             device=device,
-            tts_engine=tts_engine,
-            cfg_scale=cfg_scale,
             max_chapters=max_chapters,
             turbo=turbo,
             verbose=verbose,

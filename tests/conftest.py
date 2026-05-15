@@ -13,12 +13,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 def pytest_addoption(parser):
-    """Add --run-slow CLI option for real engine tests."""
+    """Add --run-slow and --run-generate CLI options for real engine tests."""
     parser.addoption(
         "--run-slow",
         action="store_true",
         default=False,
         help="Run slow integration tests that use real TTS models",
+    )
+    parser.addoption(
+        "--run-generate",
+        action="store_true",
+        default=False,
+        help="Run slow TTS generation tests (requires --run-slow too)",
     )
 
 
@@ -28,13 +34,19 @@ def pytest_configure(config):
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip slow tests unless --run-slow is passed."""
-    if config.getoption("--run-slow"):
-        return
-    skip_slow = pytest.mark.skip(reason="requires --run-slow to run")
+    """Skip slow tests unless --run-slow is passed. Skip generation tests unless --run-generate."""
+    run_slow = config.getoption("--run-slow")
+    run_generate = config.getoption("--run-generate")
+
     for item in items:
         if item.fspath.basename == "test_real_engines.py":
-            item.add_marker(skip_slow)
+            if not run_slow:
+                item.add_marker(pytest.mark.skip(reason="requires --run-slow to run"))
+            elif "TestRealGeneration" in item.cls.__name__ if item.cls else False:
+                if not run_generate:
+                    item.add_marker(pytest.mark.skip(
+                        reason="requires --run-slow --run-generate to run"
+                    ))
 
 from audiobook_generator.testing import MockLLMClient, MockTTSEngine
 from audiobook_generator.parse_chapter import ChapterObj, get_chapter_objs

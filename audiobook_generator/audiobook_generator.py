@@ -1817,26 +1817,20 @@ def main():
             print("  A valid resume directory must contain chapter_*.txt files.")
             sys.exit(1)
         if not map_files:
-            print(f"\nError: No speaker map files found in {resume_dir}. Cannot resume.")
-            print("  A valid resume directory must contain *.map.json files.")
-            sys.exit(1)
+            print(f"\nWarning: No speaker map files found in {resume_dir}. Will regenerate from scratch.")
         if not voice_map.exists():
-            print(f"\nError: voices_map.json not found in {resume_dir}. Cannot resume.")
-            print("  A valid resume directory must contain voices_map.json.")
-            sys.exit(1)
+            print(f"\nWarning: voices_map.json not found in {resume_dir}. Will regenerate voices.")
 
         # Warn if EPUB is also provided (it will be ignored)
         if args.epub_file is not None:
             print(f"\nWarning: --resume ignores EPUB file. Chapters will be loaded from {resume_dir}.")
 
-    # Validate --output-dir without --resume (must not exist or be empty)
+    # Validate --output-dir without --resume (warn if existing chapter files found)
     if args.resume is None and args.epub_file is not None:
         output_path = Path(args.output_dir)
         if output_path.exists() and list(output_path.glob("chapter_*.txt")):
-            print(f"\nError: Output directory already contains chapter files: {output_path}")
-            print("  Use --resume to continue from an existing directory.")
-            print("  Or specify a different --output-dir.")
-            sys.exit(1)
+            print(f"\nWarning: Output directory already contains chapter files: {output_path}")
+            print("  Existing files will be skipped. Use --resume to explicitly continue, or specify a different --output-dir.")
 
     # Validate --gpus
     if args.gpus:

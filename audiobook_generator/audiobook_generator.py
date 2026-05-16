@@ -1022,7 +1022,7 @@ def _get_mp3_duration(mp3_path: str) -> float:
 
 def assemble_audiobook_m4b(output_dir: str, verbose: bool = False,
                            max_chapters_per_part: int = 255,
-                           max_hours_per_part: float = 13.0) -> str:
+                           max_hours_per_part: float = 12.0) -> str:
     """Assemble chapter MP3 files into .m4b audiobook(s), splitting at boundaries.
 
     Splits into multiple parts when exceeding max_chapters_per_part (MP4 chapter

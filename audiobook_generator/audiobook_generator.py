@@ -1006,15 +1006,36 @@ def generate_audiobook_from_chapters(
         return f"Generated {processed} chapters successfully.", processed
 
 
-def assemble_audiobook_m4b(output_dir: str, verbose: bool = False) -> str:
-    """Assemble chapter MP3 files into a single .m4b audiobook with chapters.
+def _get_mp3_duration(mp3_path: str) -> float:
+    """Get duration of an MP3 file in seconds using ffprobe."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", mp3_path],
+            capture_output=True, text=True, timeout=10
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return 0.0
+
+
+def assemble_audiobook_m4b(output_dir: str, verbose: bool = False,
+                           max_chapters_per_part: int = 255,
+                           max_hours_per_part: float = 13.0) -> str:
+    """Assemble chapter MP3 files into .m4b audiobook(s), splitting at boundaries.
+
+    Splits into multiple parts when exceeding max_chapters_per_part (MP4 chapter
+    marker limit) or max_hours_per_part (hardware compatibility).
 
     Args:
         output_dir: Directory containing chapter_XX.mp3 files
         verbose: Print verbose output
+        max_chapters_per_part: Max chapters per m4b (MP4 limit is 255)
+        max_hours_per_part: Max hours per m4b for hardware compatibility
 
     Returns:
-        Path to the assembled .m4b file, or empty string if no chapters found
+        Path to the assembled .m4b file(s), or empty string if no chapters found
     """
     import subprocess
 
@@ -1024,42 +1045,89 @@ def assemble_audiobook_m4b(output_dir: str, verbose: bool = False) -> str:
             print("[M4B] No chapter MP3 files found to assemble.")
         return ""
 
-    m4b_path = os.path.join(output_dir, "audiobook.m4b")
-
-    # Build ffmpeg concat input list using absolute paths
-    concat_lines = []
-    for idx, mp3 in enumerate(mp3_files):
-        concat_lines.append(f"file '{os.path.abspath(mp3)}'")
-
-    concat_tmp = os.path.join(output_dir, "_ffmpeg_concat.txt")
-    with open(concat_tmp, "w") as f:
-        f.write("\n".join(concat_lines) + "\n")
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0", "-i", concat_tmp,
-        "-c:a", "aac", "-b:a", "192k",
-        "-movflags", "+faststart",
-        "-metadata", "title=Audiobook",
-        m4b_path
-    ]
-
+    # Get durations for all chapters
     if verbose:
-        print(f"[M4B] Assembling {len(mp3_files)} chapters into {m4b_path}")
+        print(f"[M4B] Calculating durations for {len(mp3_files)} chapters...")
+    durations = []
+    for mp3 in mp3_files:
+        dur = _get_mp3_duration(mp3)
+        durations.append(dur)
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    os.unlink(concat_tmp)
+    total_hours = sum(durations) / 3600
+    if verbose:
+        print(f"[M4B] Total audiobook duration: {total_hours:.1f} hours")
 
-    if result.returncode != 0:
+    # Split into parts based on chapter count and duration limits
+    parts = []
+    current_part = []
+    current_duration = 0.0
+
+    for i, (mp3, dur) in enumerate(zip(mp3_files, durations)):
+        current_part.append((mp3, dur))
+        current_duration += dur
+
+        hours_in_part = current_duration / 3600
+
+        # Check if we need to split (not on last chapter)
+        if i < len(mp3_files) - 1 and (
+            len(current_part) >= max_chapters_per_part or
+            hours_in_part >= max_hours_per_part
+        ):
+            parts.append(list(current_part))
+            current_part = []
+            current_duration = 0.0
+
+    if current_part:
+        parts.append(current_part)
+
+    if len(parts) > 1 and verbose:
+        print(f"[M4B] Splitting into {len(parts)} parts:")
+        for idx, part in enumerate(parts):
+            part_hours = sum(d for _, d in part) / 3600
+            print(f"  Part {idx + 1}: {len(part)} chapters, {part_hours:.1f} hours")
+
+    # Assemble each part
+    m4b_paths = []
+    for part_idx, part in enumerate(parts):
+        if len(parts) == 1:
+            m4b_path = os.path.join(output_dir, "audiobook.m4b")
+        else:
+            m4b_path = os.path.join(output_dir, f"audiobook_part{part_idx + 1}.m4b")
+
+        # Build ffmpeg concat input list
+        concat_lines = [f"file '{os.path.abspath(mp3)}'" for mp3, _ in part]
+        concat_tmp = os.path.join(output_dir, f"_ffmpeg_concat_{part_idx}.txt")
+        with open(concat_tmp, "w") as f:
+            f.write("\n".join(concat_lines) + "\n")
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0", "-i", concat_tmp,
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
+            "-metadata", "title=Audiobook",
+            m4b_path
+        ]
+
         if verbose:
-            print(f"[M4B] ffmpeg failed: {result.stderr[:500]}")
-        return ""
+            part_hours = sum(d for _, d in part) / 3600
+            print(f"[M4B] Assembling {len(part)} chapters ({part_hours:.1f}h) into {m4b_path}")
 
-    if verbose:
-        size_mb = os.path.getsize(m4b_path) / (1024 * 1024)
-        print(f"[M4B] Created {m4b_path} ({size_mb:.1f} MB)")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        os.unlink(concat_tmp)
 
-    return m4b_path
+        if result.returncode != 0:
+            if verbose:
+                print(f"[M4B] ffmpeg failed: {result.stderr[:500]}")
+            continue
+
+        if verbose:
+            size_mb = os.path.getsize(m4b_path) / (1024 * 1024)
+            print(f"[M4B] Created {m4b_path} ({size_mb:.1f} MB)")
+
+        m4b_paths.append(m4b_path)
+
+    return m4b_paths[0] if m4b_paths else ""
 
 
 # ============================================================================

@@ -54,7 +54,12 @@ class WorkerPool:
         max_new_tokens: int = 19200,
         verbose: bool = False,
     ) -> bool:
-        """Generate audio for a single line, routing to next worker."""
+        """Generate audio for a single line, routing to next worker.
+
+        Note: validation_model is accepted for API compatibility but NOT
+        sent to the subprocess (it can't be pickled). Whisper validation
+        runs in the main process after the audio file is written.
+        """
         w = self._next_worker()
         resp = w.worker.request(
             "generate_line",
@@ -62,7 +67,6 @@ class WorkerPool:
             voice_path=voice_path,
             output_path=output_path,
             device=w.device,
-            validation_model=validation_model,
             cfg_scale=cfg_scale,
             max_new_tokens=max_new_tokens,
             verbose=verbose,

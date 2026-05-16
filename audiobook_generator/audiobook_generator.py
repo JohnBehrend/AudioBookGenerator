@@ -1358,18 +1358,21 @@ def main():
     parser.add_argument("--model", default=None, help="LLM model name (e.g., coder-model)")
     parser.add_argument("--voice-engine", choices=["omni", "vox", "dramabox"], default="omni", help="Voice engine for character descriptions")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument("--resume", nargs="?", const=True, default=None, metavar="DIR",
+                        help="Resume from existing output directory (use --output-dir or specify DIR)")
     parser.add_argument("--concurrency", type=int, default=1, help="Number of concurrent lines to process (default: 1)")
     parser.add_argument("--whisper-cpu", action="store_true", help="Run Whisper validation on CPU (frees GPU for TTS)")
     parser.add_argument("--gpus", nargs="+", default=None, help="GPU devices to use (e.g., --gpus cuda:0 cuda:1)")
 
     args = parser.parse_args()
 
-    if args.epub_file is None and not args.gradio and args.saved_temp_dir is None:
+    if args.epub_file is None and not args.gradio and args.saved_temp_dir is None and not args.resume:
         parser.print_help()
-        print("\nError: Missing required argument. Provide an EPUB file, use --gradio, or use --saved-temp-dir.")
+        print("\nError: Missing required argument. Provide an EPUB file, use --gradio, --resume, or --saved-temp-dir.")
         print("\nExamples:")
         print("  audiobook-interface book.epub --tts-engine omni")
         print("  audiobook-interface --gradio --tts-engine omni")
+        print("  audiobook-interface --resume --output-dir voice_test/warbreaker --tts-engine omni")
         print()
         print("Performance options:")
         print("  # 1 worker, sequential (default)")
@@ -1387,6 +1390,101 @@ def main():
         print("  # 4 workers on 4 GPUs, 2 concurrent lines per GPU")
         print("  audiobook-interface book.epub --gpus cuda:0 cuda:1 cuda:2 cuda:3 --concurrency 2 --whisper-cpu")
         sys.exit(1)
+
+    # Resolve resume directory: --resume DIR, --resume --output-dir DIR, or error
+    if args.resume is not None:
+        if args.resume is True:
+            # --resume flag only, use --output-dir
+            if args.output_dir == "chapters":
+                parser.print_help()
+                print("\nError: --resume requires a directory. Use --resume DIR or --resume --output-dir DIR.")
+                print("\nExample:")
+                print("  audiobook-interface --resume voice_test/warbreaker --tts-engine omni")
+                sys.exit(1)
+        else:
+            # --resume DIR, override output_dir
+            if args.output_dir != "chapters":
+                print(f"\nWarning: --resume DIR overrides --output-dir. Using {args.resume} instead of {args.output_dir}.")
+            args.output_dir = args.resume
+
+    # Validate --resume + --gradio conflict
+    if args.resume is not None and args.gradio:
+        print("\nError: --resume cannot be used with --gradio.")
+        print("  Use the Gradio UI to resume, or run --resume without --gradio.")
+        sys.exit(1)
+
+    # Validate --resume + --saved-temp-dir conflict
+    if args.resume is not None and args.saved_temp_dir is not None:
+        print("\nError: --resume cannot be used with --saved-temp-dir.")
+        print("  Use one or the other to specify a directory to resume from.")
+        sys.exit(1)
+
+    # Validate resume directory exists
+    if args.resume is not None:
+        resume_dir = Path(args.output_dir)
+        if not resume_dir.exists():
+            print(f"\nError: Resume directory does not exist: {resume_dir}")
+            sys.exit(1)
+        if not resume_dir.is_dir():
+            print(f"\nError: Resume path is not a directory: {resume_dir}")
+            sys.exit(1)
+        # Check for expected files
+        chapter_files = list(resume_dir.glob("chapter_*.txt"))
+        map_files = list(resume_dir.glob("*.map.json"))
+        voice_map = resume_dir / "voices_map.json"
+        if not chapter_files:
+            print(f"\nError: No chapter files found in {resume_dir}. Cannot resume.")
+            print("  A valid resume directory must contain chapter_*.txt files.")
+            sys.exit(1)
+        if not map_files:
+            print(f"\nError: No speaker map files found in {resume_dir}. Cannot resume.")
+            print("  A valid resume directory must contain *.map.json files.")
+            sys.exit(1)
+        if not voice_map.exists():
+            print(f"\nError: voices_map.json not found in {resume_dir}. Cannot resume.")
+            print("  A valid resume directory must contain voices_map.json.")
+            sys.exit(1)
+
+        # Warn if EPUB is also provided (it will be ignored)
+        if args.epub_file is not None:
+            print(f"\nWarning: --resume ignores EPUB file. Chapters will be loaded from {resume_dir}.")
+
+    # Validate --output-dir without --resume (must not exist or be empty)
+    if args.resume is None and args.epub_file is not None:
+        output_path = Path(args.output_dir)
+        if output_path.exists() and list(output_path.glob("chapter_*.txt")):
+            print(f"\nError: Output directory already contains chapter files: {output_path}")
+            print("  Use --resume to continue from an existing directory.")
+            print("  Or specify a different --output-dir.")
+            sys.exit(1)
+
+    # Validate --gpus
+    if args.gpus:
+        import torch
+        if not torch.cuda.is_available():
+            print(f"\nError: CUDA not available. Cannot use --gpus.")
+            sys.exit(1)
+        for gpu in args.gpus:
+            if not gpu.startswith("cuda:"):
+                print(f"\nError: Invalid GPU device '{gpu}'. Must be 'cuda:N' (e.g., cuda:0, cuda:1).")
+                sys.exit(1)
+            gpu_idx = int(gpu.split(":")[1])
+            if gpu_idx >= torch.cuda.device_count():
+                print(f"\nError: GPU {gpu} not found. This system has {torch.cuda.device_count()} GPU(s) (cuda:0 to cuda:{torch.cuda.device_count()-1}).")
+                sys.exit(1)
+        # Check for duplicates
+        if len(args.gpus) != len(set(args.gpus)):
+            print(f"\nError: Duplicate GPU devices specified: {args.gpus}")
+            sys.exit(1)
+
+    # Validate --concurrency
+    if args.concurrency < 1:
+        print(f"\nError: --concurrency must be >= 1, got {args.concurrency}")
+        sys.exit(1)
+
+    # Validate --tts-engine with --gpus
+    if args.gpus and len(args.gpus) > 1 and not args.tts_engine:
+        print(f"\nWarning: --gpus specified without --tts-engine. Using default: {AUDIO_SETTINGS['default_tts_engine']}")
 
     if args.gradio:
         create_gradio_interface(
@@ -1409,7 +1507,6 @@ def main():
         import glob
         import shutil
         import torch
-        from pathlib import Path
 
         from .parse_chapter import parse_epub_to_chapters, load_chapters_from_txt
         from .llm_label_speakers import label_speakers
@@ -1434,97 +1531,119 @@ def main():
 
         device = AUDIO_SETTINGS["default_device"] if torch.cuda.is_available() else "cpu"
 
-        # Stage 1: Parse EPUB
-        print(f"=== Stage 1: Parsing EPUB {args.epub_file} ===")
-        chapters = parse_epub_to_chapters(args.epub_file, max_chapters=args.max_chapters)
-        if not chapters:
-            print("Error: No chapters found in EPUB file.")
-            sys.exit(1)
+        if args.resume:
+            # Use run_full_pipeline for resume (has full stage-skipping logic)
+            result = run_full_pipeline(
+                epub_path=args.epub_file,
+                output_dir=str(output_dir),
+                max_chapters=args.max_chapters,
+                verbose=args.verbose,
+                api_key=args.api_key,
+                llm_port=args.llm_port,
+                voice_engine=args.voice_engine,
+                tts_engine=args.tts_engine,
+                device=device,
+                seed_voice_map=args.seed_voice_map,
+                num_llm_attempts=args.num_attempts,
+                resume=True,
+                whisper_cpu=args.whisper_cpu,
+                concurrency=args.concurrency,
+                gpus=args.gpus,
+                llm_model=args.model,
+            )
+            print(result)
+        else:
+            # Stage 1: Parse EPUB
+            print(f"=== Stage 1: Parsing EPUB {args.epub_file} ===")
+            chapters = parse_epub_to_chapters(args.epub_file, max_chapters=args.max_chapters)
+            if not chapters:
+                print("Error: No chapters found in EPUB file.")
+                sys.exit(1)
 
-        for i, chapter in enumerate(chapters):
-            output_file = output_dir / f"chapter_{i}.txt"
-            with open(output_file, "w", encoding="utf-8") as f:
-                for cobj in chapter:
-                    f.write(f"Line {cobj.line_num}: ")
-                    if cobj.has_quotes:
-                        f.write('"')
-                    f.write(cobj.text)
-                    if cobj.has_quotes:
-                        f.write('"')
-                    f.write("\n")
-        print(f"Parsed {len(chapters)} chapters")
+            for i, chapter in enumerate(chapters):
+                output_file = output_dir / f"chapter_{i}.txt"
+                with open(output_file, "w", encoding="utf-8") as f:
+                    for cobj in chapter:
+                        f.write(f"Line {cobj.line_num}: ")
+                        if cobj.has_quotes:
+                            f.write('"')
+                        f.write(cobj.text)
+                        if cobj.has_quotes:
+                            f.write('"')
+                        f.write("\n")
+            print(f"Parsed {len(chapters)} chapters")
 
-        # Stage 2: Label speakers
-        print("=== Stage 2: Labeling speakers ===")
-        all_characters = set()
-        for i in range(len(chapters)):
-            chapter_file = output_dir / f"chapter_{i}.txt"
-            result_msg, char_map, line_map = label_speakers(
-                txt_file=chapter_file,
-                num_attempts=args.num_attempts,
+            # Stage 2: Label speakers
+            print("=== Stage 2: Labeling speakers ===")
+            all_characters = set()
+            for i in range(len(chapters)):
+                chapter_file = output_dir / f"chapter_{i}.txt"
+                result_msg, char_map, line_map = label_speakers(
+                    txt_file=chapter_file,
+                    num_attempts=args.num_attempts,
+                    verbose=args.verbose,
+                    seed_characters=load_seed_characters(args.seed_voice_map),
+                )
+                print(result_msg)
+                if char_map:
+                    all_characters.update(char_map.values())
+
+            # Stage 3: Describe characters
+            print("=== Stage 3: Describing characters ===")
+            result_msg, descriptions = describe_chars(
+                output_dir=str(output_dir),
+                chapters_dir=str(output_dir),
                 verbose=args.verbose,
                 seed_characters=load_seed_characters(args.seed_voice_map),
+                progress_callback=None,
+                voice_engine=args.voice_engine,
             )
             print(result_msg)
-            if char_map:
-                all_characters.update(char_map.values())
 
-        # Stage 3: Describe characters
-        print("=== Stage 3: Describing characters ===")
-        result_msg, descriptions = describe_chars(
-            output_dir=str(output_dir),
-            chapters_dir=str(output_dir),
-            verbose=args.verbose,
-            seed_characters=load_seed_characters(args.seed_voice_map),
-            progress_callback=None,
-            voice_engine=args.voice_engine,
-        )
-        print(result_msg)
+            # Stage 4: Generate voice samples
+            print("=== Stage 4: Generating voice samples ===")
+            result_msg, generated = gen_voice_samples(
+                descriptions=descriptions,
+                output_dir=str(output_dir),
+                verbose=args.verbose,
+                progress=None,
+                seed_characters=load_seed_characters(args.seed_voice_map),
+                voice_engine=args.tts_engine,
+                validate=False,
+            )
+            print(result_msg)
 
-        # Stage 4: Generate voice samples
-        print("=== Stage 4: Generating voice samples ===")
-        result_msg, generated = gen_voice_samples(
-            descriptions=descriptions,
-            output_dir=str(output_dir),
-            verbose=args.verbose,
-            progress=None,
-            seed_characters=load_seed_characters(args.seed_voice_map),
-            voice_engine=args.tts_engine,
-            validate=False,
-        )
-        print(result_msg)
+            # Stage 5: Generate audiobook
+            print("=== Stage 5: Generating audiobook ===")
+            chapter_maps = {}
+            for i in range(len(chapters)):
+                map_file = output_dir / f"chapter_{i}.map.json"
+                if map_file.exists():
+                    with open(map_file) as f:
+                        chapter_maps[i] = json.load(f)
 
-        # Stage 5: Generate audiobook
-        print("=== Stage 5: Generating audiobook ===")
-        chapter_maps = {}
-        for i in range(len(chapters)):
-            map_file = output_dir / f"chapter_{i}.map.json"
-            if map_file.exists():
-                with open(map_file) as f:
-                    chapter_maps[i] = json.load(f)
+            voices_map = {}
+            for char in descriptions:
+                wav_path = get_character_wav_file(char, output_dir)
+                if wav_path and Path(wav_path).exists():
+                    voices_map[char] = Path(wav_path).name
 
-        voices_map = {}
-        for char in descriptions:
-            wav_path = get_character_wav_file(char, output_dir)
-            if wav_path and Path(wav_path).exists():
-                voices_map[char] = Path(wav_path).name
-
-        status, processed = generate_audiobook_from_chapters(
-            chapters=chapters,
-            chapter_maps=chapter_maps,
-            voices_map=voices_map,
-            output_dir=str(output_dir),
-            device=device,
-            tts_engine=args.tts_engine,
-            cfg_scale=DEFAULTS["cfg_scale"],
-            max_chapters=args.max_chapters,
-            verbose=args.verbose,
-            concurrency=args.concurrency,
-            whisper_cpu=args.whisper_cpu,
-            gpus=args.gpus,
-        )
-        print(status)
-        print(f"Done! Generated {processed} chapters.")
+            status, processed = generate_audiobook_from_chapters(
+                chapters=chapters,
+                chapter_maps=chapter_maps,
+                voices_map=voices_map,
+                output_dir=str(output_dir),
+                device=device,
+                tts_engine=args.tts_engine,
+                cfg_scale=DEFAULTS["cfg_scale"],
+                max_chapters=args.max_chapters,
+                verbose=args.verbose,
+                concurrency=args.concurrency,
+                whisper_cpu=args.whisper_cpu,
+                gpus=args.gpus,
+            )
+            print(status)
+            print(f"Done! Generated {processed} chapters.")
 
 
 if __name__ == "__main__":

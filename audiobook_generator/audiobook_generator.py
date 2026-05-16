@@ -1595,7 +1595,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
         # Assemble into single .m4b
         if mp3_files:
-            book_name = os.path.splitext(os.path.basename(epub_path))[0] if epub_path else "audiobook"
+            book_name = os.path.splitext(os.path.basename(epub_path))[0] if epub_path else os.path.basename(state.chapters_dir)
             m4b_path = assemble_audiobook_m4b(str(state.chapters_dir), verbose=verbose, book_name=book_name)
             if m4b_path:
                 return f"Audiobook generation complete! Generated {len(mp3_files)} chapter MP3 files and {m4b_path}."

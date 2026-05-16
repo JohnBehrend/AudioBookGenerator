@@ -634,6 +634,62 @@ def generate_audiobook_from_chapters(
         return f"Generated {processed} chapters successfully.", processed
 
 
+def assemble_audiobook_m4b(output_dir: str, verbose: bool = False) -> str:
+    """Assemble chapter MP3 files into a single .m4b audiobook with chapters.
+
+    Args:
+        output_dir: Directory containing chapter_XX.mp3 files
+        verbose: Print verbose output
+
+    Returns:
+        Path to the assembled .m4b file, or empty string if no chapters found
+    """
+    import subprocess
+
+    mp3_files = sorted(glob.glob(os.path.join(output_dir, "chapter_*.mp3")), key=natural_sort_key)
+    if not mp3_files:
+        if verbose:
+            print("[M4B] No chapter MP3 files found to assemble.")
+        return ""
+
+    m4b_path = os.path.join(output_dir, "audiobook.m4b")
+
+    # Build ffmpeg concat input list using absolute paths
+    concat_lines = []
+    for idx, mp3 in enumerate(mp3_files):
+        concat_lines.append(f"file '{os.path.abspath(mp3)}'")
+
+    concat_tmp = os.path.join(output_dir, "_ffmpeg_concat.txt")
+    with open(concat_tmp, "w") as f:
+        f.write("\n".join(concat_lines) + "\n")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0", "-i", concat_tmp,
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
+        "-metadata", "title=Audiobook",
+        m4b_path
+    ]
+
+    if verbose:
+        print(f"[M4B] Assembling {len(mp3_files)} chapters into {m4b_path}")
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    os.unlink(concat_tmp)
+
+    if result.returncode != 0:
+        if verbose:
+            print(f"[M4B] ffmpeg failed: {result.stderr[:500]}")
+        return ""
+
+    if verbose:
+        size_mb = os.path.getsize(m4b_path) / (1024 * 1024)
+        print(f"[M4B] Created {m4b_path} ({size_mb:.1f} MB)")
+
+    return m4b_path
+
+
 # ============================================================================
 # STATE MANAGEMENT (Internal to this module)
 # ============================================================================
@@ -1090,6 +1146,12 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         if verbose:
             print(f"[STAGE 5] Generated {len(mp3_files)} chapter MP3 files")
 
+        # Assemble into single .m4b
+        if mp3_files:
+            m4b_path = assemble_audiobook_m4b(str(state.chapters_dir), verbose=verbose)
+            if m4b_path:
+                return f"Audiobook generation complete! Generated {len(mp3_files)} chapter MP3 files and {m4b_path}."
+            return f"Audiobook generation complete! Generated {len(mp3_files)} chapter MP3 files (m4b assembly failed)."
         return f"Audiobook generation complete! Generated {len(mp3_files)} chapter MP3 files."
 
     except Exception as e:

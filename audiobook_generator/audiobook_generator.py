@@ -27,6 +27,7 @@ import glob
 import gc
 import traceback
 import threading
+import queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
@@ -227,6 +228,168 @@ def _get_ref_text_for_voice(voice_path: str, validation_model: Any, voice_name: 
 # ============================================================================
 
 
+def _tts_generate_only(
+    chapter_idx: int,
+    line_idx: int,
+    text: str,
+    voice_name: str,
+    voice_mapper: VoiceMapper,
+    tts_config: TTSConfig,
+    voice_path: Optional[str] = None,
+) -> Optional[str]:
+    """Generate TTS audio for a single line (no validation).
+
+    Returns output_path on success, None on failure.
+    """
+    if not text or not text.strip():
+        return None
+
+    full_script, _ = prepare_script_for_tts(text, tts_config.short_text_postfix)
+
+    output_path = generate_output_filename(tts_config.output_dir, chapter_idx, line_idx, is_final=False)
+
+    if voice_path is None:
+        voice_path = voice_mapper.get_voice_path(voice_name)
+    if voice_path is None:
+        raise Exception(f"No voice path found for '{voice_name}'")
+
+    engine = tts_config.engine if tts_config.engine is not None else voice_mapper.get_engine()
+    try:
+        engine.generate_line(
+            text=full_script,
+            voice_path=voice_path,
+            output_path=output_path,
+            device=tts_config.device,
+            validation_model=tts_config.validation_model,
+            cfg_scale=tts_config.cfg_scale,
+            verbose=tts_config.verbose,
+        )
+    except Exception as e:
+        print(f"    Engine generation failed: {e}")
+        if tts_config.verbose:
+            traceback.print_exc()
+        return None
+
+    gc.collect()
+    import torch
+    torch.cuda.empty_cache()
+
+    from scipy.io import wavfile
+    sample_rate, waveform = wavfile.read(output_path)
+    wavfile.write(output_path, sample_rate, waveform)
+
+    return output_path
+
+
+def _whisper_validate_and_clip(
+    chapter_idx: int,
+    line_idx: int,
+    text: str,
+    output_path: str,
+    tts_config: TTSConfig,
+    max_ratio: float,
+) -> Tuple[float, float]:
+    """Validate audio with Whisper and clip if needed.
+
+    Returns (new_ratio, new_max_ratio). If ratio > max_ratio, renames to final.
+    """
+    full_script, postfix_detect_token = prepare_script_for_tts(text, tts_config.short_text_postfix)
+    input_string = distill_string(full_script)
+
+    detected_string = ""
+    segments = []
+    start_times = []
+    end_times = []
+    last_valid_token = None
+    ratio = 0.0
+
+    if tts_config.validation_model is not None:
+        if tts_config.whisper_pool is not None:
+            segments_list, info = tts_config.whisper_pool.transcribe(output_path, beam_size=5, word_timestamps=True)
+        elif tts_config.whisper_lock:
+            with tts_config.whisper_lock:
+                segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+        else:
+            segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+
+        segments = []
+        start_times = []
+        end_times = []
+        for segment in segments_list:
+            for word in segment.words:
+                segments.append(distill_string(word.word.strip()))
+                start_times.append(word.start)
+                end_times.append(word.end)
+
+        detected_string = distill_string(" ".join(segments))
+        if tts_config.verbose:
+            print(f"  [STT] Original text: {input_string}")
+            print(f"  [STT] Whisper transcribed: {detected_string}")
+        postfix_for_score = distill_string(tts_config.short_text_postfix) if tts_config.short_text_postfix else ""
+        ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=postfix_for_score)
+
+        if tts_config.validate_clean and tts_config.validation_client is not None and ratio >= 0.85:
+            is_clean, clean_msg = validate_audio_clean(
+                audio_path=output_path,
+                client=tts_config.validation_client,
+                verbose=tts_config.verbose
+            )
+            if not is_clean:
+                if tts_config.verbose:
+                    print(f"  [Clean Check] FAILED: {clean_msg}")
+                ratio = 0
+            else:
+                if tts_config.verbose:
+                    print(f"  [Clean Check] PASSED: {clean_msg}")
+
+    # Clipping
+    if tts_config.validation_model is not None:
+        if tts_config.short_text_postfix and (distill_string(tts_config.short_text_postfix) in detected_string) and (postfix_detect_token in segments):
+            if detected_string.startswith(distill_string(tts_config.short_text_postfix)):
+                if tts_config.verbose:
+                    print("\nERROR: POSTFIX DETECTED BUT ONLY POSTFIX! -> Ratio 0\n")
+                ratio = 0
+            else:
+                postfix_start_index = segments[::-1].index(postfix_detect_token)
+                if len(end_times) > postfix_start_index + 1:
+                    clip_end2 = end_times[::-1][postfix_start_index + 1]
+                else:
+                    clip_end2 = end_times[-1]
+                clip_end1 = start_times[::-1][postfix_start_index]
+                if tts_config.verbose:
+                    print(f"\nPOSTFIX DETECTED CLIPPING to {clip_end1} - {clip_end2}\n")
+                import pydub
+                audio = pydub.AudioSegment.from_wav(output_path)
+                trimmed_audio = audio[0:((clip_end1 + clip_end2) * 500)]
+                trimmed_audio.export(output_path, format="wav")
+        elif tts_config.short_text_postfix:
+            if ((last_valid_token is None) or (last_valid_token == "")):
+                if tts_config.verbose:
+                    print("\nERROR: POSTFIX UN-DETECTED and INVALID VALUES. SKIP.\n")
+            elif last_valid_token in segments:
+                lastvalid_index = segments[::-1].index(last_valid_token)
+                clip_end1 = end_times[::-1][lastvalid_index]
+                if tts_config.verbose:
+                    print(f"\nERROR: POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1}\n")
+                import pydub
+                audio = pydub.AudioSegment.from_wav(output_path)
+                trimmed_audio = audio[0:(clip_end1 * 1000)]
+                trimmed_audio.export(output_path, format="wav")
+            else:
+                if tts_config.verbose:
+                    print(f"\nERROR: POSTFIX UN-DETECTED even though last_valid_token = {last_valid_token} should be in {segments}\n")
+
+    if ratio > max_ratio:
+        max_ratio = ratio
+        final_path = generate_output_filename(tts_config.output_dir, chapter_idx, line_idx, is_final=True)
+        if os.path.exists(final_path):
+            os.unlink(final_path)
+        time.sleep(2)
+        os.rename(output_path, final_path)
+
+    return ratio, max_ratio
+
+
 def generate_tts_for_line(
     chapter_idx: int,
     line_idx: int,
@@ -250,160 +413,37 @@ def generate_tts_for_line(
     Returns:
         Tuple of (success: bool, ratio: float)
     """
-    # Skip empty text to avoid infinite loops when Whisper can't transcribe
     if not text or not text.strip():
         if tts_config.verbose:
             print(f"  Skipping line {line_idx} (empty text: '{text}')")
-        return (True, 1.0)  # Return success to avoid blocking the pipeline
+        return (True, 1.0)
 
-    # Use pipeline pure functions for text preparation
-    full_script, postfix_detect_token = prepare_script_for_tts(text, tts_config.short_text_postfix)
+    full_script, _ = prepare_script_for_tts(text, tts_config.short_text_postfix)
 
     ratio = 0.0
-    max_ratio = float('-inf')  # Initialize to lowest possible value to ensure first attempt is always saved
+    max_ratio = float('-inf')
     retries = 0
-    input_string = distill_string(full_script)
 
     from transformers import set_seed
     set_seed(42)
     while should_retry(ratio, max_ratio, retries, MAX_RETRIES, MIN_RATIO_THRESHOLD):
         set_seed(42 + retries)
 
-        output_path = generate_output_filename(tts_config.output_dir, chapter_idx, line_idx, is_final=False)
-
-        # Resolve voice path if not provided
-        if voice_path is None:
-            voice_path = voice_mapper.get_voice_path(voice_name)
-        if voice_path is None:
-            raise Exception(f"No voice path found for '{voice_name}'")
-
-        engine = tts_config.engine if tts_config.engine is not None else voice_mapper.get_engine()
-        try:
-            engine.generate_line(
-                text=full_script,
-                voice_path=voice_path,
-                output_path=output_path,
-                device=tts_config.device,
-                validation_model=tts_config.validation_model,
-                cfg_scale=tts_config.cfg_scale,
-                verbose=tts_config.verbose,
-            )
-        except Exception as e:
-            print(f"    Engine generation failed: {e}")
-            if tts_config.verbose:
-                traceback.print_exc()
+        output_path = _tts_generate_only(
+            chapter_idx, line_idx, full_script, voice_name,
+            voice_mapper, tts_config, voice_path,
+        )
+        if output_path is None:
             ratio = 0.0
             retries += 1
             continue
 
-        gc.collect()
-        import torch
-        torch.cuda.empty_cache()
-
-        from scipy.io import wavfile
-        sample_rate, waveform = wavfile.read(output_path)
-        wavfile.write(output_path, sample_rate, waveform)
-
-        # Initialize variables for clipping/validation logic
-        detected_string = ""
-        segments = []
-        start_times = []
-        end_times = []
-        last_valid_token = None
-
-        if tts_config.validation_model is not None:
-            # Use faster-whisper for validation with word timestamps for token-level matching
-            if tts_config.whisper_pool is not None:
-                segments_list, info = tts_config.whisper_pool.transcribe(output_path, beam_size=5, word_timestamps=True)
-            elif tts_config.whisper_lock:
-                with tts_config.whisper_lock:
-                    segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
-            else:
-                segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
-
-            # Collect segments (words) and timestamps
-            # Whisper word_timestamps=True should give individual words, but we need to split on spaces just in case
-            segments = []
-            start_times = []
-            end_times = []
-            for segment in segments_list:
-                for word in segment.words:
-                    segments.append(distill_string(word.word.strip()))
-                    start_times.append(word.start)
-                    end_times.append(word.end)
-
-            detected_string = distill_string(" ".join(segments))
-            if tts_config.verbose:
-                print(f"  [STT] Original text: {input_string}")
-                print(f"  [STT] Whisper transcribed: {detected_string}")
-            postfix_for_score = distill_string(tts_config.short_text_postfix) if tts_config.short_text_postfix else ""
-            ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=postfix_for_score)
-
-            # Clean audio validation (when validate_clean is enabled) - outside retry loop to avoid hot-path bloat
-            if tts_config.validate_clean and tts_config.validation_client is not None and ratio >= 0.85:
-                is_clean, clean_msg = validate_audio_clean(
-                    audio_path=output_path,
-                    client=tts_config.validation_client,
-                    verbose=tts_config.verbose
-                )
-                if not is_clean:
-                    if tts_config.verbose:
-                        print(f"  [Clean Check] FAILED: {clean_msg}")
-                    ratio = 0  # Force retry by setting ratio to 0
-                else:
-                    if tts_config.verbose:
-                        print(f"  [Clean Check] PASSED: {clean_msg}")
-
-        # Clipping based on validation results (only when validation model is available)
-        if tts_config.validation_model is not None:
-            # Postfix-specific clipping (only when postfix is configured)
-            if tts_config.short_text_postfix and (distill_string(tts_config.short_text_postfix) in detected_string) and (postfix_detect_token in segments):
-                if detected_string.startswith(distill_string(tts_config.short_text_postfix)):
-                    if tts_config.verbose:
-                        print("\nERROR: POSTFIX DETECTED BUT ONLY POSTFIX! -> Ratio 0\n")
-                    ratio = 0
-                else:
-                    postfix_start_index = segments[::-1].index(postfix_detect_token)
-                    if len(end_times) > postfix_start_index + 1:
-                        clip_end2 = end_times[::-1][postfix_start_index + 1]
-                    else:
-                        clip_end2 = end_times[-1]
-                    clip_end1 = start_times[::-1][postfix_start_index]
-                    if tts_config.verbose:
-                        print(f"\nPOSTFIX DETECTED CLIPPING to {clip_end1} - {clip_end2}\n")
-                    import pydub
-                    audio = pydub.AudioSegment.from_wav(output_path)
-                    trimmed_audio = audio[0:((clip_end1 + clip_end2) * 500)]
-                    trimmed_audio.export(output_path, format="wav")
-            elif tts_config.short_text_postfix:
-                # Postfix not detected - clip to last valid token
-                if ((last_valid_token is None) or (last_valid_token == "")):
-                    if tts_config.verbose:
-                        print("\nERROR: POSTFIX UN-DETECTED and INVALID VALUES. SKIP.\n")
-                elif last_valid_token in segments:
-                    lastvalid_index = segments[::-1].index(last_valid_token)
-                    clip_end1 = end_times[::-1][lastvalid_index]
-                    if tts_config.verbose:
-                        print(f"\nERROR: POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1}\n")
-                    import pydub
-                    audio = pydub.AudioSegment.from_wav(output_path)
-                    trimmed_audio = audio[0:(clip_end1 * 1000)]
-                    trimmed_audio.export(output_path, format="wav")
-                else:
-                    if tts_config.verbose:
-                        print(f"\nERROR: POSTFIX UN-DETECTED even though last_valid_token = {last_valid_token} should be in {segments}\n")
-            # When short_text_postfix is empty, no clipping is needed - the ratio determines if retry is needed
-
-        if ratio > max_ratio:
-            max_ratio = ratio
-            final_path = generate_output_filename(tts_config.output_dir, chapter_idx, line_idx, is_final=True)
-            if os.path.exists(final_path):
-                os.unlink(final_path)
-            time.sleep(2)
-            os.rename(output_path, final_path)
-
+        ratio, max_ratio = _whisper_validate_and_clip(
+            chapter_idx, line_idx, full_script, output_path,
+            tts_config, max_ratio,
+        )
         retries += 1
-    # Clean up temp file if it exists
+
     temp_path = generate_output_filename(tts_config.output_dir, chapter_idx, line_idx, is_final=False)
     if os.path.exists(temp_path):
         os.unlink(temp_path)
@@ -635,32 +675,233 @@ def generate_audiobook_from_chapters(
             )
 
             if concurrency > 1:
-                # Parallel processing with thread pool
+                # Two-stage pipeline: TTS generators push to queue, validators pull and process
                 if verbose:
-                    print(f"[PARALLEL] Processing {len(work_items)} lines with concurrency={concurrency}")
+                    print(f"[PIPELINE] Processing {len(work_items)} lines with {concurrency} TTS workers, {whisper_concurrency} validators")
 
-                def process_line(item: dict) -> dict:
-                    success, ratio = generate_tts_for_line(
-                        chapter_idx=item["chapter_idx"],
-                        line_idx=item["line_idx"],
-                        text=item["text"],
-                        voice_name=item["voice_name"],
-                        voice_mapper=voice_mapper,
-                        tts_config=tts_config,
-                        voice_path=item["voice_path"],
-                    )
-                    progress_handler.update(
-                        (item["enumerate_idx"] + 1) / len(chapter),
-                        desc=f"Processing Chapter {item['chapter_idx']} Line {item['line_idx']} Ratio {int(ratio * 100)}"
-                    )
-                    if verbose:
-                        print(f"[LINE_PROGRESS] Chapter {item['chapter_idx']}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(ratio * 100)}")
-                    return {"success": success, "ratio": ratio}
+                # Queue between TTS generators and validators
+                validation_queue: queue.Queue = queue.Queue(maxsize=concurrency * 2)
+                # Track per-line state: retries, max_ratio
+                line_state: Dict[str, dict] = {}
+                for item in work_items:
+                    key = f"{item['chapter_idx']}_{item['line_idx']}"
+                    line_state[key] = {"retries": 0, "max_ratio": float('-inf')}
+                line_state_lock = threading.Lock()
+                completed_count = 0
+                completed_lock = threading.Lock()
+                total_items = len(work_items)
 
-                with ThreadPoolExecutor(max_workers=concurrency) as executor:
-                    futures = {executor.submit(process_line, item): item for item in work_items}
-                    for future in as_completed(futures):
-                        future.result()  # Raise exception if any line failed
+                # TTS generator thread: generate audio, push to validation queue
+                def tts_worker():
+                    while True:
+                        try:
+                            item = work_queue.get(timeout=1)
+                        except queue.Empty:
+                            continue
+
+                        # Skip empty text
+                        if not item["text"] or not item["text"].strip():
+                            work_queue.task_done()
+                            continue
+
+                        key = f"{item['chapter_idx']}_{item['line_idx']}"
+                        with line_state_lock:
+                            state = line_state[key]
+                            if state["retries"] >= MAX_RETRIES:
+                                work_queue.task_done()
+                                continue
+
+                        from transformers import set_seed
+                        set_seed(42 + state["retries"])
+
+                        full_script, _ = prepare_script_for_tts(item["text"], tts_config.short_text_postfix)
+                        output_path = generate_output_filename(tts_config.output_dir, item["chapter_idx"], item["line_idx"], is_final=False)
+
+                        try:
+                            engine = tts_config.engine if tts_config.engine is not None else voice_mapper.get_engine()
+                            engine.generate_line(
+                                text=full_script,
+                                voice_path=item["voice_path"],
+                                output_path=output_path,
+                                device=tts_config.device,
+                                validation_model=tts_config.validation_model,
+                                cfg_scale=tts_config.cfg_scale,
+                                verbose=tts_config.verbose,
+                            )
+                        except Exception as e:
+                            print(f"    Engine generation failed: {e}")
+                            if tts_config.verbose:
+                                traceback.print_exc()
+                            with line_state_lock:
+                                state["retries"] += 1
+                            work_queue.task_done()
+                            continue
+
+                        gc.collect()
+                        import torch
+                        torch.cuda.empty_cache()
+
+                        from scipy.io import wavfile
+                        sample_rate, waveform = wavfile.read(output_path)
+                        wavfile.write(output_path, sample_rate, waveform)
+
+                        validation_queue.put((item, output_path, key))
+                        work_queue.task_done()
+
+                # Validator thread: pull from queue, run Whisper, handle retry/clip
+                def validator_worker():
+                    nonlocal completed_count
+                    while True:
+                        try:
+                            item, output_path, key = validation_queue.get(timeout=1)
+                        except queue.Empty:
+                            continue
+
+                        full_script, postfix_detect_token = prepare_script_for_tts(item["text"], tts_config.short_text_postfix)
+                        input_string = distill_string(full_script)
+
+                        detected_string = ""
+                        segments = []
+                        start_times = []
+                        end_times = []
+                        last_valid_token = None
+                        ratio = 0.0
+
+                        if tts_config.validation_model is not None:
+                            if tts_config.whisper_pool is not None:
+                                segments_list, info = tts_config.whisper_pool.transcribe(output_path, beam_size=5, word_timestamps=True)
+                            elif tts_config.whisper_lock:
+                                with tts_config.whisper_lock:
+                                    segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+                            else:
+                                segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+
+                            segments = []
+                            start_times = []
+                            end_times = []
+                            for segment in segments_list:
+                                for word in segment.words:
+                                    segments.append(distill_string(word.word.strip()))
+                                    start_times.append(word.start)
+                                    end_times.append(word.end)
+
+                            detected_string = distill_string(" ".join(segments))
+                            if tts_config.verbose:
+                                print(f"  [STT] Original text: {input_string}")
+                                print(f"  [STT] Whisper transcribed: {detected_string}")
+                            postfix_for_score = distill_string(tts_config.short_text_postfix) if tts_config.short_text_postfix else ""
+                            ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=postfix_for_score)
+
+                            if tts_config.validate_clean and tts_config.validation_client is not None and ratio >= 0.85:
+                                is_clean, clean_msg = validate_audio_clean(
+                                    audio_path=output_path,
+                                    client=tts_config.validation_client,
+                                    verbose=tts_config.verbose
+                                )
+                                if not is_clean:
+                                    if tts_config.verbose:
+                                        print(f"  [Clean Check] FAILED: {clean_msg}")
+                                    ratio = 0
+                                else:
+                                    if tts_config.verbose:
+                                        print(f"  [Clean Check] PASSED: {clean_msg}")
+
+                        # Clipping
+                        if tts_config.validation_model is not None:
+                            if tts_config.short_text_postfix and (distill_string(tts_config.short_text_postfix) in detected_string) and (postfix_detect_token in segments):
+                                if detected_string.startswith(distill_string(tts_config.short_text_postfix)):
+                                    if tts_config.verbose:
+                                        print("\nERROR: POSTFIX DETECTED BUT ONLY POSTFIX! -> Ratio 0\n")
+                                    ratio = 0
+                                else:
+                                    postfix_start_index = segments[::-1].index(postfix_detect_token)
+                                    if len(end_times) > postfix_start_index + 1:
+                                        clip_end2 = end_times[::-1][postfix_start_index + 1]
+                                    else:
+                                        clip_end2 = end_times[-1]
+                                    clip_end1 = start_times[::-1][postfix_start_index]
+                                    if tts_config.verbose:
+                                        print(f"\nPOSTFIX DETECTED CLIPPING to {clip_end1} - {clip_end2}\n")
+                                    import pydub
+                                    audio = pydub.AudioSegment.from_wav(output_path)
+                                    trimmed_audio = audio[0:((clip_end1 + clip_end2) * 500)]
+                                    trimmed_audio.export(output_path, format="wav")
+                            elif tts_config.short_text_postfix:
+                                if ((last_valid_token is None) or (last_valid_token == "")):
+                                    if tts_config.verbose:
+                                        print("\nERROR: POSTFIX UN-DETECTED and INVALID VALUES. SKIP.\n")
+                                elif last_valid_token in segments:
+                                    lastvalid_index = segments[::-1].index(last_valid_token)
+                                    clip_end1 = end_times[::-1][lastvalid_index]
+                                    if tts_config.verbose:
+                                        print(f"\nERROR: POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1}\n")
+                                    import pydub
+                                    audio = pydub.AudioSegment.from_wav(output_path)
+                                    trimmed_audio = audio[0:(clip_end1 * 1000)]
+                                    trimmed_audio.export(output_path, format="wav")
+                                else:
+                                    if tts_config.verbose:
+                                        print(f"\nERROR: POSTFIX UN-DETECTED even though last_valid_token = {last_valid_token} should be in {segments}\n")
+
+                        with line_state_lock:
+                            state = line_state[key]
+                            if ratio > state["max_ratio"]:
+                                state["max_ratio"] = ratio
+                                final_path = generate_output_filename(tts_config.output_dir, item["chapter_idx"], item["line_idx"], is_final=True)
+                                if os.path.exists(final_path):
+                                    os.unlink(final_path)
+                                time.sleep(2)
+                                os.rename(output_path, final_path)
+                            else:
+                                # Clean up temp file since it's not the best
+                                if os.path.exists(output_path):
+                                    os.unlink(output_path)
+
+                            if should_retry(ratio, state["max_ratio"], state["retries"], MAX_RETRIES, MIN_RATIO_THRESHOLD):
+                                state["retries"] += 1
+                                work_queue.put(item)
+                            else:
+                                # Clean up temp file
+                                temp_path = generate_output_filename(tts_config.output_dir, item["chapter_idx"], item["line_idx"], is_final=False)
+                                if os.path.exists(temp_path):
+                                    os.unlink(temp_path)
+                                with completed_lock:
+                                    completed_count += 1
+                                if verbose:
+                                    print(f"[LINE_PROGRESS] Chapter {item['chapter_idx']}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(state['max_ratio'] * 100)}")
+                                progress_handler.update(
+                                    completed_count / total_items,
+                                    desc=f"Processing Chapter {item['chapter_idx']} Line {item['line_idx']} Ratio {int(state['max_ratio'] * 100)}"
+                                )
+
+                        validation_queue.task_done()
+
+                # Create work queue for TTS generators
+                work_queue: queue.Queue = queue.Queue()
+                for item in work_items:
+                    work_queue.put(item)
+
+                # Start TTS generator threads
+                tts_threads = []
+                for _ in range(concurrency):
+                    t = threading.Thread(target=tts_worker, daemon=True)
+                    t.start()
+                    tts_threads.append(t)
+
+                # Start validator threads
+                val_threads = []
+                for _ in range(whisper_concurrency):
+                    t = threading.Thread(target=validator_worker, daemon=True)
+                    t.start()
+                    val_threads.append(t)
+
+                # Wait for all work to complete
+                work_queue.join()
+                validation_queue.join()
+
+                # Wait for threads to finish (they'll exit on timeout)
+                for t in tts_threads + val_threads:
+                    t.join(timeout=5)
             else:
                 # Sequential processing (original behavior)
                 for item in work_items:

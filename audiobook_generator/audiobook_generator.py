@@ -1280,7 +1280,7 @@ def main():
     parser.add_argument("--port", dest="llm_port", default=None, help="Port for LLM endpoint (e.g., LM Studio)")
     parser.add_argument("--gradio-port", type=int, default=None, help="Port for Gradio web interface")
     parser.add_argument("--num-attempts", type=int, default=2, help="Number of LLM attempts")
-    parser.add_argument("--max-chapters", type=int, default=10, help="Maximum chapters to process")
+    parser.add_argument("--max-chapters", type=int, default=None, help="Maximum chapters to process (default: all)")
     parser.add_argument("--seed-voice-map", help="Path to existing voices_map.json to seed voices")
     parser.add_argument("epub_file", nargs="?", help="Path to EPUB file to process")
     parser.add_argument("--saved-temp-dir", help="Path to saved temp directory to restore from")

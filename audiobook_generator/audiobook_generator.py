@@ -707,6 +707,7 @@ def generate_audiobook_from_chapters(
                     work_queue.put(item)
 
                 def tts_worker():
+                    nonlocal completed_count
                     my_thread_id = threading.current_thread().ident
                     while not shutdown_tts.is_set():
                         try:

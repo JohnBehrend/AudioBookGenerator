@@ -11,6 +11,43 @@ import threading
 from typing import Any, List, Optional
 
 
+class WhisperPool:
+    """Pool of Whisper models for parallel validation.
+
+    Each model has its own lock, so N models allow N concurrent transcriptions.
+    Requests are distributed round-robin across the pool.
+    """
+
+    def __init__(self, model_factory, size: int):
+        self._size = size
+        self._models: List[Any] = []
+        self._locks: List[threading.Lock] = []
+        self._index = 0
+        self._global_lock = threading.Lock()
+
+        for _ in range(size):
+            model = model_factory()
+            self._models.append(model)
+            self._locks.append(threading.Lock())
+
+    def transcribe(self, audio_path: str, **kwargs) -> tuple:
+        """Transcribe audio, routing to next model in round-robin order."""
+        with self._global_lock:
+            idx = self._index % self._size
+            self._index += 1
+        lock = self._locks[idx]
+        model = self._models[idx]
+        with lock:
+            result = model.transcribe(audio_path, **kwargs)
+        return result
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+
 class WorkerPool:
     """Round-robin pool of TTS engine workers across multiple GPUs.
 

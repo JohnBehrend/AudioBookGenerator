@@ -101,6 +101,7 @@ class TTSConfig:
     validate_clean: bool = False
     verbose: bool = False
     whisper_lock: Optional[threading.Lock] = None
+    whisper_pool: Optional[Any] = None
     engine: Optional[Any] = None
 
 
@@ -312,9 +313,10 @@ def generate_tts_for_line(
 
         if tts_config.validation_model is not None:
             # Use faster-whisper for validation with word timestamps for token-level matching
-            whisper_lock = tts_config.whisper_lock
-            if whisper_lock:
-                with whisper_lock:
+            if tts_config.whisper_pool is not None:
+                segments_list, info = tts_config.whisper_pool.transcribe(output_path, beam_size=5, word_timestamps=True)
+            elif tts_config.whisper_lock:
+                with tts_config.whisper_lock:
                     segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
             else:
                 segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
@@ -437,6 +439,7 @@ def generate_audiobook_from_chapters(
     enable_postfix: bool = True,
     concurrency: int = 1,
     gpus: Optional[List[str]] = None,
+    whisper_concurrency: int = 1,
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -494,8 +497,19 @@ def generate_audiobook_from_chapters(
         if max_retries is None:
             max_retries = DEFAULTS.get("max_retries", 1)
 
-        # Create lock for thread-safe Whisper transcription
-        whisper_lock = threading.Lock()
+        # Create Whisper pool for parallel validation
+        whisper_lock = None
+        whisper_pool = None
+        if whisper_concurrency > 1:
+            from .engines.pool import WhisperPool
+            whisper_pool = WhisperPool(
+                lambda: setup_validation_model(whisper_device, cpu=whisper_cpu),
+                size=whisper_concurrency,
+            )
+            if verbose:
+                print(f"[WHISPER] Created pool with {whisper_concurrency} models")
+        else:
+            whisper_lock = threading.Lock()
 
         # Create multi-GPU worker pool if multiple GPUs specified
         worker_pool = None
@@ -616,6 +630,7 @@ def generate_audiobook_from_chapters(
                 validation_client=validation_client,
                 validate_clean=validate_clean,
                 whisper_lock=whisper_lock,
+                whisper_pool=whisper_pool,
                 engine=worker_pool,
             )
 
@@ -887,9 +902,9 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
                       whisper_cpu: bool = False, debug_tts: bool = False, validate: bool = False,
                       validate_clean: bool = False, max_retries: int = None,
-                      enable_postfix: bool = True, concurrency: int = 1,
-                      gpus: Optional[List[str]] = None,
-                      llm_model: str = None) -> str:
+                       enable_postfix: bool = True, concurrency: int = 1,
+                       gpus: Optional[List[str]] = None, whisper_concurrency: int = 1,
+                       llm_model: str = None) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -1205,7 +1220,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             max_retries=max_retries,
             enable_postfix=enable_postfix,
             concurrency=concurrency,
-            gpus=gpus)
+            gpus=gpus,
+            whisper_concurrency=whisper_concurrency)
 
         if verbose:
             print(f"  {status}")
@@ -1362,6 +1378,7 @@ def main():
                         help="Resume from existing output directory (use --output-dir or specify DIR)")
     parser.add_argument("--concurrency", type=int, default=1, help="Number of concurrent lines to process (default: 1)")
     parser.add_argument("--whisper-cpu", action="store_true", help="Run Whisper validation on CPU (frees GPU for TTS)")
+    parser.add_argument("--whisper-concurrency", type=int, default=1, help="Number of concurrent Whisper models for validation (default: 1)")
     parser.add_argument("--gpus", nargs="+", default=None, help="GPU devices to use (e.g., --gpus cuda:0 cuda:1)")
 
     args = parser.parse_args()
@@ -1549,6 +1566,7 @@ def main():
                 whisper_cpu=args.whisper_cpu,
                 concurrency=args.concurrency,
                 gpus=args.gpus,
+                whisper_concurrency=args.whisper_concurrency,
                 llm_model=args.model,
             )
             print(result)
@@ -1640,6 +1658,7 @@ def main():
                 verbose=args.verbose,
                 concurrency=args.concurrency,
                 whisper_cpu=args.whisper_cpu,
+                whisper_concurrency=args.whisper_concurrency,
                 gpus=args.gpus,
             )
             print(status)

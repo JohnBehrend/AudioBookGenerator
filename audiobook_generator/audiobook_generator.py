@@ -79,6 +79,7 @@ from .pipeline import (
     calculate_clip_points,
     should_retry,
     generate_output_filename,
+    get_temp_filenames,
     is_generation_success,
     MIN_RATIO_THRESHOLD,
     MAX_RETRIES,
@@ -693,6 +694,7 @@ def generate_audiobook_from_chapters(
 
                 # TTS generator thread: generate audio, push to validation queue
                 def tts_worker():
+                    my_thread_id = threading.current_thread().ident
                     while True:
                         try:
                             item = work_queue.get(timeout=1)
@@ -715,7 +717,7 @@ def generate_audiobook_from_chapters(
                         set_seed(42 + state["retries"])
 
                         full_script, _ = prepare_script_for_tts(item["text"], tts_config.short_text_postfix)
-                        output_path = generate_output_filename(tts_config.output_dir, item["chapter_idx"], item["line_idx"], is_final=False)
+                        output_path = generate_output_filename(tts_config.output_dir, item["chapter_idx"], item["line_idx"], is_final=False, thread_id=my_thread_id)
 
                         try:
                             engine = tts_config.engine if tts_config.engine is not None else voice_mapper.get_engine()
@@ -757,6 +759,11 @@ def generate_audiobook_from_chapters(
                         except queue.Empty:
                             continue
 
+                        # Skip if temp file was already cleaned up (race condition)
+                        if not os.path.exists(output_path):
+                            validation_queue.task_done()
+                            continue
+
                         full_script, postfix_detect_token = prepare_script_for_tts(item["text"], tts_config.short_text_postfix)
                         input_string = distill_string(full_script)
 
@@ -768,13 +775,23 @@ def generate_audiobook_from_chapters(
                         ratio = 0.0
 
                         if tts_config.validation_model is not None:
-                            if tts_config.whisper_pool is not None:
-                                segments_list, info = tts_config.whisper_pool.transcribe(output_path, beam_size=5, word_timestamps=True)
-                            elif tts_config.whisper_lock:
-                                with tts_config.whisper_lock:
+                            try:
+                                if tts_config.whisper_pool is not None:
+                                    segments_list, info = tts_config.whisper_pool.transcribe(output_path, beam_size=5, word_timestamps=True)
+                                elif tts_config.whisper_lock:
+                                    with tts_config.whisper_lock:
+                                        segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+                                else:
                                     segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
-                            else:
-                                segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+                            except Exception as e:
+                                print(f"    Whisper validation failed: {e}")
+                                if tts_config.verbose:
+                                    traceback.print_exc()
+                                with line_state_lock:
+                                    state = line_state[key]
+                                    state["retries"] += 1
+                                validation_queue.task_done()
+                                continue
 
                             segments = []
                             start_times = []
@@ -861,10 +878,10 @@ def generate_audiobook_from_chapters(
                                 state["retries"] += 1
                                 work_queue.put(item)
                             else:
-                                # Clean up temp file
-                                temp_path = generate_output_filename(tts_config.output_dir, item["chapter_idx"], item["line_idx"], is_final=False)
-                                if os.path.exists(temp_path):
-                                    os.unlink(temp_path)
+                                # Clean up all thread-specific temp files for this line
+                                for temp_path in get_temp_filenames(tts_config.output_dir, item["chapter_idx"], item["line_idx"]):
+                                    if os.path.exists(temp_path):
+                                        os.unlink(temp_path)
                                 with completed_lock:
                                     completed_count += 1
                                 if verbose:

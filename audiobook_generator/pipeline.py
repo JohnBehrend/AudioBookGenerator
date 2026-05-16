@@ -241,7 +241,8 @@ def generate_output_filename(
     output_dir: str,
     chapter_idx: int,
     line_idx: int,
-    is_final: bool = False
+    is_final: bool = False,
+    thread_id: Optional[int] = None,
 ) -> str:
     """Generate output filename for TTS audio.
 
@@ -250,16 +251,36 @@ def generate_output_filename(
         chapter_idx: Chapter index
         line_idx: Line index
         is_final: If True, use .wav extension, else .tmp.wav
+        thread_id: Optional thread ID for unique temp filenames in parallel mode
 
     Returns:
         Full path to output file
     """
     import os
-    suffix = ".wav" if is_final else ".tmp.wav"
+    if is_final:
+        suffix = ".wav"
+    else:
+        thread_suffix = f".t{thread_id}" if thread_id is not None else ""
+        suffix = f"{thread_suffix}.tmp.wav"
     return os.path.join(
         output_dir,
         f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}{suffix}"
     )
+
+
+def get_temp_filenames(
+    output_dir: str,
+    chapter_idx: int,
+    line_idx: int,
+) -> List[str]:
+    """Get all temp filenames for a given chapter+line (across all threads)."""
+    import os
+    import glob as glob_mod
+    pattern = os.path.join(
+        output_dir,
+        f"chapter_{str(chapter_idx).zfill(2)}.{str(line_idx).zfill(4)}.t*.tmp.wav"
+    )
+    return glob_mod.glob(pattern)
 
 
 def is_generation_success(

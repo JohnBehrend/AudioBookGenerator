@@ -1364,6 +1364,11 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 else:
                     resolved_seed_characters[char_name] = os.path.join(seed_voice_map_dir, voice_path)
             seed_characters = resolved_seed_characters
+            # Merge seed voices into state.voice_map so all characters (including narrator)
+            # get absolute paths from the archive instead of relative output-dir paths
+            for char_name, voice_path in seed_characters.items():
+                if char_name not in state.voice_map:
+                    state.voice_map[char_name] = voice_path
             if verbose:
                 print(f"[SEED] Loaded {len(seed_characters)} seeded characters from {seed_voice_map}")
         else:

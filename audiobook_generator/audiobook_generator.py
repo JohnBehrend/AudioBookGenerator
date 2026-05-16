@@ -1103,6 +1103,7 @@ def assemble_audiobook_m4b(output_dir: str, verbose: bool = False,
 
         cmd = [
             "ffmpeg", "-y",
+            "-threads", "0",
             "-f", "concat", "-safe", "0", "-i", concat_tmp,
             "-c:a", "aac", "-b:a", "192k",
             "-movflags", "+faststart",

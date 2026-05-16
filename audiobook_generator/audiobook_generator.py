@@ -112,19 +112,20 @@ class TTSConfig:
 # ============================================================================
 
 
-def setup_validation_model(device: str, cpu: bool = False) -> Any:
+def setup_validation_model(device: str, cpu: bool = False, fast: bool = False) -> Any:
     """Setup the Whisper validation model for audio transcription.
 
     Args:
         device: Device to run the model on (e.g., 'cuda', 'cuda:0', 'cuda:1', 'cpu')
         cpu: If True, use CPU with float32 instead of GPU with float16
+        fast: If True, use smaller model for faster transcription
 
     Returns:
         WhisperModel instance for audio validation
     """
     from faster_whisper import WhisperModel
 
-    model_name = DEFAULTS["validation_model_name"]
+    model_name = DEFAULTS["validation_model_name_fast"] if fast else DEFAULTS["validation_model_name"]
     if cpu:
         return WhisperModel(model_name, device="cpu", compute_type="float32")
     else:
@@ -519,7 +520,7 @@ def generate_audiobook_from_chapters(
         # Apply whisper_alt_gpu to override device to cuda:1 if not explicitly set
         if whisper_alt_gpu and whisper_device == device:
             whisper_device = "cuda:1"
-        validation_model = setup_validation_model(whisper_device, cpu=whisper_cpu)
+        validation_model = setup_validation_model(whisper_device, cpu=whisper_cpu, fast=whisper_fast)
         # This avoids crashes from faster-whisper dependencies if validation_model is None
         validation_client = get_validation_client() if validate_clean else None
         # Initialize VoiceMapper with output_dir so it looks in the correct location
@@ -548,7 +549,7 @@ def generate_audiobook_from_chapters(
             else:
                 whisper_devices = None
             whisper_pool = WhisperPool(
-                lambda dev: setup_validation_model(dev, cpu=whisper_cpu),
+                lambda dev: setup_validation_model(dev, cpu=whisper_cpu, fast=whisper_fast),
                 size=whisper_concurrency,
                 devices=whisper_devices,
             )
@@ -1684,6 +1685,7 @@ def main():
     parser.add_argument("--concurrency", type=int, default=1, help="Number of concurrent lines to process (default: 1)")
     parser.add_argument("--whisper-cpu", action="store_true", help="Run Whisper validation on CPU (frees GPU for TTS)")
     parser.add_argument("--whisper-concurrency", type=int, default=1, help="Number of concurrent Whisper models for validation (default: 1)")
+    parser.add_argument("--whisper-fast", action="store_true", help="Use faster Whisper settings (medium model, beam_size=3)")
     parser.add_argument("--gpus", nargs="+", default=None, help="GPU devices to use (e.g., --gpus cuda:0 cuda:1)")
 
     args = parser.parse_args()

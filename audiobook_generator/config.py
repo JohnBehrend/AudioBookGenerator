@@ -134,6 +134,7 @@ DEFAULTS = {
     # Static text for voice generation - 10 seconds, high emotional range
     "static_voice_text": "I cannot believe it! After all these years, it's finally here for us to bask in the warm glow of the future.",
     "validation_model_name": "large-v2",
+    "validation_model_name_fast": "medium",
     "min_silence_len": 1250,
     "silence_thresh": -60,
     # Speed optimization switches (defaults preserve current behavior)

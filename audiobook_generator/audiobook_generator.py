@@ -1022,7 +1022,8 @@ def _get_mp3_duration(mp3_path: str) -> float:
 
 def assemble_audiobook_m4b(output_dir: str, verbose: bool = False,
                            max_chapters_per_part: int = 255,
-                           max_hours_per_part: float = 12.0) -> str:
+                           max_hours_per_part: float = 12.0,
+                           book_name: str = "audiobook") -> str:
     """Assemble chapter MP3 files into .m4b audiobook(s), splitting at boundaries.
 
     Splits into multiple parts when exceeding max_chapters_per_part (MP4 chapter
@@ -1090,9 +1091,9 @@ def assemble_audiobook_m4b(output_dir: str, verbose: bool = False,
     m4b_paths = []
     for part_idx, part in enumerate(parts):
         if len(parts) == 1:
-            m4b_path = os.path.join(output_dir, "audiobook.m4b")
+            m4b_path = os.path.join(output_dir, f"{book_name}.m4b")
         else:
-            m4b_path = os.path.join(output_dir, f"audiobook_part{part_idx + 1}.m4b")
+            m4b_path = os.path.join(output_dir, f"{book_name}_part{part_idx + 1}.m4b")
 
         # Build ffmpeg concat input list
         concat_lines = [f"file '{os.path.abspath(mp3)}'" for mp3, _ in part]
@@ -1593,7 +1594,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
         # Assemble into single .m4b
         if mp3_files:
-            m4b_path = assemble_audiobook_m4b(str(state.chapters_dir), verbose=verbose)
+            book_name = os.path.splitext(os.path.basename(epub_path))[0] if epub_path else "audiobook"
+            m4b_path = assemble_audiobook_m4b(str(state.chapters_dir), verbose=verbose, book_name=book_name)
             if m4b_path:
                 return f"Audiobook generation complete! Generated {len(mp3_files)} chapter MP3 files and {m4b_path}."
             return f"Audiobook generation complete! Generated {len(mp3_files)} chapter MP3 files (m4b assembly failed)."

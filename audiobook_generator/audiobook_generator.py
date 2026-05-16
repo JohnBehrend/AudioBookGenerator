@@ -481,6 +481,7 @@ def generate_audiobook_from_chapters(
     concurrency: int = 1,
     gpus: Optional[List[str]] = None,
     whisper_concurrency: int = 1,
+    whisper_fast: bool = False,
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -1210,6 +1211,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       validate_clean: bool = False, max_retries: int = None,
                        enable_postfix: bool = True, concurrency: int = 1,
                        gpus: Optional[List[str]] = None, whisper_concurrency: int = 1,
+                       whisper_fast: bool = False,
                        llm_model: str = None) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
@@ -1527,7 +1529,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             enable_postfix=enable_postfix,
             concurrency=concurrency,
             gpus=gpus,
-            whisper_concurrency=whisper_concurrency)
+            whisper_concurrency=whisper_concurrency,
+            whisper_fast=whisper_fast)
 
         if verbose:
             print(f"  {status}")
@@ -1874,6 +1877,7 @@ def main():
                 concurrency=args.concurrency,
                 gpus=args.gpus,
                 whisper_concurrency=args.whisper_concurrency,
+                whisper_fast=args.whisper_fast,
                 llm_model=args.model,
             )
             print(result)
@@ -1966,6 +1970,7 @@ def main():
                 concurrency=args.concurrency,
                 whisper_cpu=args.whisper_cpu,
                 whisper_concurrency=args.whisper_concurrency,
+                whisper_fast=args.whisper_fast,
                 gpus=args.gpus,
             )
             print(status)

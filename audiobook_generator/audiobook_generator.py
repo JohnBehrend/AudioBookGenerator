@@ -385,7 +385,6 @@ def _whisper_validate_and_clip(
         final_path = generate_output_filename(tts_config.output_dir, chapter_idx, line_idx, is_final=True)
         if os.path.exists(final_path):
             os.unlink(final_path)
-        time.sleep(2)
         os.rename(output_path, final_path)
 
     return ratio, max_ratio
@@ -676,13 +675,11 @@ def generate_audiobook_from_chapters(
             )
 
             if concurrency > 1:
-                # Two-stage pipeline: TTS generators push to queue, validators pull and process
+                # Batch pipeline: generate all TTS, then validate all, then retry failures
                 if verbose:
-                    print(f"[PIPELINE] Processing {len(work_items)} lines with {concurrency} TTS workers, {whisper_concurrency} validators")
+                    print(f"[BATCH] Processing {len(work_items)} lines with {concurrency} TTS workers, {whisper_concurrency} validators")
 
-                # Queue between TTS generators and validators
-                validation_queue: queue.Queue = queue.Queue(maxsize=concurrency * 2)
-                # Track per-line state: retries, max_ratio
+                # Per-line state tracking
                 line_state: Dict[str, dict] = {}
                 for item in work_items:
                     key = f"{item['chapter_idx']}_{item['line_idx']}"
@@ -691,148 +688,202 @@ def generate_audiobook_from_chapters(
                 completed_count = 0
                 completed_lock = threading.Lock()
                 total_items = len(work_items)
-                shutdown_event = threading.Event()
 
-                # TTS generator thread: generate audio, push to validation queue
-                def tts_worker():
-                    my_thread_id = threading.current_thread().ident
-                    while not shutdown_event.is_set():
-                        try:
-                            item = work_queue.get(timeout=0.5)
-                        except queue.Empty:
-                            continue
+                # Items to process in current batch (starts with all items)
+                pending_items = list(work_items)
 
-                        # Sentinel value to stop the thread
-                        if item is None:
-                            work_queue.task_done()
-                            break
+                for attempt in range(MAX_RETRIES + 1):
+                    if not pending_items:
+                        break
 
-                        # Skip empty text
-                        if not item["text"] or not item["text"].strip():
-                            work_queue.task_done()
-                            continue
+                    if verbose:
+                        print(f"[BATCH] Attempt {attempt + 1}/{MAX_RETRIES + 1}: {len(pending_items)} lines remaining")
 
-                        key = f"{item['chapter_idx']}_{item['line_idx']}"
-                        with line_state_lock:
-                            state = line_state[key]
-                            if state["retries"] >= MAX_RETRIES:
+                    # --- PHASE 1: Generate TTS for all pending items ---
+                    if verbose:
+                        print(f"[BATCH] Phase 1: Generating TTS for {len(pending_items)} lines...")
+
+                    # Queue: TTS workers push completed (item, output_path, key) here
+                    generated_queue: queue.Queue = queue.Queue()
+                    work_queue: queue.Queue = queue.Queue()
+                    for item in pending_items:
+                        work_queue.put(item)
+
+                    def tts_worker():
+                        my_thread_id = threading.current_thread().ident
+                        while True:
+                            try:
+                                item = work_queue.get(timeout=0.5)
+                            except queue.Empty:
+                                continue
+
+                            # Skip empty text
+                            if not item["text"] or not item["text"].strip():
                                 work_queue.task_done()
                                 continue
 
-                        from transformers import set_seed
-                        set_seed(42 + state["retries"])
-
-                        full_script, _ = prepare_script_for_tts(item["text"], tts_config.short_text_postfix)
-                        output_path = generate_output_filename(tts_config.output_dir, item["chapter_idx"], item["line_idx"], is_final=False, thread_id=my_thread_id)
-
-                        try:
-                            engine = tts_config.engine if tts_config.engine is not None else voice_mapper.get_engine()
-                            engine.generate_line(
-                                text=full_script,
-                                voice_path=item["voice_path"],
-                                output_path=output_path,
-                                device=tts_config.device,
-                                validation_model=tts_config.validation_model,
-                                cfg_scale=tts_config.cfg_scale,
-                                verbose=tts_config.verbose,
-                            )
-                        except Exception as e:
-                            print(f"    Engine generation failed: {e}")
-                            if tts_config.verbose:
-                                traceback.print_exc()
+                            key = f"{item['chapter_idx']}_{item['line_idx']}"
                             with line_state_lock:
-                                state["retries"] += 1
-                            work_queue.task_done()
-                            continue
+                                state = line_state[key]
+                                if state["retries"] >= MAX_RETRIES:
+                                    work_queue.task_done()
+                                    continue
 
-                        gc.collect()
-                        import torch
-                        torch.cuda.empty_cache()
+                            from transformers import set_seed
+                            set_seed(42 + state["retries"])
 
-                        from scipy.io import wavfile
-                        sample_rate, waveform = wavfile.read(output_path)
-                        wavfile.write(output_path, sample_rate, waveform)
+                            full_script, _ = prepare_script_for_tts(item["text"], tts_config.short_text_postfix)
+                            output_path = generate_output_filename(tts_config.output_dir, item["chapter_idx"], item["line_idx"], is_final=False, thread_id=my_thread_id)
 
-                        validation_queue.put((item, output_path, key))
-                        work_queue.task_done()
-
-                # Validator thread: pull from queue, run Whisper, handle retry/clip
-                def validator_worker():
-                    nonlocal completed_count
-                    while not shutdown_event.is_set():
-                        try:
-                            item, output_path, key = validation_queue.get(timeout=0.5)
-                        except queue.Empty:
-                            continue
-
-                        # Sentinel value to stop the thread
-                        if item is None:
-                            validation_queue.task_done()
-                            break
-
-                        # Skip if temp file was already cleaned up (race condition)
-                        if not os.path.exists(output_path):
-                            validation_queue.task_done()
-                            continue
-
-                        full_script, postfix_detect_token = prepare_script_for_tts(item["text"], tts_config.short_text_postfix)
-                        input_string = distill_string(full_script)
-
-                        detected_string = ""
-                        segments = []
-                        start_times = []
-                        end_times = []
-                        last_valid_token = None
-                        ratio = 0.0
-
-                        if tts_config.validation_model is not None:
                             try:
-                                if tts_config.whisper_pool is not None:
-                                    segments_list, info = tts_config.whisper_pool.transcribe(output_path, beam_size=5, word_timestamps=True)
-                                elif tts_config.whisper_lock:
-                                    with tts_config.whisper_lock:
-                                        segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
-                                else:
-                                    segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+                                engine = tts_config.engine if tts_config.engine is not None else voice_mapper.get_engine()
+                                engine.generate_line(
+                                    text=full_script,
+                                    voice_path=item["voice_path"],
+                                    output_path=output_path,
+                                    device=tts_config.device,
+                                    validation_model=tts_config.validation_model,
+                                    cfg_scale=tts_config.cfg_scale,
+                                    verbose=tts_config.verbose,
+                                )
                             except Exception as e:
-                                print(f"    Whisper validation failed: {e}")
+                                print(f"    Engine generation failed: {e}")
                                 if tts_config.verbose:
                                     traceback.print_exc()
                                 with line_state_lock:
-                                    state = line_state[key]
                                     state["retries"] += 1
+                                work_queue.task_done()
+                                continue
+
+                            gc.collect()
+                            import torch
+                            torch.cuda.empty_cache()
+
+                            from scipy.io import wavfile
+                            sample_rate, waveform = wavfile.read(output_path)
+                            wavfile.write(output_path, sample_rate, waveform)
+
+                            generated_queue.put((item, output_path, key))
+                            work_queue.task_done()
+
+                    tts_threads = []
+                    for _ in range(concurrency):
+                        t = threading.Thread(target=tts_worker, daemon=True)
+                        t.start()
+                        tts_threads.append(t)
+
+                    work_queue.join()
+                    for t in tts_threads:
+                        t.join(timeout=5)
+
+                    # Collect generated items
+                    generated_batch = []
+                    while not generated_queue.empty():
+                        generated_batch.append(generated_queue.get())
+
+                    if verbose:
+                        print(f"[BATCH] Phase 1 complete: {len(generated_batch)} lines generated")
+
+                    # --- PHASE 2: Validate all generated items ---
+                    if verbose:
+                        print(f"[BATCH] Phase 2: Validating {len(generated_batch)} lines...")
+
+                    validation_queue: queue.Queue = queue.Queue()
+                    for entry in generated_batch:
+                        validation_queue.put(entry)
+
+                    # Track results: (item, output_path, key, ratio, segments, start_times, end_times, detected_string, last_valid_token)
+                    validation_results: list = []
+
+                    def validator_worker():
+                        while True:
+                            try:
+                                item, output_path, key = validation_queue.get(timeout=0.5)
+                            except queue.Empty:
+                                continue
+
+                            # Skip if temp file was cleaned up
+                            if not os.path.exists(output_path):
                                 validation_queue.task_done()
                                 continue
 
+                            full_script, postfix_detect_token = prepare_script_for_tts(item["text"], tts_config.short_text_postfix)
+                            input_string = distill_string(full_script)
+
+                            detected_string = ""
                             segments = []
                             start_times = []
                             end_times = []
-                            for segment in segments_list:
-                                for word in segment.words:
-                                    segments.append(distill_string(word.word.strip()))
-                                    start_times.append(word.start)
-                                    end_times.append(word.end)
+                            last_valid_token = None
+                            ratio = 0.0
 
-                            detected_string = distill_string(" ".join(segments))
-                            if tts_config.verbose:
-                                print(f"  [STT] Original text: {input_string}")
-                                print(f"  [STT] Whisper transcribed: {detected_string}")
-                            postfix_for_score = distill_string(tts_config.short_text_postfix) if tts_config.short_text_postfix else ""
-                            ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=postfix_for_score)
+                            if tts_config.validation_model is not None:
+                                try:
+                                    if tts_config.whisper_pool is not None:
+                                        segments_list, info = tts_config.whisper_pool.transcribe(output_path, beam_size=5, word_timestamps=True)
+                                    elif tts_config.whisper_lock:
+                                        with tts_config.whisper_lock:
+                                            segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+                                    else:
+                                        segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+                                except Exception as e:
+                                    print(f"    Whisper validation failed: {e}")
+                                    if tts_config.verbose:
+                                        traceback.print_exc()
+                                    validation_results.append((item, output_path, key, 0.0, [], [], [], "", None))
+                                    validation_queue.task_done()
+                                    continue
 
-                            if tts_config.validate_clean and tts_config.validation_client is not None and ratio >= 0.85:
-                                is_clean, clean_msg = validate_audio_clean(
-                                    audio_path=output_path,
-                                    client=tts_config.validation_client,
-                                    verbose=tts_config.verbose
-                                )
-                                if not is_clean:
-                                    if tts_config.verbose:
-                                        print(f"  [Clean Check] FAILED: {clean_msg}")
-                                    ratio = 0
-                                else:
-                                    if tts_config.verbose:
-                                        print(f"  [Clean Check] PASSED: {clean_msg}")
+                                segments = []
+                                start_times = []
+                                end_times = []
+                                for segment in segments_list:
+                                    for word in segment.words:
+                                        segments.append(distill_string(word.word.strip()))
+                                        start_times.append(word.start)
+                                        end_times.append(word.end)
+
+                                detected_string = distill_string(" ".join(segments))
+                                if tts_config.verbose:
+                                    print(f"  [STT] Original text: {input_string}")
+                                    print(f"  [STT] Whisper transcribed: {detected_string}")
+                                postfix_for_score = distill_string(tts_config.short_text_postfix) if tts_config.short_text_postfix else ""
+                                ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=postfix_for_score)
+
+                                if tts_config.validate_clean and tts_config.validation_client is not None and ratio >= 0.85:
+                                    is_clean, clean_msg = validate_audio_clean(
+                                        audio_path=output_path,
+                                        client=tts_config.validation_client,
+                                        verbose=tts_config.verbose
+                                    )
+                                    if not is_clean:
+                                        if tts_config.verbose:
+                                            print(f"  [Clean Check] FAILED: {clean_msg}")
+                                        ratio = 0
+                                    else:
+                                        if tts_config.verbose:
+                                            print(f"  [Clean Check] PASSED: {clean_msg}")
+
+                            validation_results.append((item, output_path, key, ratio, segments, start_times, end_times, detected_string, last_valid_token))
+                            validation_queue.task_done()
+
+                    val_threads = []
+                    for _ in range(whisper_concurrency):
+                        t = threading.Thread(target=validator_worker, daemon=True)
+                        t.start()
+                        val_threads.append(t)
+
+                    validation_queue.join()
+                    for t in val_threads:
+                        t.join(timeout=5)
+
+                    if verbose:
+                        print(f"[BATCH] Phase 2 complete: {len(validation_results)} lines validated")
+
+                    # --- PHASE 3: Process results, clip, retry failures ---
+                    retry_items = []
+                    for item, output_path, key, ratio, segments, start_times, end_times, detected_string, last_valid_token in validation_results:
+                        full_script, postfix_detect_token = prepare_script_for_tts(item["text"], tts_config.short_text_postfix)
 
                         # Clipping
                         if tts_config.validation_model is not None:
@@ -878,18 +929,15 @@ def generate_audiobook_from_chapters(
                                 final_path = generate_output_filename(tts_config.output_dir, item["chapter_idx"], item["line_idx"], is_final=True)
                                 if os.path.exists(final_path):
                                     os.unlink(final_path)
-                                time.sleep(2)
                                 os.rename(output_path, final_path)
                             else:
-                                # Clean up temp file since it's not the best
                                 if os.path.exists(output_path):
                                     os.unlink(output_path)
 
                             if should_retry(ratio, state["max_ratio"], state["retries"], MAX_RETRIES, MIN_RATIO_THRESHOLD):
                                 state["retries"] += 1
-                                work_queue.put(item)
+                                retry_items.append(item)
                             else:
-                                # Clean up all thread-specific temp files for this line
                                 for temp_path in get_temp_filenames(tts_config.output_dir, item["chapter_idx"], item["line_idx"]):
                                     if os.path.exists(temp_path):
                                         os.unlink(temp_path)
@@ -902,40 +950,15 @@ def generate_audiobook_from_chapters(
                                     desc=f"Processing Chapter {item['chapter_idx']} Line {item['line_idx']} Ratio {int(state['max_ratio'] * 100)}"
                                 )
 
-                        validation_queue.task_done()
+                    pending_items = retry_items
+                    if verbose:
+                        print(f"[BATCH] {len(retry_items)} lines need retry")
 
-                # Create work queue for TTS generators
-                work_queue: queue.Queue = queue.Queue()
+                # Final cleanup of any remaining temp files
                 for item in work_items:
-                    work_queue.put(item)
-
-                # Start TTS generator threads (non-daemon for clean shutdown)
-                tts_threads = []
-                for _ in range(concurrency):
-                    t = threading.Thread(target=tts_worker)
-                    t.start()
-                    tts_threads.append(t)
-
-                # Start validator threads (non-daemon for clean shutdown)
-                val_threads = []
-                for _ in range(whisper_concurrency):
-                    t = threading.Thread(target=validator_worker)
-                    t.start()
-                    val_threads.append(t)
-
-                # Wait for all work to complete
-                work_queue.join()
-                validation_queue.join()
-
-                # Send sentinel values to stop threads cleanly
-                for _ in range(concurrency):
-                    work_queue.put(None)
-                for _ in range(whisper_concurrency):
-                    validation_queue.put((None, None, None))
-
-                # Wait for threads to finish
-                for t in tts_threads + val_threads:
-                    t.join(timeout=10)
+                    for temp_path in get_temp_filenames(tts_config.output_dir, item["chapter_idx"], item["line_idx"]):
+                        if os.path.exists(temp_path):
+                            os.unlink(temp_path)
             else:
                 # Sequential processing (original behavior)
                 for item in work_items:

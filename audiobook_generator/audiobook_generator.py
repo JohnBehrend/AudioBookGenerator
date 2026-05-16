@@ -26,6 +26,8 @@ import re
 import glob
 import gc
 import traceback
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -98,6 +100,8 @@ class TTSConfig:
     validation_client: Optional[Any] = None
     validate_clean: bool = False
     verbose: bool = False
+    whisper_lock: Optional[threading.Lock] = None
+    engine: Optional[Any] = None
 
 
 # ============================================================================
@@ -272,7 +276,7 @@ def generate_tts_for_line(
         if voice_path is None:
             raise Exception(f"No voice path found for '{voice_name}'")
 
-        engine = voice_mapper.get_engine()
+        engine = tts_config.engine if tts_config.engine is not None else voice_mapper.get_engine()
         try:
             engine.generate_line(
                 text=full_script,
@@ -308,7 +312,12 @@ def generate_tts_for_line(
 
         if tts_config.validation_model is not None:
             # Use faster-whisper for validation with word timestamps for token-level matching
-            segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+            whisper_lock = tts_config.whisper_lock
+            if whisper_lock:
+                with whisper_lock:
+                    segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+            else:
+                segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
 
             # Collect segments (words) and timestamps
             # Whisper word_timestamps=True should give individual words, but we need to split on spaces just in case
@@ -426,7 +435,8 @@ def generate_audiobook_from_chapters(
     validate_clean: bool = False,
     max_retries: Optional[int] = None,
     enable_postfix: bool = True,
-    validation_interval: int = 1,
+    concurrency: int = 1,
+    gpus: Optional[List[str]] = None,
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -484,6 +494,23 @@ def generate_audiobook_from_chapters(
         if max_retries is None:
             max_retries = DEFAULTS.get("max_retries", 1)
 
+        # Create lock for thread-safe Whisper transcription
+        whisper_lock = threading.Lock()
+
+        # Create multi-GPU worker pool if multiple GPUs specified
+        worker_pool = None
+        if gpus and len(gpus) > 1:
+            if verbose:
+                print(f"[MULTI-GPU] Creating worker pool with {len(gpus)} GPUs: {gpus}")
+            engine_cls = voice_mapper.get_engine().__class__.__name__
+            from .engines.pool import WorkerPool
+            worker_pool = WorkerPool(tts_engine, engine_cls, gpus)
+            worker_pool.start()
+        elif gpus and len(gpus) == 1:
+            if verbose:
+                print(f"[MULTI-GPU] Single GPU: {gpus[0]}")
+            device = gpus[0]
+
         processed = 0
         for i, chapter in enumerate(chapters_to_process):
             # Check if already generated (resume mode)
@@ -537,15 +564,12 @@ def generate_audiobook_from_chapters(
                 if not x.endswith(".tmp.wav")
             }
 
-            # Generate TTS for each voice in this chapter
+            # Collect all work items for this chapter
+            work_items = []
             for voice in voices_used:
-                progress_handler.update(0, desc=f"Processing Chapter {i} Voice {voice}")
-
                 for j, chapter_obj in enumerate(chapter):
-                    progress_handler.update((j + 1)/ len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j}")
                     if voice != chapter_obj.get_speaker():
                         continue
-                    # Use chapter_obj.line_num for file naming (not enumerate index j)
                     line_num = chapter_obj.line_num
                     if line_num in already_generated:
                         if verbose:
@@ -558,50 +582,88 @@ def generate_audiobook_from_chapters(
                         continue
 
                     # Get the voice path for this character
-                    # Apply duplicate replacement map if available to get canonical name
                     canonical_voice = voice
                     if duplicate_replacement_map and voice in duplicate_replacement_map:
                         canonical_voice = duplicate_replacement_map[voice]
-                    # Use canonical voice for path lookup
                     voice_path = None
                     if canonical_voice in voices_map:
-                        # voices_map contains relative paths (basenames), prepend output_dir
                         voice_path = os.path.join(output_dir, voices_map[canonical_voice])
-                        # Check if the voice file actually exists
                         if not os.path.exists(voice_path):
-                            # Fall back to VoiceMapper lookup (searches output_dir for matching .wav files)
                             voice_path = voice_mapper.get_voice_path(canonical_voice)
                     else:
-                        # Fall back to VoiceMapper lookup
                         voice_path = voice_mapper.get_voice_path(canonical_voice)
-                    # If still not found, raise error
                     if voice_path is None:
                         raise Exception(f"No voice path found for '{voice}' (canonical: '{canonical_voice}')")
 
-                    # Generate TTS for this line
-                    tts_config = TTSConfig(
-                        device=device,
-                        tts_engine=tts_engine,
-                        cfg_scale=cfg_scale,
-                        output_dir=output_dir,
-                        short_text_postfix=(short_text_postfix if (validation_model is not None) else None),
-                        validation_model=validation_model,
-                        verbose=verbose,
-                        validation_client=validation_client,
-                        validate_clean=validate_clean,
-                    )
+                    work_items.append({
+                        "chapter_idx": i,
+                        "line_idx": line_num,
+                        "text": chapter_obj.text,
+                        "voice_name": voice,
+                        "voice_path": voice_path,
+                        "enumerate_idx": j,
+                    })
+
+            # Process work items with thread pool (concurrency=1 preserves sequential behavior)
+            tts_config = TTSConfig(
+                device=device,
+                tts_engine=tts_engine,
+                cfg_scale=cfg_scale,
+                output_dir=output_dir,
+                short_text_postfix=(short_text_postfix if (validation_model is not None) else None),
+                validation_model=validation_model,
+                verbose=verbose,
+                validation_client=validation_client,
+                validate_clean=validate_clean,
+                whisper_lock=whisper_lock,
+                engine=worker_pool,
+            )
+
+            if concurrency > 1:
+                # Parallel processing with thread pool
+                if verbose:
+                    print(f"[PARALLEL] Processing {len(work_items)} lines with concurrency={concurrency}")
+
+                def process_line(item: dict) -> dict:
                     success, ratio = generate_tts_for_line(
-                        chapter_idx=i,
-                        line_idx=line_num,
-                        text=chapter_obj.text,
-                        voice_name=voice,
+                        chapter_idx=item["chapter_idx"],
+                        line_idx=item["line_idx"],
+                        text=item["text"],
+                        voice_name=item["voice_name"],
                         voice_mapper=voice_mapper,
                         tts_config=tts_config,
-                        voice_path=voice_path,
+                        voice_path=item["voice_path"],
                     )
-                    progress_handler.update((j + 1)/len(chapter), desc=f"Processing Chapter {i} Voice {voice} Line {j} Ratio {int(ratio * 100)}")
+                    progress_handler.update(
+                        (item["enumerate_idx"] + 1) / len(chapter),
+                        desc=f"Processing Chapter {item['chapter_idx']} Line {item['line_idx']} Ratio {int(ratio * 100)}"
+                    )
                     if verbose:
-                        print(f"[LINE_PROGRESS] Chapter {i}, Line {j+1}/{len(chapter)}, Voice: {voice}, Ratio: {int(ratio * 100)}")
+                        print(f"[LINE_PROGRESS] Chapter {item['chapter_idx']}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(ratio * 100)}")
+                    return {"success": success, "ratio": ratio}
+
+                with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                    futures = {executor.submit(process_line, item): item for item in work_items}
+                    for future in as_completed(futures):
+                        future.result()  # Raise exception if any line failed
+            else:
+                # Sequential processing (original behavior)
+                for item in work_items:
+                    success, ratio = generate_tts_for_line(
+                        chapter_idx=item["chapter_idx"],
+                        line_idx=item["line_idx"],
+                        text=item["text"],
+                        voice_name=item["voice_name"],
+                        voice_mapper=voice_mapper,
+                        tts_config=tts_config,
+                        voice_path=item["voice_path"],
+                    )
+                    progress_handler.update(
+                        (item["enumerate_idx"] + 1) / len(chapter),
+                        desc=f"Processing Chapter {i} Line {item['line_idx']} Ratio {int(ratio * 100)}"
+                    )
+                    if verbose:
+                        print(f"[LINE_PROGRESS] Chapter {i}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(ratio * 100)}")
 
             # Assemble chapter MP3 from WAV files
             progress_handler.update(1, desc=f"Assembling Chapters")
@@ -630,6 +692,12 @@ def generate_audiobook_from_chapters(
             gc.collect()
 
             processed += 1
+
+        # Shutdown multi-GPU worker pool if used
+        if worker_pool is not None:
+            worker_pool.shutdown()
+            if verbose:
+                print("[MULTI-GPU] Worker pool shutdown")
 
         return f"Generated {processed} chapters successfully.", processed
 
@@ -819,7 +887,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
                       whisper_cpu: bool = False, debug_tts: bool = False, validate: bool = False,
                       validate_clean: bool = False, max_retries: int = None,
-                      enable_postfix: bool = True, validation_interval: int = 1,
+                      enable_postfix: bool = True, concurrency: int = 1,
+                      gpus: Optional[List[str]] = None,
                       llm_model: str = None) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
@@ -1135,7 +1204,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             validate_clean=validate_clean,
             max_retries=max_retries,
             enable_postfix=enable_postfix,
-            validation_interval=validation_interval)
+            concurrency=concurrency,
+            gpus=gpus)
 
         if verbose:
             print(f"  {status}")
@@ -1288,6 +1358,9 @@ def main():
     parser.add_argument("--model", default=None, help="LLM model name (e.g., coder-model)")
     parser.add_argument("--voice-engine", choices=["omni", "vox", "dramabox"], default="omni", help="Voice engine for character descriptions")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument("--concurrency", type=int, default=1, help="Number of concurrent lines to process (default: 1)")
+    parser.add_argument("--whisper-cpu", action="store_true", help="Run Whisper validation on CPU (frees GPU for TTS)")
+    parser.add_argument("--gpus", nargs="+", default=None, help="GPU devices to use (e.g., --gpus cuda:0 cuda:1)")
 
     args = parser.parse_args()
 
@@ -1297,6 +1370,22 @@ def main():
         print("\nExamples:")
         print("  audiobook-interface book.epub --tts-engine omni")
         print("  audiobook-interface --gradio --tts-engine omni")
+        print()
+        print("Performance options:")
+        print("  # 1 worker, sequential (default)")
+        print("  audiobook-interface book.epub")
+        print()
+        print("  # 4 concurrent lines, 1 GPU (thread pool only)")
+        print("  audiobook-interface book.epub --concurrency 4 --whisper-cpu")
+        print()
+        print("  # 2 workers on 1 GPU (not supported — each worker needs its own GPU)")
+        print("  # Use --concurrency instead to overlap TTS+validation on 1 GPU")
+        print()
+        print("  # 2 workers on 2 GPUs, 2 concurrent lines per GPU")
+        print("  audiobook-interface book.epub --gpus cuda:0 cuda:1 --concurrency 2 --whisper-cpu")
+        print()
+        print("  # 4 workers on 4 GPUs, 2 concurrent lines per GPU")
+        print("  audiobook-interface book.epub --gpus cuda:0 cuda:1 cuda:2 cuda:3 --concurrency 2 --whisper-cpu")
         sys.exit(1)
 
     if args.gradio:
@@ -1430,6 +1519,9 @@ def main():
             cfg_scale=DEFAULTS["cfg_scale"],
             max_chapters=args.max_chapters,
             verbose=args.verbose,
+            concurrency=args.concurrency,
+            whisper_cpu=args.whisper_cpu,
+            gpus=args.gpus,
         )
         print(status)
         print(f"Done! Generated {processed} chapters.")

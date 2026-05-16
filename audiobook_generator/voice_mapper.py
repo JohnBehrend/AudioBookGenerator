@@ -13,7 +13,7 @@ import os
 import json
 import gc
 import traceback
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
 from openai import OpenAI
 
@@ -235,6 +235,20 @@ class VoiceMapper:
         if self._cached_engine is None:
             self._cached_engine = get_engine(self.tts_engine, device=self.device)
         return self._cached_engine
+
+    def get_pool(self, devices: List[str]) -> "WorkerPool":
+        """Get a multi-GPU worker pool for the configured engine.
+
+        Args:
+            devices: List of CUDA device strings (e.g., ['cuda:0', 'cuda:1'])
+
+        Returns:
+            WorkerPool instance ready to distribute requests across GPUs.
+        """
+        from .engines.pool import WorkerPool
+
+        engine_cls = self.get_engine().__class__.__name__
+        return WorkerPool(self.tts_engine, engine_cls, devices)
 
     def set_engine(self, engine: Any) -> None:
         """Set a TTS engine instance (for testing/mocking).

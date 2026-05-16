@@ -139,7 +139,6 @@ DEFAULTS = {
     # Speed optimization switches (defaults preserve current behavior)
     "max_retries": 1,
     "enable_postfix": True,
-    "whisper_validation_interval": 1,
     # Reference text for TTS voice cloning
     # MOSS-VoiceGenerator hyperparameters (per model card recommendations) for Stage 1 voice design
     "moss_voicegen_temperature": 1.75,

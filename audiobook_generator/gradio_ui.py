@@ -589,6 +589,7 @@ def generate_tts_audio(
     seed_voice_map: str = None,
     whisper_cpu: bool = False,
     validate_clean: bool = False,
+    concurrency: int = 1,
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 5.1: Generate TTS audio for each line/voice.
@@ -716,7 +717,8 @@ def generate_tts_audio(
             duplicate_replacement_map=duplicate_replacement_map,
             seed_voice_map=seed_voice_map,
             whisper_device=whisper_device,
-            validate_clean=validate_clean
+            validate_clean=validate_clean,
+            concurrency=concurrency,
         )
 
         log_output += f"\n{status}"
@@ -740,6 +742,7 @@ def generate_full_audiobook(
     seed_voice_map: str = None,
     whisper_cpu: bool = False,
     validate_clean: bool = False,
+    concurrency: int = 1,
 ) -> Tuple[str, PipelineState]:
     """Stage 5: Generate full audiobook using generate_audiobook_from_chapters().
 
@@ -756,7 +759,7 @@ def generate_full_audiobook(
 
     try:
         # Use the unified generate_audiobook_from_chapters function
-        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters, turbo, seed_voice_map, whisper_cpu, validate_clean)
+        log_output, pipeline_state = generate_tts_audio(pipeline_state, log_output, max_chapters, turbo, seed_voice_map, whisper_cpu, validate_clean, concurrency)
 
         # Update state to audiobook complete (MP3s are created during generate_audiobook_from_chapters)
         log_output += f"\n\n=== Stage 5 Complete: Full Audiobook Generation === State: {pipeline_state.pipeline_state}"
@@ -1390,6 +1393,15 @@ def create_interface(
                     scale=3,
                     info="Check for music/SFX in generated audio (requires Validate Voices)"
                 )
+                concurrency_slider = gr.Slider(
+                    minimum=1,
+                    maximum=8,
+                    step=1,
+                    value=1,
+                    label="Concurrency",
+                    scale=2,
+                    info="Lines processed in parallel (higher = faster, uses more VRAM)"
+                )
 
             # EPUB upload - use the provided path as default if it exists
             # If epub_path_default is a string path, convert it to a tuple for Gradio's File component
@@ -1790,7 +1802,7 @@ def create_interface(
         # Generate Full Audiobook - Stage 5
         tts_btn.click(
             fn=generate_full_audiobook,
-            inputs=[pipeline_state_obj, log_output, max_chapters_slider, seed_voice_map_input, whisper_cpu_checkbox, validate_clean_checkbox],
+            inputs=[pipeline_state_obj, log_output, max_chapters_slider, seed_voice_map_input, whisper_cpu_checkbox, validate_clean_checkbox, concurrency_slider],
             outputs=[log_output, pipeline_state_obj],
         ).then(
             fn=update_button_visibility_from_state,

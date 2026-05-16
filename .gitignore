@@ -3,5 +3,9 @@ __pycache__/
 *.db
 .venv/
 .env
-*.egg-info/.claude/
 *.egg-info/
+.claude/
+voice_test/**/*.wav
+voice_test/**/*.tmp.wav
+voice_test/**/*.txt
+voice_test/**/*.json

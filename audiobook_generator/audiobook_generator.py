@@ -1095,12 +1095,19 @@ def assemble_audiobook_m4b(output_dir: str, verbose: bool = False,
         else:
             m4b_path = os.path.join(output_dir, f"{book_name}_part{part_idx + 1}.m4b")
 
-        # Build ffmpeg concat input list
-        concat_lines = [f"file '{os.path.abspath(mp3)}'" for mp3, _ in part]
+        # Build concat input list with chapter markers
+        concat_lines = []
+        cumulative_time = 0.0
+        for mp3, dur in part:
+            concat_lines.append(f"file '{os.path.abspath(mp3)}'")
+            cumulative_time += dur
+
         concat_tmp = os.path.join(output_dir, f"_ffmpeg_concat_{part_idx}.txt")
         with open(concat_tmp, "w") as f:
             f.write("\n".join(concat_lines) + "\n")
 
+        # First pass: concatenate
+        temp_m4b = os.path.join(output_dir, f"_temp_{part_idx}.m4b")
         cmd = [
             "ffmpeg", "-y",
             "-threads", "0",
@@ -1108,7 +1115,7 @@ def assemble_audiobook_m4b(output_dir: str, verbose: bool = False,
             "-c:a", "aac", "-b:a", "192k",
             "-movflags", "+faststart",
             "-metadata", "title=Audiobook",
-            m4b_path
+            temp_m4b
         ]
 
         if verbose:
@@ -1117,6 +1124,43 @@ def assemble_audiobook_m4b(output_dir: str, verbose: bool = False,
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         os.unlink(concat_tmp)
+
+        if result.returncode != 0:
+            if verbose:
+                print(f"[M4B] ffmpeg failed: {result.stderr[:500]}")
+            continue
+
+        # Second pass: add chapter markers
+        chapter_meta = os.path.join(output_dir, f"_chapters_{part_idx}.txt")
+        cumulative_time = 0.0
+        with open(chapter_meta, "w") as f:
+            f.write(";FFMETADATA1\n")
+            for idx, (mp3, dur) in enumerate(part):
+                chapter_name = os.path.splitext(os.path.basename(mp3))[0]
+                start_ms = int(cumulative_time * 1000)
+                cumulative_time += dur
+                end_ms = int(cumulative_time * 1000)
+                f.write(f"[CHAPTER]\n")
+                f.write(f"TIMEBASE=1/1000\n")
+                f.write(f"START={start_ms}\n")
+                f.write(f"END={end_ms}\n")
+                f.write(f"title={chapter_name}\n")
+                if idx < len(part) - 1:
+                    f.write("\n")
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", temp_m4b,
+            "-i", chapter_meta,
+            "-map_metadata", "1",
+            "-c", "copy",
+            "-movflags", "+faststart",
+            m4b_path
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        os.unlink(chapter_meta)
+        os.unlink(temp_m4b)
 
         if result.returncode != 0:
             if verbose:

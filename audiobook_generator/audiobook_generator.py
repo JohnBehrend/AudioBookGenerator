@@ -691,15 +691,21 @@ def generate_audiobook_from_chapters(
                 completed_count = 0
                 completed_lock = threading.Lock()
                 total_items = len(work_items)
+                shutdown_event = threading.Event()
 
                 # TTS generator thread: generate audio, push to validation queue
                 def tts_worker():
                     my_thread_id = threading.current_thread().ident
-                    while True:
+                    while not shutdown_event.is_set():
                         try:
-                            item = work_queue.get(timeout=1)
+                            item = work_queue.get(timeout=0.5)
                         except queue.Empty:
                             continue
+
+                        # Sentinel value to stop the thread
+                        if item is None:
+                            work_queue.task_done()
+                            break
 
                         # Skip empty text
                         if not item["text"] or not item["text"].strip():
@@ -753,11 +759,16 @@ def generate_audiobook_from_chapters(
                 # Validator thread: pull from queue, run Whisper, handle retry/clip
                 def validator_worker():
                     nonlocal completed_count
-                    while True:
+                    while not shutdown_event.is_set():
                         try:
-                            item, output_path, key = validation_queue.get(timeout=1)
+                            item, output_path, key = validation_queue.get(timeout=0.5)
                         except queue.Empty:
                             continue
+
+                        # Sentinel value to stop the thread
+                        if item is None:
+                            validation_queue.task_done()
+                            break
 
                         # Skip if temp file was already cleaned up (race condition)
                         if not os.path.exists(output_path):
@@ -898,17 +909,17 @@ def generate_audiobook_from_chapters(
                 for item in work_items:
                     work_queue.put(item)
 
-                # Start TTS generator threads
+                # Start TTS generator threads (non-daemon for clean shutdown)
                 tts_threads = []
                 for _ in range(concurrency):
-                    t = threading.Thread(target=tts_worker, daemon=True)
+                    t = threading.Thread(target=tts_worker)
                     t.start()
                     tts_threads.append(t)
 
-                # Start validator threads
+                # Start validator threads (non-daemon for clean shutdown)
                 val_threads = []
                 for _ in range(whisper_concurrency):
-                    t = threading.Thread(target=validator_worker, daemon=True)
+                    t = threading.Thread(target=validator_worker)
                     t.start()
                     val_threads.append(t)
 
@@ -916,9 +927,15 @@ def generate_audiobook_from_chapters(
                 work_queue.join()
                 validation_queue.join()
 
-                # Wait for threads to finish (they'll exit on timeout)
+                # Send sentinel values to stop threads cleanly
+                for _ in range(concurrency):
+                    work_queue.put(None)
+                for _ in range(whisper_concurrency):
+                    validation_queue.put((None, None, None))
+
+                # Wait for threads to finish
                 for t in tts_threads + val_threads:
-                    t.join(timeout=5)
+                    t.join(timeout=10)
             else:
                 # Sequential processing (original behavior)
                 for item in work_items:

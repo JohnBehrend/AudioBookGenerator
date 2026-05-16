@@ -542,12 +542,19 @@ def generate_audiobook_from_chapters(
         whisper_pool = None
         if whisper_concurrency > 1:
             from .engines.pool import WhisperPool
+            # Distribute Whisper models across available devices
+            if not whisper_cpu and gpus and len(gpus) > 1:
+                whisper_devices = gpus
+            else:
+                whisper_devices = None
             whisper_pool = WhisperPool(
-                lambda: setup_validation_model(whisper_device, cpu=whisper_cpu),
+                lambda dev: setup_validation_model(dev, cpu=whisper_cpu),
                 size=whisper_concurrency,
+                devices=whisper_devices,
             )
             if verbose:
-                print(f"[WHISPER] Created pool with {whisper_concurrency} models")
+                distro = whisper_devices if whisper_devices else [whisper_device] * whisper_concurrency
+                print(f"[WHISPER] Created pool with {whisper_concurrency} models on {distro}")
         else:
             whisper_lock = threading.Lock()
 

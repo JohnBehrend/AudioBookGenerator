@@ -15,18 +15,23 @@ class WhisperPool:
     """Pool of Whisper models for parallel validation.
 
     Each model has its own lock, so N models allow N concurrent transcriptions.
-    Requests are distributed round-robin across the pool.
+    Requests are distributed round-robin across the pool. Models can be
+    distributed across multiple devices for balanced GPU utilization.
     """
 
-    def __init__(self, model_factory, size: int):
+    def __init__(self, model_factory, size: int, devices: Optional[List[str]] = None):
         self._size = size
         self._models: List[Any] = []
         self._locks: List[threading.Lock] = []
         self._index = 0
         self._global_lock = threading.Lock()
 
-        for _ in range(size):
-            model = model_factory()
+        for i in range(size):
+            if devices:
+                device = devices[i % len(devices)]
+                model = model_factory(device)
+            else:
+                model = model_factory()
             self._models.append(model)
             self._locks.append(threading.Lock())
 

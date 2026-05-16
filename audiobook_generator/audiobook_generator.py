@@ -1556,16 +1556,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         # Count chapters for progress
         num_chapters_to_process = len(state.chapters) if state.chapters else 0
 
-        # Merge seed_voice_map into state.voice_map to handle characters not in the resumed voice map
-        # This is important for characters like "elan morin tedronai" that should map to "baalzamon.wav"
-        merged_voices_map = dict(state.voice_map)  # Start with a copy of the loaded voice map
-        if seed_voice_map and seed_characters:
-            # Add seed mappings for any characters not in the loaded voice map
-            for char_name, voice_path in seed_characters.items():
-                if char_name not in merged_voices_map:
-                    merged_voices_map[char_name] = voice_path
-                    if verbose:
-                        print(f"  [SEED MERGE] Added '{char_name}' -> '{voice_path}' from seed_voice_map")
+        # merged_voices_map already includes seed voices (merged at load_voice_map time)
+        merged_voices_map = dict(state.voice_map)
 
         status, processed = generate_audiobook_from_chapters(
             chapters=state.chapters,

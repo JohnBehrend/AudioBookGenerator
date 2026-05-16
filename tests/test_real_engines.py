@@ -34,20 +34,26 @@ def load_audio(path: str) -> tuple[int, np.ndarray]:
     return sr, data
 
 
-# Test fixtures
-TEST_DESCRIPTION = "A calm, clear female narrator with a pleasant tone."
+# Test fixtures (Dramabox-style verbose descriptions for best voice diversity)
+TEST_DESCRIPTIONS = {
+    "narrator": "A middle-aged woman with a warm, resonant contralto voice that carries the quiet authority of a seasoned storyteller. Her speech is measured and articulate, with a gentle British upper-class accent that lends refinement to every word. There's a calm, inviting quality to her tone, like a trusted companion reading by firelight.",
+    "hero": "A young man in his late twenties with a deep, gravelly baritone voice full of quiet strength and determination. He speaks at a deliberate pace with a slight rasp that hints at hardship, his words carrying an underlying intensity. His tone is earnest and resolute, like someone who has faced danger and emerged unbroken.",
+}
 
 TEST_TEXT = "Hello, world."
 
 # Engines that require special setup or large models
 OPTIONAL_ENGINES = {"echo-tts", "vibevoice"}
 
+# Persistent output directory for generated test voices
+_TEST_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "voice_test" / "test_voices"
+
 
 @pytest.fixture(scope="session")
 def output_dir():
-    """Temporary output directory for test audio files."""
-    with tempfile.TemporaryDirectory(prefix="real_tts_test_") as d:
-        yield Path(d)
+    """Persistent output directory for test audio files."""
+    _TEST_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    yield _TEST_OUTPUT_DIR
 
 
 @pytest.fixture(scope="session")
@@ -80,7 +86,7 @@ def voice_refs(available_engines: dict, output_dir: Path, device: str):
         try:
             success, ref_path, _ = engine.generate_voice_sample(
                 character_name="narrator",
-                description=TEST_DESCRIPTION,
+                description=TEST_DESCRIPTIONS["narrator"],
                 output_dir=output_dir / engine_name,
                 device=device,
                 verbose=False,
@@ -129,7 +135,7 @@ class TestRealGeneration:
         engine = available_engines[engine_name]
         success, output_file, duration = engine.generate_voice_sample(
             character_name="narrator",
-            description=TEST_DESCRIPTION,
+            description=TEST_DESCRIPTIONS["narrator"],
             output_dir=output_dir / engine_name,
             device=device,
             verbose=False,

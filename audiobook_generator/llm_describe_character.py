@@ -658,7 +658,7 @@ def describe_characters(
     chapters_dir: str = "chapters",
     api_key: str = None,
     port: str = None,
-    model: str = LLM_SETTINGS["default_model"],
+    model: str = None,
     single_character: Optional[str] = None,
     wiki_url_template: str = "",
     verbose: bool = False,
@@ -742,6 +742,10 @@ def describe_characters(
     # Initialize client
     if client is None:
         client = get_llm_client(api_key or LLM_SETTINGS["api_key"], port or LLM_SETTINGS["port"])
+
+    # Resolve model at call time (not import time)
+    if model is None:
+        model = LLM_SETTINGS["default_model"]
 
     # Use shared logic
     descriptions = describe_characters_shared(

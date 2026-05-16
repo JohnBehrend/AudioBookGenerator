@@ -3,4 +3,4 @@ __pycache__/
 *.db
 .venv/
 .env
-*.egg-info/
+*.egg-info/.claude/

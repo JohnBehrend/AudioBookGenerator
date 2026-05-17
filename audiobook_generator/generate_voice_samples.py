@@ -151,18 +151,43 @@ def generate_voice_samples(
             if verbose:
                 print(f"Filtered out {initial_count - len(descriptions)} seeded characters, {len(descriptions)} remaining to generate")
 
-            # Copy seed voice files to output directory
+            # Clone seed voices through TTS engine so they speak the configured
+            # static_voice_text, ensuring ref_text always matches during TTS.
             if verbose:
-                print(f"Copying seed voice files to {output_dir}...")
+                print(f"Cloning seed voices through {voice_engine} engine...")
+            voice_mapper_seed = VoiceMapper(output_dir=output_dir, device=device, tts_engine=voice_engine, engine=engine)
+            tts_engine_obj = voice_mapper_seed.get_engine()
             for char_name, voice_path in seed_characters.items():
-                if os.path.exists(voice_path):
-                    dest_path = os.path.join(output_dir, os.path.basename(voice_path))
-                    shutil.copy2(voice_path, dest_path)
-                    if verbose:
-                        print(f"  Copied {voice_path} -> {dest_path}")
-                else:
+                if not os.path.exists(voice_path):
                     if verbose:
                         print(f"  Warning: Seed voice file not found: {voice_path}")
+                    continue
+                dest_path = os.path.join(output_dir, f"{char_name}.wav")
+                if os.path.exists(dest_path):
+                    if verbose:
+                        print(f"  Skipped {char_name} - already exists")
+                    continue
+                try:
+                    tts_engine_obj.generate_line(
+                        text=DEFAULTS["static_voice_text"],
+                        voice_path=voice_path,
+                        output_path=dest_path,
+                        device=device,
+                        validation_model=None,
+                        ref_text="",
+                        verbose=verbose,
+                    )
+                    if os.path.exists(dest_path):
+                        if verbose:
+                            print(f"  Cloned {voice_path} -> {dest_path}")
+                    else:
+                        shutil.copy2(voice_path, dest_path)
+                        if verbose:
+                            print(f"  Cloning failed, copied {voice_path} -> {dest_path}")
+                except Exception as e:
+                    shutil.copy2(voice_path, dest_path)
+                    if verbose:
+                        print(f"  Cloning failed ({e}), copied {voice_path} -> {dest_path}")
 
         os.makedirs(output_dir, exist_ok=True)
 

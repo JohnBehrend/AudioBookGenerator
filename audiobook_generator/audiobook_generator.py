@@ -1415,14 +1415,9 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 else:
                     resolved_seed_characters[char_name] = os.path.join(seed_voice_map_dir, voice_path)
             seed_characters = resolved_seed_characters
-            # Merge seed voices into state.voice_map and copy files to output dir
-            # so VoiceMapper can find them with relative path lookup
+            # Merge seed voices into state.voice_map
             for char_name, voice_path in seed_characters.items():
                 state.voice_map[char_name] = voice_path
-                # Copy seed voice file to output dir if not already present
-                dst = os.path.join(output_dir, os.path.basename(voice_path))
-                if not os.path.exists(dst):
-                    shutil.copy2(voice_path, dst)
             if verbose:
                 print(f"[SEED] Loaded {len(seed_characters)} seeded characters from {seed_voice_map}")
         else:

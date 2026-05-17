@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 .claude/
 voice_test/**/*.wav
+voice_test/**/*.mp3
 voice_test/**/*.tmp.wav
 voice_test/**/*.txt
 voice_test/**/*.json

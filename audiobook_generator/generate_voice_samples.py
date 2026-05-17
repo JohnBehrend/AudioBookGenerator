@@ -4,6 +4,7 @@ Module to generate voice samples for audiobook characters.
 """
 import json
 import os
+import re
 import sys
 import shutil
 import traceback
@@ -23,6 +24,11 @@ def load_character_descriptions(descriptions_file: str) -> Dict[str, str]:
     """Load character descriptions from JSON file."""
     with open(descriptions_file, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+def _word_match_count(ref_words, transcribed_lower):
+    """Count whole-word matches of ref_words in transcribed text."""
+    return sum(1 for w in ref_words if re.search(r'\b' + re.escape(w) + r'\b', transcribed_lower))
 
 
 def generate_voice_sample(character_name: str, description: str, voice_mapper: VoiceMapper,
@@ -91,9 +97,6 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
         return False, None, 0, False, "Exception during generation"
 
 
-from typing import Dict, Tuple
-
-
 def generate_voice_samples(
     descriptions: Dict[str, str],
     output_dir: str,
@@ -139,11 +142,18 @@ def generate_voice_samples(
                 print(f"Found {len(descriptions)} characters")
 
         # Ensure narrator voice is included (it's always needed as fallback)
-        # Add narrator with a default description if not already present
         if "narrator" not in descriptions:
             descriptions["narrator"] = "A neutral, clear narrator voice suitable for audiobook narration"
             if verbose:
                 print("Added narrator voice to generation list (fallback voice)")
+
+        # Pre-compute reference words for scoring
+        ref_words = [w.strip("!\"',.").lower() for w in DEFAULTS["static_voice_text"].split() if w.strip("!\"',.").isalpha()]
+
+        # Pre-load whisper validation model once for all samples
+        from .utils import transcribe_audio_with_whisper, crop_to_ref_text
+        from .audiobook_generator import setup_validation_model
+        vm = setup_validation_model('cpu', cpu=True, fast=True)
 
         # Filter out seed characters
         if seed_characters:
@@ -169,40 +179,103 @@ def generate_voice_samples(
                     if verbose:
                         print(f"  Skipped {char_name} - already exists")
                     continue
-                # Check if seed voice already speaks the correct text by duration
-                import soundfile as sf
+                # Check if seed voice already speaks the correct text by transcribing
+                _seed_verified = False
                 try:
-                    src_info = sf.info(voice_path)
-                    if 9.0 <= src_info.duration <= 15.0:
-                        # Already speaks correct text, just copy
+                    _transcribed, _, _ = transcribe_audio_with_whisper(vm, voice_path)
+                    _matches = _word_match_count(ref_words, _transcribed.lower())
+                    if _matches >= len(ref_words) - 1:
                         shutil.copy2(voice_path, dest_path)
                         if verbose:
                             print(f"  Copied {voice_path} -> {dest_path} (already correct text)")
-                        continue
+                        _seed_verified = True
                 except Exception:
                     pass
-                # Duration doesn't match, clone through TTS engine
-                try:
-                    tts_engine_obj.generate_line(
-                        text=DEFAULTS["static_voice_text"],
-                        voice_path=voice_path,
-                        output_path=dest_path,
-                        device=device,
-                        validation_model=None,
-                        verbose=verbose,
-                        ref_text="",
-                    )
-                    if os.path.exists(dest_path):
-                        if verbose:
-                            print(f"  Cloned {voice_path} -> {dest_path}")
+                if not _seed_verified:
+                    # Generate batches of 5 until we get a passing sample
+                    import random as _random
+                    _candidates = []
+                    _att = 0
+                    _max_attempts = 25
+                    while len(_candidates) == 0 and _att < _max_attempts:
+                        for _batch in range(5):
+                            _att += 1
+                            if _att > _max_attempts:
+                                break
+                            _random.seed(42 + _att)
+                            _tmp_path = dest_path + f".seed{_att}.tmp.wav"
+                            try:
+                                tts_engine_obj.generate_line(
+                                    text=DEFAULTS["static_voice_text"],
+                                    voice_path=voice_path,
+                                    output_path=_tmp_path,
+                                    device=device,
+                                    validation_model=None,
+                                    verbose=False,
+                                    ref_text="",
+                                )
+                            except Exception as e:
+                                if verbose:
+                                    print(f"    Attempt {_att} failed: {e}")
+                                continue
+                            if not os.path.exists(_tmp_path):
+                                continue
+                            try:
+                                _transcribed, _starts, _ends = transcribe_audio_with_whisper(vm, _tmp_path)
+                                _transcribed_words = _transcribed.split()
+                                _matches = _word_match_count(ref_words, _transcribed.lower())
+                                if _matches < len(ref_words) * 0.8:
+                                    if verbose:
+                                        print(f"    Sample {_att}: {_matches}/{len(ref_words)} words (too few, skipped): {_transcribed[:80]}...")
+                                    continue
+                                _cropped_path = _tmp_path + ".cropped.wav"
+                                if crop_to_ref_text(_tmp_path, _cropped_path, ref_words, _transcribed_words, _starts, _ends, verbose=False):
+                                    _candidates.append((_matches, _cropped_path, _att))
+                                else:
+                                    _candidates.append((_matches, _tmp_path, _att))
+                                if verbose:
+                                    print(f"    Sample {_att}: {_matches}/{len(ref_words)} words: {_transcribed[:80]}...")
+                            except Exception as e:
+                                if verbose:
+                                    print(f"    Sample {_att}: processing failed ({e})")
+                    if _candidates:
+                        _candidates.sort(key=lambda x: x[0], reverse=True)
+                        _best_score, _best_path, _best_att = _candidates[0]
+                        shutil.copy2(_best_path, dest_path)
+                        # Validate copied file matches expected content
+                        try:
+                            _final_transcribed, _, _ = transcribe_audio_with_whisper(vm, dest_path)
+                            _final_matches = _word_match_count(ref_words, _final_transcribed.lower())
+                            if verbose:
+                                print(f"  Cloned {voice_path} -> {dest_path} (best: sample {_best_att}, {_final_matches}/{len(ref_words)} words)")
+                        except Exception:
+                            if verbose:
+                                print(f"  Cloned {voice_path} -> {dest_path} (best: sample {_best_att}, {_best_score}/{len(ref_words)} words)")
+                        # Clean up all temp files
+                        for _sc, _sp, _sa in _candidates:
+                            try:
+                                os.remove(_sp)
+                            except OSError:
+                                pass
+                            try:
+                                os.remove(_sp.replace(".cropped.wav", ""))
+                            except OSError:
+                                pass
+                        # Clean up failed temp files too
+                        for _fa in range(1, _att + 1):
+                            _fp = dest_path + f".seed{_fa}.tmp.wav"
+                            try:
+                                os.remove(_fp)
+                            except OSError:
+                                pass
+                            try:
+                                os.remove(_fp + ".cropped.wav")
+                            except OSError:
+                                pass
                     else:
                         shutil.copy2(voice_path, dest_path)
                         if verbose:
-                            print(f"  Cloning failed, copied {voice_path} -> {dest_path}")
-                except Exception as e:
-                    shutil.copy2(voice_path, dest_path)
-                    if verbose:
-                        print(f"  Cloning failed ({e}), copied {voice_path} -> {dest_path}")
+                            print(f"  All samples failed, copied {voice_path} -> {dest_path}")
 
         os.makedirs(output_dir, exist_ok=True)
 
@@ -210,8 +283,6 @@ def generate_voice_samples(
         failed = []
         total_chars = len(descriptions)
 
-        # Note: Descriptions are no longer used for voice generation
-        # Voices use static text from config instead
         if verbose:
             print("\n" + "=" * 60)
             print("NOTE: Character descriptions are no longer used for voice generation.")
@@ -253,66 +324,87 @@ def generate_voice_samples(
                     if voice_found:
                         continue
 
-                # Generate voice with retry until text matches and quality is acceptable
+                # Generate batches of 5 until we get a passing sample
                 import random
-                max_attempts = 5
-                gen_success = False
-                for attempt in range(1, max_attempts + 1):
-                    if attempt > 1:
-                        if verbose:
-                            print(f"    Retry {attempt}/{max_attempts} for '{char_name}'...")
-                        random.seed(42 + attempt)
-
-                    success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
-                        character_name=char_name,
-                        description=char_desc,
-                        voice_mapper=voice_mapper,
-                        output_dir=output_dir,
-                        max_new_tokens=max_tokens,
-                        verbose=verbose,
-                        validate=False,
-                        validation_client=None
-                    )
-
-                    if not success:
-                        continue
-
-                    # Verify the generated voice speaks the correct text with acceptable quality
-                    from ..utils import transcribe_audio_with_whisper
-                    from ..audiobook_generator import setup_validation_model
-                    try:
-                        vm = setup_validation_model('cpu', cpu=True, fast=True)
-                        transcribed, _, _ = transcribe_audio_with_whisper(vm, output_file)
-                        expected = DEFAULTS["static_voice_text"].lower()
-                        # Check if key phrases from expected text are in transcription
-                        key_phrases = ["after all these years", "bask", "warm glow", "future"]
-                        matches = sum(1 for p in key_phrases if p in transcribed.lower())
-                        # Check quality: duration should be ~10-12s for static_voice_text
-                        # and transcription should have reasonable word count
-                        word_count = len(transcribed.split())
-                        quality_ok = 9.0 <= duration <= 15.0 and word_count >= 10
-                        if matches >= 3 and quality_ok:
-                            gen_success = True
-                            if verbose:
-                                print(f"    Text verified, quality ok on attempt {attempt} ({duration:.1f}s, {word_count} words)")
+                candidates = []
+                attempt = 0
+                max_attempts = 25
+                while len(candidates) == 0 and attempt < max_attempts:
+                    for _batch in range(5):
+                        attempt += 1
+                        if attempt > max_attempts:
                             break
-                        else:
+                        random.seed(42 + attempt)
+                        _tmp_name = f"{char_name}.sample{attempt}"
+                        success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
+                            character_name=_tmp_name,
+                            description=char_desc,
+                            voice_mapper=voice_mapper,
+                            output_dir=output_dir,
+                            max_new_tokens=max_tokens,
+                            verbose=False,
+                            validate=False,
+                            validation_client=None
+                        )
+                        if not success or not output_file:
+                            continue
+                        try:
+                            transcribed, starts, ends = transcribe_audio_with_whisper(vm, output_file)
+                            transcribed_words = transcribed.split()
+                            matches = _word_match_count(ref_words, transcribed.lower())
+                            if matches < len(ref_words) * 0.8:
+                                if verbose:
+                                    print(f"    Sample {attempt}: {matches}/{len(ref_words)} words (too few, skipped): {transcribed[:80]}...")
+                                continue
+                            cropped_path = output_file + ".cropped.wav"
+                            if crop_to_ref_text(output_file, cropped_path, ref_words, transcribed_words, starts, ends, verbose=False):
+                                candidates.append((matches, cropped_path, attempt, duration))
+                            else:
+                                candidates.append((matches, output_file, attempt, duration))
                             if verbose:
-                                print(f"    Attempt {attempt}: text_match={matches}/4, quality={'ok' if quality_ok else 'poor'} ({duration:.1f}s, {word_count} words): {transcribed[:80]}...")
-                    except Exception as e:
+                                print(f"    Sample {attempt}: {matches}/{len(ref_words)} words ({duration:.1f}s): {transcribed[:80]}...")
+                        except Exception as e:
+                            if verbose:
+                                print(f"    Sample {attempt}: processing failed ({e})")
+                if candidates:
+                    candidates.sort(key=lambda x: x[0], reverse=True)
+                    best_score, best_file, best_att, best_dur = candidates[0]
+                    final_path = os.path.join(output_dir, f"{char_name}.wav")
+                    shutil.copy2(best_file, final_path)
+                    # Validate copied file matches expected content
+                    try:
+                        final_transcribed, _, _ = transcribe_audio_with_whisper(vm, final_path)
+                        final_matches = _word_match_count(ref_words, final_transcribed.lower())
                         if verbose:
-                            print(f"    Verification failed ({e}), accepting anyway")
-                        gen_success = True
-                        break
-
-                if gen_success:
-                    generated[char_name] = output_file
-                    if verbose:
-                        print(f"    Generated: {output_file}")
+                            print(f"    Best: sample {best_att}, {final_matches}/{len(ref_words)} words ({best_dur:.1f}s): {final_path}")
+                    except Exception:
+                        if verbose:
+                            print(f"    Best: sample {best_att}, {best_score}/{len(ref_words)} words ({best_dur:.1f}s): {final_path}")
+                    generated[char_name] = final_path
+                    for sc, sf, sa, sd in candidates:
+                        try:
+                            os.remove(sf)
+                        except OSError:
+                            pass
+                        try:
+                            os.remove(sf.replace(".cropped.wav", ""))
+                        except OSError:
+                            pass
                 else:
+                    # Clean up all temp files before failing
+                    for _fa in range(1, attempt + 1):
+                        _fp = os.path.join(output_dir, f"{char_name}.sample{_fa}.wav")
+                        try:
+                            os.remove(_fp)
+                        except OSError:
+                            pass
+                        try:
+                            os.remove(_fp + ".cropped.wav")
+                        except OSError:
+                            pass
                     failed.append(char_name)
                     if verbose:
-                        print(f"    Failed to generate voice after {max_attempts} attempts")
+                        print(f"    All {attempt} samples failed for '{char_name}'")
 
             # Clean up TTS models after all characters are processed
             voice_mapper.cleanup_tts_models()

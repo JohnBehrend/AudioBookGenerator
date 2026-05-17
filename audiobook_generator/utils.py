@@ -741,6 +741,69 @@ def transcribe_audio_with_whisper(validation_model: Any, audio_path: str) -> Tup
     return detected_string, start_times, end_times
 
 
+def crop_to_ref_text(audio_path: str, output_path: str, ref_words: List[str], transcribed_words: List[str], start_times: List[float], end_times: List[float], verbose: bool = False) -> bool:
+    """Crop audio to the span where reference words are spoken.
+
+    Uses Whisper word-level timestamps to find the contiguous span of
+    reference words in the transcription, then crops the audio to that range.
+
+    Args:
+        audio_path: Path to the source audio file (.wav)
+        output_path: Path to write the cropped audio (.wav)
+        ref_words: List of words from the reference text (lowercased, no punctuation)
+        transcribed_words: List of transcribed words from Whisper
+        start_times: Start time for each transcribed word (seconds)
+        end_times: End time for each transcribed word (seconds)
+        verbose: Print verbose output
+
+    Returns:
+        True if cropping was successful, False otherwise
+    """
+    import pydub
+
+    if len(ref_words) < 3 or len(transcribed_words) == 0:
+        return False
+
+    # Load audio for cropping
+    try:
+        seg = pydub.AudioSegment.from_wav(audio_path)
+    except Exception:
+        return False
+
+    # Find the span covering the most reference words, allowing small gaps
+    ref_set = set(ref_words)
+    best_start = 0
+    best_end = 0
+    best_len = 0
+    max_gap = 2  # allow up to 2 non-matching words between matches
+
+    for i in range(len(transcribed_words)):
+        gap = 0
+        match_count = 0
+        for j in range(i, len(transcribed_words)):
+            if transcribed_words[j] in ref_set:
+                match_count += 1
+                gap = 0
+            else:
+                gap += 1
+                if gap > max_gap:
+                    break
+        if match_count > best_len:
+            best_len = match_count
+            best_start = i
+            best_end = j + 1
+
+    if best_len < 3:
+        return False
+
+    # Crop to the time range of the matched words
+    crop_start_ms = int(start_times[best_start] * 1000)
+    crop_end_ms = int(end_times[best_end - 1] * 1000)
+    cropped = seg[crop_start_ms:crop_end_ms]
+    cropped.export(output_path, format="wav")
+    return True
+
+
 def validate_audio_clean(audio_path: str, client: Optional[OpenAI] = None, verbose: bool = False) -> Tuple[bool, str]:
     """Validate that audio contains only clean speech without music or background effects.
 

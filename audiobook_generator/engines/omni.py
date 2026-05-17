@@ -227,9 +227,11 @@ class OmniEngine(TTSEngine):
         cfg_scale: float = 1.3,
         max_new_tokens: int = 19200,
         verbose: bool = False,
+        ref_text: Optional[str] = None,
     ) -> bool:
         # Pre-compute ref_text in main process (WhisperModel not serializable)
-        ref_text = self._get_ref_text(voice_path, validation_model, verbose)
+        if ref_text is None:
+            ref_text = self._get_ref_text(voice_path, validation_model, verbose)
 
         resp = self._worker_request(
             "generate_line",

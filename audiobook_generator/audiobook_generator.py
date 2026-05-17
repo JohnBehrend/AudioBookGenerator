@@ -1584,7 +1584,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 progress=None,  # CLI mode, no gr.Progress
                 seed_characters=seed_characters,
                 voice_engine=voice_engine,
-                validate=validate
+                validate=validate,
+                tts_engine=tts_engine,
             )
 
             if verbose:

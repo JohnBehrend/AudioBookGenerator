@@ -106,7 +106,8 @@ def generate_voice_samples(
     voice_engine: str = "moss",
     force_regenerate: bool = False,
     validate: bool = False,
-    engine=None
+    engine=None,
+    tts_engine: str = None,
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters via VoiceMapper.
 
@@ -153,9 +154,10 @@ def generate_voice_samples(
 
             # Clone seed voices through TTS engine so they speak the configured
             # static_voice_text, ensuring ref_text always matches during TTS.
+            clone_engine = tts_engine or voice_engine
             if verbose:
-                print(f"Cloning seed voices through {voice_engine} engine...")
-            voice_mapper_seed = VoiceMapper(output_dir=output_dir, device=device, tts_engine=voice_engine, engine=engine)
+                print(f"Cloning seed voices through {clone_engine} engine...")
+            voice_mapper_seed = VoiceMapper(output_dir=output_dir, device=device, tts_engine=clone_engine)
             tts_engine_obj = voice_mapper_seed.get_engine()
             for char_name, voice_path in seed_characters.items():
                 if not os.path.exists(voice_path):
@@ -167,6 +169,19 @@ def generate_voice_samples(
                     if verbose:
                         print(f"  Skipped {char_name} - already exists")
                     continue
+                # Check if seed voice already speaks the correct text by duration
+                import soundfile as sf
+                try:
+                    src_info = sf.info(voice_path)
+                    if 9.0 <= src_info.duration <= 15.0:
+                        # Already speaks correct text, just copy
+                        shutil.copy2(voice_path, dest_path)
+                        if verbose:
+                            print(f"  Copied {voice_path} -> {dest_path} (already correct text)")
+                        continue
+                except Exception:
+                    pass
+                # Duration doesn't match, clone through TTS engine
                 try:
                     tts_engine_obj.generate_line(
                         text=DEFAULTS["static_voice_text"],
@@ -174,8 +189,8 @@ def generate_voice_samples(
                         output_path=dest_path,
                         device=device,
                         validation_model=None,
-                        ref_text="",
                         verbose=verbose,
+                        ref_text="",
                     )
                     if os.path.exists(dest_path):
                         if verbose:

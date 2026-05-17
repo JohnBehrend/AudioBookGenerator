@@ -1315,7 +1315,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                        enable_postfix: bool = True, concurrency: int = 1,
                        gpus: Optional[List[str]] = None, whisper_concurrency: int = 1,
                        whisper_fast: bool = False,
-                       llm_model: str = None) -> str:
+                       llm_model: str = None,
+                       nemotron_endpoint: str = None) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -1586,6 +1587,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 voice_engine=voice_engine,
                 validate=validate,
                 tts_engine=tts_engine,
+                nemotron_endpoint=nemotron_endpoint,
             )
 
             if verbose:
@@ -1793,6 +1795,7 @@ def main():
     parser.add_argument("--whisper-concurrency", type=int, default=1, help="Number of concurrent Whisper models for validation (default: 1)")
     parser.add_argument("--whisper-fast", action="store_true", help="Use faster Whisper settings (medium model, beam_size=3)")
     parser.add_argument("--gpus", nargs="+", default=None, help="GPU devices to use (e.g., --gpus cuda:0 cuda:1)")
+    parser.add_argument("--nemotron-endpoint", default=None, help="Nemotron Omni endpoint for voice description validation (e.g., http://localhost:8082/v1)")
 
     args = parser.parse_args()
 
@@ -1975,9 +1978,9 @@ def main():
                 gpus=args.gpus,
                 whisper_concurrency=args.whisper_concurrency,
                 whisper_fast=args.whisper_fast,
-                llm_model=args.model,
+                nemotron_endpoint=args.nemotron_endpoint,
             )
-            print(result)
+            print(result_msg)
         else:
             # Stage 1: Parse EPUB
             print(f"=== Stage 1: Parsing EPUB {args.epub_file} ===")
@@ -2036,6 +2039,7 @@ def main():
                 seed_characters=load_seed_characters(args.seed_voice_map),
                 voice_engine=args.tts_engine,
                 validate=False,
+                nemotron_endpoint=args.nemotron_endpoint,
             )
             print(result_msg)
 

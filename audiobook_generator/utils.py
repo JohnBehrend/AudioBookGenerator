@@ -584,6 +584,20 @@ def get_validation_client() -> OpenAI:
     return OpenAI(base_url=VOICE_VALIDATION["endpoint"], api_key="EMPTY")
 
 
+def get_nemotron_client(endpoint: Optional[str] = None) -> OpenAI:
+    """Create an OpenAI client for Nemotron voice validation.
+
+    Args:
+        endpoint: Override endpoint URL
+
+    Returns:
+        OpenAI client configured for Nemotron model
+    """
+    from .config import NEMOTRON_VALIDATION
+    url = endpoint or NEMOTRON_VALIDATION["endpoint"]
+    return OpenAI(base_url=url, api_key="EMPTY")
+
+
 # ============================================================================
 # FILE OPERATIONS
 # ============================================================================

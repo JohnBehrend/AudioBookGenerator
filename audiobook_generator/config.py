@@ -54,6 +54,29 @@ VOICE_VALIDATION = {
 }
 
 # ============================================================================
+# NEMOTRON VOICE VALIDATION SETTINGS
+# ============================================================================
+
+NEMOTRON_VALIDATION = {
+    "enable": False,
+    "endpoint": "http://localhost:8082/v1",
+    "port": 8082,
+    "model": "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4",
+    "prompt": (
+        "You will hear a voice sample. The spoken text is: \"{sample_text}\"\n\n"
+        "The intended voice description is: \"{description}\"\n\n"
+        "Analyze the voice and output JSON with these fields:\n"
+        "{{\n"
+        '  "gender_match": true/false,\n'
+        '  "age_match": true/false,\n'
+        '  "tone_match": true/false,\n'
+        '  "overall_match": true/false,\n'
+        '  "reasons": "brief explanation of any mismatches"\n'
+        "}}"
+    ),
+}
+
+# ============================================================================
 # VOICE GENDER CORRECTION SETTINGS
 # ============================================================================
 
@@ -111,6 +134,16 @@ if os.environ.get("VALIDATION_ENDPOINT"):
     VOICE_VALIDATION["endpoint"] = os.environ["VALIDATION_ENDPOINT"]
 if os.environ.get("VALIDATION_PORT"):
     VOICE_VALIDATION["port"] = int(os.environ["VALIDATION_PORT"])
+
+# Environment variable overrides for NEMOTRON VALIDATION settings
+if os.environ.get("ENABLE_NEMOTRON_VALIDATION"):
+    NEMOTRON_VALIDATION["enable"] = os.environ["ENABLE_NEMOTRON_VALIDATION"].lower() in ("true", "1", "yes")
+if os.environ.get("NEMOTRON_ENDPOINT"):
+    NEMOTRON_VALIDATION["endpoint"] = os.environ["NEMOTRON_ENDPOINT"]
+if os.environ.get("NEMOTRON_PORT"):
+    NEMOTRON_VALIDATION["port"] = int(os.environ["NEMOTRON_PORT"])
+if os.environ.get("NEMOTRON_MODEL"):
+    NEMOTRON_VALIDATION["model"] = os.environ["NEMOTRON_MODEL"]
 if os.environ.get("VALIDATION_MODEL"):
     VOICE_VALIDATION["model"] = os.environ["VALIDATION_MODEL"]
 if os.environ.get("VALIDATION_THRESHOLD"):

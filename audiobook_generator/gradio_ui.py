@@ -497,7 +497,8 @@ def generate_voice_samples(
             progress=progress,
             seed_characters=load_seed_characters(seed_voice_map),
             voice_engine=voice_engine,
-            validate=False
+            validate=False,
+            nemotron_endpoint=None,
         )
 
         log_output += f"\n{result_msg}"
@@ -557,7 +558,8 @@ def regenerate_voice_sample(
             verbose=False,
             progress=progress,
             voice_engine=voice_engine,
-            force_regenerate=True
+            force_regenerate=True,
+            nemotron_endpoint=None,
         )
 
         log_output += f"\n{result_msg}"

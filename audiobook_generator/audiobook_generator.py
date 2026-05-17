@@ -25,6 +25,7 @@ import json
 import re
 import glob
 import gc
+import shutil
 import traceback
 import threading
 import queue
@@ -528,10 +529,12 @@ def generate_audiobook_from_chapters(
         voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=tts_engine, duplicate_replacement_map=duplicate_replacement_map)
 
         for voice, path in voices_map.items():
-            # Handle both basenames and absolute paths (from resumed sessions with different temp dirs)
-            voice_basename = os.path.basename(path)
-            voice_path = os.path.join(output_dir, voice_basename)
-            # Cache voice path in VoiceMapper
+            # Use absolute path directly if file exists, otherwise try output_dir
+            if os.path.isabs(path) and os.path.exists(path):
+                voice_path = path
+            else:
+                voice_basename = os.path.basename(path)
+                voice_path = os.path.join(output_dir, voice_basename)
             voice_mapper.add_voice_path(voice, voice_path)
         short_text_postfix = DEFAULTS["short_text_postfix"]
 
@@ -550,7 +553,7 @@ def generate_audiobook_from_chapters(
             else:
                 whisper_devices = None
             whisper_pool = WhisperPool(
-                lambda dev: setup_validation_model(dev, cpu=whisper_cpu, fast=whisper_fast),
+                lambda dev=whisper_device: setup_validation_model(dev, cpu=whisper_cpu, fast=whisper_fast),
                 size=whisper_concurrency,
                 devices=whisper_devices,
             )
@@ -650,7 +653,11 @@ def generate_audiobook_from_chapters(
                         canonical_voice = duplicate_replacement_map[voice]
                     voice_path = None
                     if canonical_voice in voices_map:
-                        voice_path = os.path.join(output_dir, voices_map[canonical_voice])
+                        mapped_path = voices_map[canonical_voice]
+                        if os.path.isabs(mapped_path):
+                            voice_path = mapped_path
+                        else:
+                            voice_path = os.path.join(output_dir, mapped_path)
                         if not os.path.exists(voice_path):
                             voice_path = voice_mapper.get_voice_path(canonical_voice)
                     else:
@@ -1408,11 +1415,14 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 else:
                     resolved_seed_characters[char_name] = os.path.join(seed_voice_map_dir, voice_path)
             seed_characters = resolved_seed_characters
-            # Merge seed voices into state.voice_map so all characters (including narrator)
-            # get absolute paths from the archive instead of relative output-dir paths
+            # Merge seed voices into state.voice_map and copy files to output dir
+            # so VoiceMapper can find them with relative path lookup
             for char_name, voice_path in seed_characters.items():
-                if char_name not in state.voice_map:
-                    state.voice_map[char_name] = voice_path
+                state.voice_map[char_name] = voice_path
+                # Copy seed voice file to output dir if not already present
+                dst = os.path.join(output_dir, os.path.basename(voice_path))
+                if not os.path.exists(dst):
+                    shutil.copy2(voice_path, dst)
             if verbose:
                 print(f"[SEED] Loaded {len(seed_characters)} seeded characters from {seed_voice_map}")
         else:
@@ -1464,7 +1474,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
     # Check if speakers are already labeled (for resume mode)
     map_files = sorted(state.chapters_dir.glob("*.map.json"), key=natural_sort_key)
-    speakers_labeled = len(map_files) > 0
+    speakers_labeled = len(map_files) == num_chapters
 
     if resume and speakers_labeled:
         if verbose:
@@ -1554,7 +1564,10 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     # Stage 4: Generate Voice Samples with progress
     # Check for existing voice samples (resume mode)
     wav_files = list(state.chapters_dir.glob("*.wav"))
-    voice_samples_exist = len(wav_files) > 0
+    wav_stems = {f.stem.lower().replace(" ", "") for f in wav_files}
+    # All described characters must have voice files to skip Stage 4
+    char_stems = {c.lower().replace(" ", "") for c in state.character_descriptions}
+    voice_samples_exist = len(state.character_descriptions) > 0 and char_stems.issubset(wav_stems)
 
     if resume and voice_samples_exist:
         if verbose:

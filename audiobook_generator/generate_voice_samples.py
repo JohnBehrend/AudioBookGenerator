@@ -219,7 +219,9 @@ def generate_voice_samples(
             print("=" * 60 + "\n")
 
         # Create VoiceMapper once to cache the TTS model across all characters
-        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=voice_engine, engine=engine)
+        # Use tts_engine for voice generation (voice cloning), not voice_engine
+        gen_engine = tts_engine or voice_engine
+        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=gen_engine, engine=engine)
 
         try:
             for i, (char_name, char_desc) in enumerate(descriptions.items()):
@@ -251,26 +253,66 @@ def generate_voice_samples(
                     if voice_found:
                         continue
 
-                # Generate voice (pass shared voice_mapper to avoid repeated model loading)
-                success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
-                    character_name=char_name,
-                    description=char_desc,
-                    voice_mapper=voice_mapper,
-                    output_dir=output_dir,
-                    max_new_tokens=max_tokens,
-                    verbose=verbose,
-                    validate=False,
-                    validation_client=None
-                )
+                # Generate voice with retry until text matches and quality is acceptable
+                import random
+                max_attempts = 5
+                gen_success = False
+                for attempt in range(1, max_attempts + 1):
+                    if attempt > 1:
+                        if verbose:
+                            print(f"    Retry {attempt}/{max_attempts} for '{char_name}'...")
+                        random.seed(42 + attempt)
 
-                if success:
+                    success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
+                        character_name=char_name,
+                        description=char_desc,
+                        voice_mapper=voice_mapper,
+                        output_dir=output_dir,
+                        max_new_tokens=max_tokens,
+                        verbose=verbose,
+                        validate=False,
+                        validation_client=None
+                    )
+
+                    if not success:
+                        continue
+
+                    # Verify the generated voice speaks the correct text with acceptable quality
+                    from ..utils import transcribe_audio_with_whisper
+                    from ..audiobook_generator import setup_validation_model
+                    try:
+                        vm = setup_validation_model('cpu', cpu=True, fast=True)
+                        transcribed, _, _ = transcribe_audio_with_whisper(vm, output_file)
+                        expected = DEFAULTS["static_voice_text"].lower()
+                        # Check if key phrases from expected text are in transcription
+                        key_phrases = ["after all these years", "bask", "warm glow", "future"]
+                        matches = sum(1 for p in key_phrases if p in transcribed.lower())
+                        # Check quality: duration should be ~10-12s for static_voice_text
+                        # and transcription should have reasonable word count
+                        word_count = len(transcribed.split())
+                        quality_ok = 9.0 <= duration <= 15.0 and word_count >= 10
+                        if matches >= 3 and quality_ok:
+                            gen_success = True
+                            if verbose:
+                                print(f"    Text verified, quality ok on attempt {attempt} ({duration:.1f}s, {word_count} words)")
+                            break
+                        else:
+                            if verbose:
+                                print(f"    Attempt {attempt}: text_match={matches}/4, quality={'ok' if quality_ok else 'poor'} ({duration:.1f}s, {word_count} words): {transcribed[:80]}...")
+                    except Exception as e:
+                        if verbose:
+                            print(f"    Verification failed ({e}), accepting anyway")
+                        gen_success = True
+                        break
+
+                if gen_success:
                     generated[char_name] = output_file
                     if verbose:
                         print(f"    Generated: {output_file}")
                 else:
                     failed.append(char_name)
                     if verbose:
-                        print(f"    Failed to generate voice")
+                        print(f"    Failed to generate voice after {max_attempts} attempts")
 
             # Clean up TTS models after all characters are processed
             voice_mapper.cleanup_tts_models()

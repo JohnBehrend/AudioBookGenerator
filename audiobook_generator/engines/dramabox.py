@@ -103,18 +103,26 @@ class DramaboxEngine(TTSEngine):
                     output_file = str(out_dir / f"{character_name}.wav")
 
                     try:
-                        server.generate_to_file(
-                            prompt=full_prompt,
-                            output=output_file,
-                            cfg_scale=2.5,
-                            stg_scale=1.5,
-                            duration_multiplier=1.1,
-                            seed=42,
-                            watermark=False,
-                        )
-                        audio, sr = sf.read(output_file)
-                        duration = len(audio) / sr
-                        response_queue.put({"id": req_id, "success": True, "output_file": output_file, "duration": duration})
+                        import concurrent.futures
+                        def generate():
+                            server.generate_to_file(
+                                prompt=full_prompt,
+                                output=output_file,
+                                cfg_scale=2.5,
+                                stg_scale=1.5,
+                                duration_multiplier=1.1,
+                                seed=42,
+                                watermark=False,
+                            )
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(generate)
+                            try:
+                                future.result(timeout=120)
+                                audio, sr = sf.read(output_file)
+                                duration = len(audio) / sr
+                                response_queue.put({"id": req_id, "success": True, "output_file": output_file, "duration": duration})
+                            except concurrent.futures.TimeoutError:
+                                response_queue.put({"id": req_id, "success": False})
                     except Exception:
                         response_queue.put({"id": req_id, "success": False})
 
@@ -198,8 +206,48 @@ class DramaboxEngine(TTSEngine):
 
 
 def _convert_description_to_prompt(description: str) -> str:
-    """Convert a character description into a Dramabox-style prompt."""
-    prompt = description.strip()
-    if not prompt.endswith("."):
-        prompt = prompt + "."
+    """Convert a character description into a Dramabox-style prompt.
+
+    Dramabox expects rich, descriptive prose like:
+      'A regal woman speaks with cold fury in a measured, low voice.'
+      'A deep-voiced villain speaks with theatrical menace.'
+
+    Our descriptions are in format:
+      'Male, middle-aged, deep weathered baritone, military and aristocratic, steady and refined with quiet authority'
+
+    The prompt must be explicit about gender and age, as Dramabox picks the voice
+    from the description alone when no voice_ref is provided.
+    """
+    parts = [p.strip() for p in description.split(",")]
+    if len(parts) < 3:
+        # Fallback: use as-is
+        prompt = description.strip()
+        if not prompt.endswith("."):
+            prompt = prompt + "."
+        return prompt
+
+    gender = parts[0].strip().lower()
+    age = parts[1].strip().lower()
+    voice_desc = ", ".join(p.strip() for p in parts[2:]) if len(parts) > 2 else "clear voice"
+
+    # Map gender to explicit noun
+    if gender in ("male", "man"):
+        person = "man"
+    elif gender in ("female", "woman"):
+        person = "woman"
+    else:
+        person = "person"
+
+    # Dramabox examples use pattern: "A [age] [gender] speaks with [character traits] in a [voice quality] voice"
+    # Split voice_desc: first part is voice quality, rest is character traits
+    voice_parts = [v.strip() for v in voice_desc.split(",")]
+    if len(voice_parts) >= 2:
+        voice_quality = voice_parts[0]
+        character = ", ".join(voice_parts[1:])
+        # Avoid double "voice" if voice_quality already ends with "voice"
+        voice_suffix = "" if voice_quality.endswith("voice") else " voice"
+        prompt = f"A {age} {person} speaks with a {voice_quality}{voice_suffix}, {character}"
+    else:
+        voice_suffix = "" if voice_desc.endswith("voice") else " voice"
+        prompt = f"A {age} {person} speaks with a {voice_desc}{voice_suffix}"
     return prompt

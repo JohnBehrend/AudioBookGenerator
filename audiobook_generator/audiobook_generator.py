@@ -663,7 +663,8 @@ def generate_audiobook_from_chapters(
                     else:
                         voice_path = voice_mapper.get_voice_path(canonical_voice)
                     if voice_path is None:
-                        raise Exception(f"No voice path found for '{voice}' (canonical: '{canonical_voice}')")
+                        print(f"  [WARN] Skipping line for '{voice}' — no voice file available")
+                        continue
 
                     work_items.append({
                         "chapter_idx": i,
@@ -1536,7 +1537,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         if verbose:
             print(f"[STAGE 3] Describing {len(state.characters)} characters...")
 
-        with ProgressHandler(progress=None, use_tqdm=True, total=1, desc="Describing characters") as handler:
+        num_chars = len(state.characters)
+        with ProgressHandler(progress=None, use_tqdm=True, total=num_chars, desc="Describing characters") as handler:
             result_msg, character_descriptions = describe_characters(
                 output_dir=str(state.output_dir),
                 chapters_dir=str(state.output_dir),
@@ -1549,7 +1551,6 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             if verbose:
                 print(f"  {result_msg}")
 
-            handler.update(1, desc="Character descriptions complete")
             state.load_character_descriptions()
 
             # Save metadata to track which voice engine was used
@@ -1939,7 +1940,7 @@ def main():
         from .llm_label_speakers import label_speakers
         from .llm_describe_character import describe_characters as describe_chars
         from .generate_voice_samples import generate_voice_samples as gen_voice_samples
-        from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
+        from .config import DEFAULTS, LLM_SETTINGS
         from .utils import (
             get_chapters_dir, get_temp_dir, cleanup_temp_dir,
             natural_sort_key, get_character_wav_file, load_seed_characters,
@@ -1980,7 +1981,7 @@ def main():
                 whisper_fast=args.whisper_fast,
                 nemotron_endpoint=args.nemotron_endpoint,
             )
-            print(result_msg)
+            print(result)
         else:
             # Stage 1: Parse EPUB
             print(f"=== Stage 1: Parsing EPUB {args.epub_file} ===")
@@ -2013,7 +2014,6 @@ def main():
                     verbose=args.verbose,
                     seed_characters=load_seed_characters(args.seed_voice_map),
                 )
-                print(result_msg)
                 if char_map:
                     all_characters.update(char_map.values())
 

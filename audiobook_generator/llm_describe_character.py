@@ -97,47 +97,37 @@ BAD Examples (do NOT use):
 - (male, old) (only basic ingredient, missing texture and vividness)
 """
 
-# Dramabox format prompt - verbose, detailed descriptions for maximum voice diversity
-CHARACTER_DESCRIPTION_PROMPT_DRAMABOX = """You are an expert voice director casting actors for an audiobook. Create detailed, vivid voice descriptions that will produce distinct, diverse voices for each character.
+# Dramabox format prompt - concise, direct descriptions with gender first
+CHARACTER_DESCRIPTION_PROMPT_DRAMABOX = """You are a voice director creating voice profiles for an AI voice generator. Output MUST be valid JSON.
 
-CRITICAL: Each character MUST have a unique, specific voice description. Avoid generic terms.
+CRITICAL RULES:
+- Output ONLY a JSON object with three keys: "gender", "age", "voice"
+- "gender" MUST be exactly "male" or "female"
+- "age" MUST be exactly one of: "young", "middle-aged", "old"
+- "voice" is a short description (10-20 words) with voice quality and TWO distinctive traits
+- Every character must sound distinct — avoid generic descriptions
+- Use specific voice qualities: raspy, nasal, gravelly, reedy, booming, whispery, hoarse, metallic, breathy, guttural, squeaky, muffled, cracked, slurred, monotone, sing-song, lisping, stuttering, wheezy, croaky, throaty, thin, smoky, silken, oily, rough, smooth, jagged, soft, harsh, warm, cold, boyish, girlish, childlike, mature, weathered, refined, crude, educated, uneducated, foreign, local, aristocratic, working-class, military, scholarly, streetwise, rural, urban
 
-YOUR DESCRIPTIONS SHOULD INCLUDE:
-
-1. GENDER AND AGE - Be specific: "elderly woman in her 70s", "young man in his early 20s", "middle-aged gentleman around 50"
-
-2. VOICE QUALITY - Use rich, specific adjectives:
-   - Texture: gravelly, silky, raspy, smooth, rough, warm, cool, husky, reedy, nasal, resonant
-   - Pitch: deep, low, high-pitched, mid-range, baritone, contralto, tenor, alto
-   - Timbre: bright, dark, mellow, sharp, muffled, clear, rich, thin
-
-3. SPEECH PATTERNS - How they talk:
-   - Pace: deliberate, rapid, measured, leisurely, rushed, unhurried
-   - Rhythm: staccato, flowing, sing-song, monotone, varied cadence
-   - Volume: soft-spoken, loud, commanding, whispered, moderate
-
-4. EMOTIONAL QUALITY - Their emotional tone:
-   - Warm and inviting, cold and distant, cheerful, melancholic, authoritative, gentle, sarcastic, earnest, weary, energetic
-
-5. ACCENT OR REGIONAL FLAVOR - If applicable:
-   - British upper class, Scottish brogue, Southern American, New York, rural, urban, posh, working class
-
-6. COMPARISONS - Help anchor the voice:
-   - "sounds like a seasoned theater actor", "like a radio DJ from the 1940s", "like a strict schoolteacher"
-
-FORMAT: Write 2-4 sentences of rich description. Be vivid and specific.
+FORMAT:
+{{"gender": "male", "age": "young", "voice": "thin reedy voice, squeaky and nervous"}}
 
 Good Examples:
-- An elderly gentleman in his 70s with a deep, gravelly baritone voice that carries the weight of authority. His speech is slow and deliberate, with a refined British upper-class accent. There's a warm, paternal quality to his tone, like a wise grandfather telling stories by the fireplace.
-
-- A bright, energetic young woman in her early 20s with a clear, slightly high-pitched voice full of spirit and intelligence. She speaks at a brisk pace with animated inflections, her words tumbling out with enthusiasm. Her tone is witty and slightly mischievous, like someone who's always a step ahead of everyone else.
-
-- A middle-aged woman with a rich, warm contralto voice that's both commanding and nurturing. Her speech is measured and articulate, with a gentle Southern lilt that softens her words. There's an underlying tension in her delivery, as if she's constantly balancing between excitement and anxiety.
+- {{"gender": "male", "age": "middle-aged", "voice": "deep gravelly baritone, coldly arrogant with a metallic edge"}}
+- {{"gender": "female", "age": "young", "voice": "bright clear soprano, breathy and sing-song"}}
+- {{"gender": "male", "age": "old", "voice": "rough raspy low voice, wheezy and guttural"}}
+- {{"gender": "female", "age": "middle-aged", "voice": "warm husky alto, nasal and monotone"}}
+- {{"gender": "male", "age": "young", "voice": "smooth mid-range tenor, lisping and oily"}}
+- {{"gender": "female", "age": "old", "voice": "sharp nasal voice, harsh and croaky"}}
+- {{"gender": "male", "age": "young", "voice": "thin reedy voice, squeaky and nervous"}}
+- {{"gender": "male", "age": "old", "voice": "booming bass, slurred and smoky"}}
+- {{"gender": "female", "age": "middle-aged", "voice": "silken alto, whispery and refined"}}
+- {{"gender": "male", "age": "middle-aged", "voice": "cracked baritone, jagged and streetwise"}}
 
 BAD Examples (do NOT use):
-- A male voice. (too vague)
-- female, middle-aged, moderate pitch (too brief, no personality)
-- A nice voice. (no useful detail)
+- {{"gender": "male", "age": "30s", "voice": "deep baritone"}} (age must be young/middle-aged/old)
+- {{"gender": "male", "age": "late teens", "voice": "deep baritone"}} (age must be young/middle-aged/old)
+- "Male, middle-aged, deep baritone" (must be JSON, not text)
+- {{"gender": "male", "age": "young", "voice": "deep baritone, commanding"}} (too generic)
 """
 
 
@@ -429,7 +419,38 @@ def _get_description_prompt(voice_engine: Optional[str]) -> str:
     return CHARACTER_DESCRIPTION_PROMPT_OMNI
 
 
-def describe_character(client: OpenAI, model: str, character: str, context: str, chapter_messages: Optional[List[str]] = None, voice_engine: Optional[str] = None) -> str:
+def _parse_dramabox_description(raw: str) -> Optional[Dict[str, str]]:
+    """Parse and validate a Dramabox JSON description.
+
+    Returns dict with keys 'gender', 'age', 'voice' or None if invalid.
+    """
+    try:
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text
+            if text.endswith("```"):
+                text = text[:-3]
+        obj = json.loads(text)
+        gender = obj.get("gender", "").lower()
+        age = obj.get("age", "").lower()
+        voice = obj.get("voice", "").strip()
+        if gender not in ("male", "female"):
+            return None
+        if age not in ("young", "middle-aged", "old"):
+            return None
+        if not voice:
+            return None
+        return {"gender": gender, "age": age, "voice": voice}
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+
+def _dramabox_description_to_prompt(parsed: Dict[str, str]) -> str:
+    """Convert parsed JSON description to Dramabox voice prompt string."""
+    return f"{parsed['gender'].capitalize()}, {parsed['age']}, {parsed['voice']}"
+
+
+def describe_character(client: OpenAI, model: str, character: str, context: str, chapter_messages: Optional[List[str]] = None, voice_engine: Optional[str] = None, max_retries: int = 3) -> str:
     """Ask the LLM to describe a single character.
 
     Args:
@@ -439,6 +460,7 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
         context: Character description context string
         chapter_messages: Optional list of chapter-based dialogue messages
         voice_engine: TTS engine for voice generation ('omni', 'vox', etc.) - determines prompt format
+        max_retries: Max retries for Dramabox JSON validation
     """
     system_prompt = _get_description_prompt(voice_engine)
 
@@ -455,14 +477,27 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
     # Final user message with the character to describe and summary context
     messages.append({"role": "user", "content": f"Describe this character in detail: {character} \n\nContext:\n{context}"})
 
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Error describing character: {e}"
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages
+            )
+            raw = response.choices[0].message.content
+            # Validate Dramabox JSON format
+            if voice_engine == "dramabox":
+                parsed = _parse_dramabox_description(raw)
+                if parsed:
+                    return _dramabox_description_to_prompt(parsed)
+                # Retry with feedback
+                messages.append({"role": "assistant", "content": raw})
+                messages.append({"role": "user", "content": "Invalid output. Gender must be 'male' or 'female', age must be 'young', 'middle-aged', or 'old'. Return valid JSON."})
+                continue
+            return raw
+        except Exception as e:
+            if attempt == max_retries - 1:
+                return f"Error describing character: {e}"
+    return f"Error: Failed to generate valid description for {character} after {max_retries} attempts"
 
 
 def describe_all_characters(client: OpenAI, model: str, characters: List[str], context: str, voice_engine: Optional[str] = None) -> Dict[str, str]:

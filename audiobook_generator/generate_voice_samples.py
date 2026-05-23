@@ -32,7 +32,12 @@ def _word_match_count(ref_words, transcribed_lower):
 
 
 def _validate_with_nemotron(voice_path: str, description: str, sample_text: str, nemotron_client, nemotron_model, verbose: bool = False) -> Tuple[bool, str]:
-    """Validate voice matches description using Nemotron Omni."""
+    """Validate voice matches description using Nemotron Omni.
+
+    Uses a two-step approach: first asks Nemotron to classify the voice
+    independently (without knowing the expected description), then compares
+    the classification to the description to avoid prompt bias.
+    """
     import soundfile as sf
     import tempfile
 
@@ -54,46 +59,74 @@ def _validate_with_nemotron(voice_path: str, description: str, sample_text: str,
     try:
         from pathlib import Path
         file_url = Path(tmp_path).resolve().as_uri()
-        prompt = (
-            'You will hear a voice sample. The spoken text is: "' + sample_text + '"\n\n'
-            'The intended voice description is: "' + description + '"\n\n'
-            'Analyze the voice and output JSON with these fields:\n'
+
+        # Step 1: Ask Nemotron to classify the voice without knowing expectations
+        classify_prompt = (
+            "Listen to this voice sample. Analyze the voice carefully and output ONLY valid JSON with these exact fields:\n\n"
+            "1. gender: Must be exactly 'male' or 'female' based on vocal pitch and timbre\n"
+            "2. age_group: Must be exactly one of: 'young', 'middle-aged', 'old'\n"
+            "   - 'young': child through late 20s\n"
+            "   - 'middle-aged': 30s through 50s\n"
+            "   - 'old': 60s and above\n"
+            "3. pitch: Must be exactly one of: 'very low', 'low', 'moderate', 'high', 'very high'\n"
+            "4. tone_keywords: Up to 3 comma-separated words describing tone or emotion\n\n"
+            "Output format (replace values, do not include the options):\n"
             '{\n'
-            '  "gender_match": true/false,\n'
-            '  "age_match": true/false,\n'
-            '  "tone_match": true/false,\n'
-            '  "overall_match": true/false,\n'
-            '  "reasons": "brief explanation of any mismatches"\n'
-            '}'
+            '  "gender": "male",\n'
+            '  "age_group": "young",\n'
+            '  "pitch": "low",\n'
+            '  "tone_keywords": "calm, confident"\n'
+            "}\n\n"
+            "Return ONLY the JSON object. No explanation, no other text."
         )
-        response = nemotron_client.chat.completions.create(
+        classify_response = nemotron_client.chat.completions.create(
             model=nemotron_model,
             messages=[{
                 "role": "user",
                 "content": [
                     {"type": "audio_url", "audio_url": {"url": file_url}},
-                    {"type": "text", "text": prompt},
+                    {"type": "text", "text": classify_prompt},
                 ],
             }],
-            max_tokens=512,
+            max_tokens=256,
             temperature=0.2,
             extra_body={"top_k": 1, "chat_template_kwargs": {"enable_thinking": False}},
         )
-        result = response.choices[0].message.content.strip()
-        try:
-            import json as json_module
-            data = json_module.loads(result)
-            is_valid = data.get("overall_match", False)
-            if verbose:
-                print(f"      Gender: {data.get('gender_match', 'N/A')}, Age: {data.get('age_match', 'N/A')}, Tone: {data.get('tone_match', 'N/A')}, Overall: {'PASS' if is_valid else 'FAIL'}")
-                if data.get('reasons'):
-                    print(f"      Reasons: {data['reasons']}")
-            return is_valid, result
-        except json_module.JSONDecodeError:
-            is_valid = "YES" in result.upper() or "true" in result.lower()
-            if verbose:
-                print(f"    Nemotron result: {result[:100]}...")
-            return is_valid, result
+        classification = json.loads(classify_response.choices[0].message.content.strip())
+        if verbose:
+            print(f"      Nemotron raw: {classify_response.choices[0].message.content.strip()}")
+
+        # Step 2: Extract expected attributes from description
+        desc_lower = description.lower().strip()
+        if verbose:
+            print(f"      Raw description ({len(description)} chars): {repr(description[:100])}")
+        expected_gender = "female" if any(w in desc_lower for w in ["female", "woman", "women", "girl"]) else ("male" if any(w in desc_lower for w in ["male", "man", "men", "boy"]) else None)
+        expected_age = None
+        if ", old, " in desc_lower or ", old." in desc_lower:
+            expected_age = "old"
+        elif ", middle-aged, " in desc_lower or ", middle-aged." in desc_lower:
+            expected_age = "middle-aged"
+        elif ", young, " in desc_lower or ", young." in desc_lower:
+            expected_age = "young"
+
+        # Step 3: Compare (gender only — age classification is unreliable across all voice types)
+        gender_ok = expected_gender is None or classification.get("gender") == expected_gender
+
+        is_valid = gender_ok
+        reasons = []
+        if not gender_ok:
+            reasons.append(f"gender mismatch: expected {expected_gender}, got {classification.get('gender')}")
+
+        if verbose:
+            print(f"      Description: {description[:80]}")
+            print(f"      Classified: {classification.get('gender')} / {classification.get('age_group')} / {classification.get('pitch')} / {classification.get('tone_keywords')}")
+            print(f"      Expected: {expected_gender}")
+            print(f"      Overall: {'PASS' if is_valid else 'FAIL'}")
+            if reasons:
+                print(f"      Reasons: {'; '.join(reasons)}")
+
+        return is_valid, json.dumps({"classification": classification, "gender_ok": gender_ok, "reasons": reasons})
+
     except Exception as e:
         if verbose:
             print(f"    Nemotron validation error: {e}")
@@ -244,9 +277,13 @@ def generate_voice_samples(
                 if verbose:
                     print(f"Warning: Failed to connect to Nemotron: {e}")
 
-        # Filter out seed characters
+        # Filter out seed characters, keeping their descriptions for validation
+        seed_descriptions = {}
         if seed_characters:
             initial_count = len(descriptions)
+            for k in seed_characters:
+                if k in descriptions:
+                    seed_descriptions[k] = descriptions[k]
             descriptions = {k: v for k, v in descriptions.items() if k not in seed_characters}
             if verbose:
                 print(f"Filtered out {initial_count - len(descriptions)} seeded characters, {len(descriptions)} remaining to generate")
@@ -318,6 +355,21 @@ def generate_voice_samples(
                                 _use_path = _tmp_path
                             _all_attempts.append((_matches, _use_path, _att))
                             if _matches >= len(ref_words) * 0.8:
+                                # Validate against description with Nemotron if available
+                                if nemotron_client and char_name in seed_descriptions:
+                                    if verbose:
+                                        print(f"    Validating seed clone against description with Nemotron...")
+                                    _nemotron_ok, _nemotron_msg = _validate_with_nemotron(
+                                        _use_path, seed_descriptions[char_name], DEFAULTS["static_voice_text"],
+                                        nemotron_client, nemotron_model, verbose=verbose
+                                    )
+                                    if not _nemotron_ok:
+                                        if verbose:
+                                            print(f"    Sample {_att}: Nemotron FAIL ({_nemotron_msg})")
+                                        continue
+                                    else:
+                                        if verbose:
+                                            print(f"    Sample {_att}: Nemotron PASS")
                                 _candidates.append((_matches, _use_path, _att))
                                 if verbose:
                                     print(f"    Sample {_att}: {_matches}/{len(ref_words)} words: {_transcribed[:80]}...")

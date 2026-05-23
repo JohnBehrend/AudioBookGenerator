@@ -423,9 +423,13 @@ def generate_voice_samples(
                                             verbose=False,
                                             ref_text="",
                                         )
-                                    except Exception:
+                                    except Exception as e:
+                                        if verbose:
+                                            print(f"    Sample {_fallback_att}: generation failed ({e})")
                                         continue
                                     if not os.path.exists(_tmp_path):
+                                        if verbose:
+                                            print(f"    Sample {_fallback_att}: no output file")
                                         continue
                                     _fallback_temp_files.append(_tmp_path)
                                     try:
@@ -441,8 +445,10 @@ def generate_voice_samples(
                                         _fallback_candidates.append((_matches, _use_path, _fallback_att))
                                         _all_best_attempts.append((_matches, _use_path, _fallback_att))
                                         if verbose:
-                                            print(f"    Sample {_fallback_att}: {_matches}/{len(ref_words)} words")
-                                    except Exception:
+                                            print(f"    Sample {_fallback_att}: {_matches}/{len(ref_words)} words: {_transcribed[:80]}...")
+                                    except Exception as e:
+                                        if verbose:
+                                            print(f"    Sample {_fallback_att}: processing failed ({e})")
                                         pass
                                 # Unload fallback engine to free GPU memory
                                 _fallback_mapper.cleanup_engines()

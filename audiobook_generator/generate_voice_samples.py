@@ -390,6 +390,7 @@ def generate_voice_samples(
                         # All attempts failed with primary engine, try fallback engines
                         _clone_success = False
                         _all_best_attempts = list(_all_attempts)  # Keep primary engine attempts
+                        _fallback_temp_files = []
                         if seed_clone_fallback_engines:
                             for _fallback_engine_name in seed_clone_fallback_engines:
                                 if _clone_success:
@@ -423,6 +424,7 @@ def generate_voice_samples(
                                         continue
                                     if not os.path.exists(_tmp_path):
                                         continue
+                                    _fallback_temp_files.append(_tmp_path)
                                     try:
                                         _transcribed, _starts, _ends = transcribe_audio_with_whisper(vm, _tmp_path)
                                         _transcribed_words = _transcribed.split()
@@ -430,6 +432,7 @@ def generate_voice_samples(
                                         _cropped_path = _tmp_path + ".cropped.wav"
                                         if crop_to_ref_text(_tmp_path, _cropped_path, ref_words, _transcribed_words, _starts, _ends, verbose=False):
                                             _use_path = _cropped_path
+                                            _fallback_temp_files.append(_cropped_path)
                                         else:
                                             _use_path = _tmp_path
                                         _fallback_candidates.append((_matches, _use_path, _fallback_att))
@@ -438,6 +441,8 @@ def generate_voice_samples(
                                             print(f"    Sample {_fallback_att}: {_matches}/{len(ref_words)} words")
                                     except Exception:
                                         pass
+                                # Unload fallback engine to free GPU memory
+                                _fallback_mapper.cleanup_engines()
                                 if _fallback_candidates:
                                     _fallback_candidates.sort(key=lambda x: x[0], reverse=True)
                                     _best_score, _best_path, _best_att = _fallback_candidates[0]
@@ -446,12 +451,12 @@ def generate_voice_samples(
                                     if verbose:
                                         print(f"  Cloned via {_fallback_engine_name} (best: sample {_best_att}, {_best_score}/{len(ref_words)} words)")
                                     # Clean up fallback temp files
-                                    for _ffa in range(1, _fallback_att + 1):
-                                        for _ext in [f".seed{_att + _ffa}.tmp.wav", f".seed{_att + _ffa}.tmp.wav.cropped.wav"]:
-                                            try:
-                                                os.remove(dest_path + _ext)
-                                            except OSError:
-                                                pass
+                                    for _ft in _fallback_temp_files:
+                                        try:
+                                            os.remove(_ft)
+                                        except OSError:
+                                            pass
+                                    _fallback_temp_files = []
                         if not _clone_success:
                             # All engines failed, accept the best sample from any attempt
                             # The cloned voice will speak whatever text the engine produced,
@@ -462,6 +467,13 @@ def generate_voice_samples(
                                 shutil.copy2(_best_path, dest_path)
                                 if verbose:
                                     print(f"  Cloned {voice_path} -> {dest_path} (best: sample {_best_att}, {_best_score}/{len(ref_words)} words — below threshold but accepted)")
+                                # Clean up all fallback temp files except winner
+                                for _ft in _fallback_temp_files:
+                                    if _ft != _best_path:
+                                        try:
+                                            os.remove(_ft)
+                                        except OSError:
+                                            pass
                             else:
                                 # Truly no samples at all, fall back to Dramabox
                                 if os.path.exists(dest_path):

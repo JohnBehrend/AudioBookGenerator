@@ -404,8 +404,7 @@ def generate_voice_samples(
                                     _fallback_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=_fallback_engine_name)
                                     _fallback_obj = _fallback_mapper.get_engine()
                                 except Exception as e:
-                                    if verbose:
-                                        print(f"    Could not load {_fallback_engine_name}: {e}")
+                                    print(f"    Could not load {_fallback_engine_name}: {e}")
                                     continue
                                 _fallback_candidates = []
                                 _fallback_att = 0

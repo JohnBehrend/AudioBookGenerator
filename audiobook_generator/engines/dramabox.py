@@ -177,6 +177,7 @@ class DramaboxEngine(TTSEngine):
             character_name=character_name,
             description=description,
             output_dir=str(output_dir),
+            device=device,
         )
         self._clear_cuda_cache()
         success = resp.get("success", False)
@@ -198,6 +199,7 @@ class DramaboxEngine(TTSEngine):
             text=text,
             voice_path=voice_path,
             output_path=output_path,
+            device=device,
             cfg_scale=2.5,
             stg_scale=1.5,
         )

@@ -784,36 +784,37 @@ def crop_to_ref_text(audio_path: str, output_path: str, ref_words: List[str], tr
     except Exception:
         return False
 
-    # Find the longest contiguous span of reference words (no gaps allowed)
+    # Find the longest span of reference words, allowing 1 non-matching word gap
     ref_set = set(ref_words)
     best_start = 0
     best_end = 0
     best_len = 0
+    max_gap = 1
 
-    i = 0
-    while i < len(transcribed_words):
-        if transcribed_words[i] in ref_set:
-            run_start = i
-            run_len = 0
-            for j in range(i, len(transcribed_words)):
-                if transcribed_words[j] in ref_set:
-                    run_len += 1
-                else:
+    for i in range(len(transcribed_words)):
+        gap = 0
+        match_count = 0
+        for j in range(i, len(transcribed_words)):
+            if transcribed_words[j] in ref_set:
+                match_count += 1
+                gap = 0
+            else:
+                gap += 1
+                if gap > max_gap:
                     break
-            if run_len > best_len:
-                best_len = run_len
-                best_start = run_start
-                best_end = run_start + run_len
-            i += run_len
-        else:
-            i += 1
+        if match_count > best_len:
+            best_len = match_count
+            best_start = i
+            best_end = j + 1
 
     if best_len < 3:
         return False
 
-    # Crop to the time range of the matched words
-    crop_start_ms = int(start_times[best_start] * 1000)
-    crop_end_ms = int(end_times[best_end - 1] * 1000)
+    # Crop to the time range of the matched words, with a 1s buffer on each side
+    # to capture more voice context for better cloning quality
+    buffer_ms = 1000
+    crop_start_ms = max(0, int(start_times[best_start] * 1000) - buffer_ms)
+    crop_end_ms = min(len(seg), int(end_times[best_end - 1] * 1000) + buffer_ms)
     cropped = seg[crop_start_ms:crop_end_ms]
     cropped.export(output_path, format="wav")
     return True

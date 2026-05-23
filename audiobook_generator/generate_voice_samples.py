@@ -324,7 +324,7 @@ def generate_voice_samples(
                 try:
                     _transcribed, _, _ = transcribe_audio_with_whisper(vm, voice_path)
                     _matches = _word_match_count(ref_words, _transcribed.lower())
-                    if _matches >= len(ref_words) - 1:
+                    if _matches >= len(ref_words) * 0.8:
                         shutil.copy2(voice_path, dest_path)
                         if verbose:
                             print(f"  Copied {voice_path} -> {dest_path} (already correct text)")

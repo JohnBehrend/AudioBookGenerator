@@ -389,6 +389,7 @@ def generate_voice_samples(
                     else:
                         # All attempts failed with primary engine, try fallback engines
                         _clone_success = False
+                        _all_best_attempts = list(_all_attempts)  # Keep primary engine attempts
                         if seed_clone_fallback_engines:
                             for _fallback_engine_name in seed_clone_fallback_engines:
                                 if _clone_success:
@@ -431,10 +432,10 @@ def generate_voice_samples(
                                             _use_path = _cropped_path
                                         else:
                                             _use_path = _tmp_path
-                                        if _matches >= len(ref_words) * 0.8:
-                                            _fallback_candidates.append((_matches, _use_path, _fallback_att))
-                                            if verbose:
-                                                print(f"    Sample {_fallback_att}: {_matches}/{len(ref_words)} words")
+                                        _fallback_candidates.append((_matches, _use_path, _fallback_att))
+                                        _all_best_attempts.append((_matches, _use_path, _fallback_att))
+                                        if verbose:
+                                            print(f"    Sample {_fallback_att}: {_matches}/{len(ref_words)} words")
                                     except Exception:
                                         pass
                                 if _fallback_candidates:
@@ -452,12 +453,22 @@ def generate_voice_samples(
                                             except OSError:
                                                 pass
                         if not _clone_success:
-                            # All engines failed, fall back to Dramabox
-                            if os.path.exists(dest_path):
-                                os.remove(dest_path)
-                            descriptions[char_name] = f"Seed voice clone failed after {_max_attempts} attempts. Generate from description."
-                            if verbose:
-                                print(f"  Failed to clone {char_name}, will generate from description instead")
+                            # All engines failed, accept the best sample from any attempt
+                            # The cloned voice will speak whatever text the engine produced,
+                            # which is fine — ref_text will be set via Whisper during TTS
+                            if _all_best_attempts:
+                                _all_best_attempts.sort(key=lambda x: x[0], reverse=True)
+                                _best_score, _best_path, _best_att = _all_best_attempts[0]
+                                shutil.copy2(_best_path, dest_path)
+                                if verbose:
+                                    print(f"  Cloned {voice_path} -> {dest_path} (best: sample {_best_att}, {_best_score}/{len(ref_words)} words — below threshold but accepted)")
+                            else:
+                                # Truly no samples at all, fall back to Dramabox
+                                if os.path.exists(dest_path):
+                                    os.remove(dest_path)
+                                descriptions[char_name] = f"Seed voice clone failed after {_max_attempts} attempts. Generate from description."
+                                if verbose:
+                                    print(f"  Failed to clone {char_name}, will generate from description instead")
                     # Clean up all temp files after copying
                     for _fa in range(1, _att + 1):
                         _fp = dest_path + f".seed{_fa}.tmp.wav"

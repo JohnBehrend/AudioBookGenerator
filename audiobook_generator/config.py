@@ -164,8 +164,8 @@ DEFAULTS = {
     "cfg_scale": 1.30,
     "short_text_postfix": "and also with you?",
     "short_text_prefix_pause_ms": 500,
-    # Static text for voice generation - 10 seconds, high emotional range
-    "static_voice_text": "I cannot believe it! After all these years, it's finally here for us to bask in the warm glow of the future.",
+    # Static text for voice generation - ~20 seconds, phonetic diversity for cloning
+    "static_voice_text": "I cannot believe it! After all these years, it's finally here for us. The journey has been long and difficult, but we've learned to trust each other through every challenge. Now we stand together, ready to face whatever comes next.",
     "validation_model_name": "large-v2",
     "validation_model_name_fast": "medium",
     "min_silence_len": 1250,

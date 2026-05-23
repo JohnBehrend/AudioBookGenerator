@@ -784,28 +784,29 @@ def crop_to_ref_text(audio_path: str, output_path: str, ref_words: List[str], tr
     except Exception:
         return False
 
-    # Find the span covering the most reference words, allowing small gaps
+    # Find the longest contiguous span of reference words (no gaps allowed)
     ref_set = set(ref_words)
     best_start = 0
     best_end = 0
     best_len = 0
-    max_gap = 2  # allow up to 2 non-matching words between matches
 
-    for i in range(len(transcribed_words)):
-        gap = 0
-        match_count = 0
-        for j in range(i, len(transcribed_words)):
-            if transcribed_words[j] in ref_set:
-                match_count += 1
-                gap = 0
-            else:
-                gap += 1
-                if gap > max_gap:
+    i = 0
+    while i < len(transcribed_words):
+        if transcribed_words[i] in ref_set:
+            run_start = i
+            run_len = 0
+            for j in range(i, len(transcribed_words)):
+                if transcribed_words[j] in ref_set:
+                    run_len += 1
+                else:
                     break
-        if match_count > best_len:
-            best_len = match_count
-            best_start = i
-            best_end = j + 1
+            if run_len > best_len:
+                best_len = run_len
+                best_start = run_start
+                best_end = run_start + run_len
+            i += run_len
+        else:
+            i += 1
 
     if best_len < 3:
         return False

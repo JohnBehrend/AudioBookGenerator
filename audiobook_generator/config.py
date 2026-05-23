@@ -164,10 +164,10 @@ DEFAULTS = {
     "cfg_scale": 1.30,
     "short_text_postfix": "and also with you?",
     "short_text_prefix_pause_ms": 500,
-    # Static text for voice generation - ~12 seconds, phonetic diversity for cloning
-    # First sentence is a throwaway prefix — TTS engines often clip the beginning.
-    # Whisper validation ignores it, so only the second sentence counts.
-    "static_voice_text": "Hello there. Good morning everyone. After all these years, it's finally here for us. The journey has been long, but we're going to make this work, no matter what!",
+    # Static text for voice generation - ~20 seconds, phonetic diversity for cloning
+    # First two sentences are throwaway prefix — TTS engines often clip the beginning.
+    # Whisper validation only checks the remaining sentences.
+    "static_voice_text": "Hello there. Good morning everyone. After all these years, it's finally here for us. The journey has been long and difficult, but we've learned to trust each other through every challenge. Now we stand together, ready to face whatever comes next. There's no turning back from here! We're going to make this work, no matter what!",
     "validation_model_name": "large-v2",
     "validation_model_name_fast": "medium",
     "min_silence_len": 1250,

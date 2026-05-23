@@ -271,8 +271,11 @@ def generate_voice_samples(
             if verbose:
                 print("Added narrator voice to generation list (fallback voice)")
 
-        # Pre-compute reference words for scoring
-        ref_words = [w.strip("!\"',.").lower() for w in DEFAULTS["static_voice_text"].split() if w.strip("!\"',.").isalpha()]
+        # Pre-compute reference words for scoring, skipping first 2 sentences (throwaway prefix for TTS clipping)
+        import re as _re
+        _sentences = _re.split(r'[.!?]+', DEFAULTS["static_voice_text"])
+        _validation_text = ' '.join(s.strip() for s in _sentences[2:] if s.strip())
+        ref_words = [w.strip("!\"',.").lower() for w in _validation_text.split() if w.strip("!\"',.").isalpha()]
 
         # Pre-load whisper validation model once for all samples
         from .utils import transcribe_audio_with_whisper, crop_to_ref_text, get_nemotron_client

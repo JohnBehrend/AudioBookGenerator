@@ -135,7 +135,7 @@ def _validate_with_nemotron(voice_path: str, description: str, sample_text: str,
             "is_valid": is_valid,
             "reasons": reasons,
         }
-        log_path = os.path.join(os.path.dirname(voice_path), ".nemotron_validation.jsonl")
+        log_path = os.path.join(os.path.dirname(voice_path), ".nemotron_validation.json")
         with open(log_path, "a") as f:
             f.write(json.dumps(log_entry) + "\n")
 

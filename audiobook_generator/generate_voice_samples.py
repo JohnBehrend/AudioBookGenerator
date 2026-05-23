@@ -125,6 +125,20 @@ def _validate_with_nemotron(voice_path: str, description: str, sample_text: str,
             if reasons:
                 print(f"      Reasons: {'; '.join(reasons)}")
 
+        # Log result to file for debugging
+        log_entry = {
+            "voice": os.path.basename(voice_path),
+            "description": description,
+            "classification": classification,
+            "expected_gender": expected_gender,
+            "gender_ok": gender_ok,
+            "is_valid": is_valid,
+            "reasons": reasons,
+        }
+        log_path = os.path.join(os.path.dirname(voice_path), ".nemotron_validation.jsonl")
+        with open(log_path, "a") as f:
+            f.write(json.dumps(log_entry) + "\n")
+
         return is_valid, json.dumps({"classification": classification, "gender_ok": gender_ok, "reasons": reasons})
 
     except Exception as e:

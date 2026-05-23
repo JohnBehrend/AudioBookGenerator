@@ -233,6 +233,7 @@ def generate_voice_samples(
     engine=None,
     tts_engine: str = None,
     nemotron_endpoint: str = None,
+    seed_clone_fallback_engines: List[str] = None,
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters via VoiceMapper.
 
@@ -248,6 +249,7 @@ def generate_voice_samples(
         voice_engine: TTS engine for voice generation ('moss', 'omni', 'vox')
         force_regenerate: If True, regenerate voices even if they already exist
         validate: Deprecated - ignored
+        seed_clone_fallback_engines: List of engine names to try if primary engine fails
 
     Returns:
         Tuple of (status_message, character_voice_paths)
@@ -385,12 +387,77 @@ def generate_voice_samples(
                         if verbose:
                             print(f"  Cloned {voice_path} -> {dest_path} (best: sample {_best_att}, {_best_score}/{len(ref_words)} words)")
                     else:
-                        # All attempts failed, remove dest and add back to descriptions for Dramabox
-                        if os.path.exists(dest_path):
-                            os.remove(dest_path)
-                        descriptions[char_name] = f"Seed voice clone failed after {_max_attempts} attempts. Generate from description."
-                        if verbose:
-                            print(f"  Failed to clone {char_name}, will generate from description instead")
+                        # All attempts failed with primary engine, try fallback engines
+                        _clone_success = False
+                        if seed_clone_fallback_engines:
+                            for _fallback_engine_name in seed_clone_fallback_engines:
+                                if _clone_success:
+                                    break
+                                if verbose:
+                                    print(f"  Trying fallback engine: {_fallback_engine_name}")
+                                try:
+                                    _fallback_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=_fallback_engine_name)
+                                    _fallback_obj = _fallback_mapper.get_engine()
+                                except Exception as e:
+                                    if verbose:
+                                        print(f"    Could not load {_fallback_engine_name}: {e}")
+                                    continue
+                                _fallback_candidates = []
+                                _fallback_att = 0
+                                while len(_fallback_candidates) == 0 and _fallback_att < _max_attempts:
+                                    _fallback_att += 1
+                                    _random.seed(42 + _fallback_att + 100)
+                                    _tmp_path = dest_path + f".seed{_att + _fallback_att}.tmp.wav"
+                                    try:
+                                        _fallback_obj.generate_line(
+                                            text=DEFAULTS["static_voice_text"],
+                                            voice_path=voice_path,
+                                            output_path=_tmp_path,
+                                            device=device,
+                                            validation_model=None,
+                                            verbose=False,
+                                            ref_text="",
+                                        )
+                                    except Exception:
+                                        continue
+                                    if not os.path.exists(_tmp_path):
+                                        continue
+                                    try:
+                                        _transcribed, _starts, _ends = transcribe_audio_with_whisper(vm, _tmp_path)
+                                        _transcribed_words = _transcribed.split()
+                                        _matches = _word_match_count(ref_words, _transcribed.lower())
+                                        _cropped_path = _tmp_path + ".cropped.wav"
+                                        if crop_to_ref_text(_tmp_path, _cropped_path, ref_words, _transcribed_words, _starts, _ends, verbose=False):
+                                            _use_path = _cropped_path
+                                        else:
+                                            _use_path = _tmp_path
+                                        if _matches >= len(ref_words) * 0.8:
+                                            _fallback_candidates.append((_matches, _use_path, _fallback_att))
+                                            if verbose:
+                                                print(f"    Sample {_fallback_att}: {_matches}/{len(ref_words)} words")
+                                    except Exception:
+                                        pass
+                                if _fallback_candidates:
+                                    _fallback_candidates.sort(key=lambda x: x[0], reverse=True)
+                                    _best_score, _best_path, _best_att = _fallback_candidates[0]
+                                    shutil.copy2(_best_path, dest_path)
+                                    _clone_success = True
+                                    if verbose:
+                                        print(f"  Cloned via {_fallback_engine_name} (best: sample {_best_att}, {_best_score}/{len(ref_words)} words)")
+                                    # Clean up fallback temp files
+                                    for _ffa in range(1, _fallback_att + 1):
+                                        for _ext in [f".seed{_att + _ffa}.tmp.wav", f".seed{_att + _ffa}.tmp.wav.cropped.wav"]:
+                                            try:
+                                                os.remove(dest_path + _ext)
+                                            except OSError:
+                                                pass
+                        if not _clone_success:
+                            # All engines failed, fall back to Dramabox
+                            if os.path.exists(dest_path):
+                                os.remove(dest_path)
+                            descriptions[char_name] = f"Seed voice clone failed after {_max_attempts} attempts. Generate from description."
+                            if verbose:
+                                print(f"  Failed to clone {char_name}, will generate from description instead")
                     # Clean up all temp files after copying
                     for _fa in range(1, _att + 1):
                         _fp = dest_path + f".seed{_fa}.tmp.wav"

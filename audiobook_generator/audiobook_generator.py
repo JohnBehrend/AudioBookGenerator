@@ -1578,6 +1578,10 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
         num_characters = len(state.character_descriptions)
         with ProgressHandler(progress=None, use_tqdm=True, total=num_characters, desc="Generating voice samples") as handler:
+            # Build fallback chain: try all cloning-capable engines if primary fails
+            _all_engines = ["omni", "vibevoice", "vox", "moss", "echo-tts"]
+            _fallback_engines = [e for e in _all_engines if e != tts_engine]
+
             result_msg, generated_voices = gen_voice_samples(
                 descriptions=state.character_descriptions,
                 output_dir=str(state.output_dir),
@@ -1589,6 +1593,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 validate=validate,
                 tts_engine=tts_engine,
                 nemotron_endpoint=nemotron_endpoint,
+                seed_clone_fallback_engines=_fallback_engines,
             )
 
             if verbose:
@@ -2031,6 +2036,9 @@ def main():
 
             # Stage 4: Generate voice samples
             print("=== Stage 4: Generating voice samples ===")
+            _all_engines = ["omni", "vibevoice", "vox", "moss", "echo-tts"]
+            _fallback_engines = [e for e in _all_engines if e != args.tts_engine]
+
             result_msg, generated = gen_voice_samples(
                 descriptions=descriptions,
                 output_dir=str(output_dir),
@@ -2040,6 +2048,7 @@ def main():
                 voice_engine=args.tts_engine,
                 validate=False,
                 nemotron_endpoint=args.nemotron_endpoint,
+                seed_clone_fallback_engines=_fallback_engines,
             )
             print(result_msg)
 

@@ -369,21 +369,6 @@ def generate_voice_samples(
                                 _use_path = _tmp_path
                             _all_attempts.append((_matches, _use_path, _att))
                             if _matches >= len(ref_words) * 0.8:
-                                # Validate against description with Nemotron if available
-                                if nemotron_client and char_name in seed_descriptions:
-                                    if verbose:
-                                        print(f"    Validating seed clone against description with Nemotron...")
-                                    _nemotron_ok, _nemotron_msg = _validate_with_nemotron(
-                                        _use_path, seed_descriptions[char_name], DEFAULTS["static_voice_text"],
-                                        nemotron_client, nemotron_model, verbose=verbose
-                                    )
-                                    if not _nemotron_ok:
-                                        if verbose:
-                                            print(f"    Sample {_att}: Nemotron FAIL ({_nemotron_msg})")
-                                        continue
-                                    else:
-                                        if verbose:
-                                            print(f"    Sample {_att}: Nemotron PASS")
                                 _candidates.append((_matches, _use_path, _att))
                                 if verbose:
                                     print(f"    Sample {_att}: {_matches}/{len(ref_words)} words: {_transcribed[:80]}...")

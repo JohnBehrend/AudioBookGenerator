@@ -1316,8 +1316,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                        enable_postfix: bool = True, concurrency: int = 1,
                        gpus: Optional[List[str]] = None, whisper_concurrency: int = 1,
                        whisper_fast: bool = False,
-                       llm_model: str = None,
-                       nemotron_endpoint: str = None) -> str:
+                        llm_model: str = None,
+                       use_chunkformer: bool = False) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -1592,7 +1592,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 voice_engine=voice_engine,
                 validate=validate,
                 tts_engine=tts_engine,
-                nemotron_endpoint=nemotron_endpoint,
+                use_chunkformer=use_chunkformer,
                 seed_clone_fallback_engines=_fallback_engines,
             )
 
@@ -1801,7 +1801,7 @@ def main():
     parser.add_argument("--whisper-concurrency", type=int, default=1, help="Number of concurrent Whisper models for validation (default: 1)")
     parser.add_argument("--whisper-fast", action="store_true", help="Use faster Whisper settings (medium model, beam_size=3)")
     parser.add_argument("--gpus", nargs="+", default=None, help="GPU devices to use (e.g., --gpus cuda:0 cuda:1)")
-    parser.add_argument("--nemotron-endpoint", default=None, help="Nemotron Omni endpoint for voice description validation (e.g., http://localhost:8082/v1)")
+    parser.add_argument("--use-chunkformer", action="store_true", help="Enable ChunkFormer voice validation (gender/emotion/dialect/age classification)")
 
     args = parser.parse_args()
 
@@ -1984,7 +1984,7 @@ def main():
                 gpus=args.gpus,
                 whisper_concurrency=args.whisper_concurrency,
                 whisper_fast=args.whisper_fast,
-                nemotron_endpoint=args.nemotron_endpoint,
+                use_chunkformer=args.use_chunkformer,
             )
             print(result)
         else:
@@ -2047,7 +2047,7 @@ def main():
                 seed_characters=load_seed_characters(args.seed_voice_map),
                 voice_engine=args.tts_engine,
                 validate=False,
-                nemotron_endpoint=args.nemotron_endpoint,
+                use_chunkformer=args.use_chunkformer,
                 seed_clone_fallback_engines=_fallback_engines,
             )
             print(result_msg)

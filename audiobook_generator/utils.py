@@ -584,18 +584,15 @@ def get_validation_client() -> OpenAI:
     return OpenAI(base_url=VOICE_VALIDATION["endpoint"], api_key="EMPTY")
 
 
-def get_nemotron_client(endpoint: Optional[str] = None) -> OpenAI:
-    """Create an OpenAI client for Nemotron voice validation.
-
-    Args:
-        endpoint: Override endpoint URL
+def get_chunkformer_model():
+    """Load ChunkFormer model for voice classification.
 
     Returns:
-        OpenAI client configured for Nemotron model
+        ChunkFormerModel instance (loaded lazily on first call)
     """
-    from .config import NEMOTRON_VALIDATION
-    url = endpoint or NEMOTRON_VALIDATION["endpoint"]
-    return OpenAI(base_url=url, api_key="EMPTY")
+    from .config import CHUNKFORMER_VALIDATION
+    from chunkformer import ChunkFormerModel
+    return ChunkFormerModel.from_pretrained(CHUNKFORMER_VALIDATION["model_id"])
 
 
 # ============================================================================

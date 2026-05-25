@@ -31,95 +31,35 @@ def _word_match_count(ref_words, transcribed_lower):
     return sum(1 for w in ref_words if re.search(r'\b' + re.escape(w) + r'\b', transcribed_lower))
 
 
-def _validate_with_nemotron(voice_path: str, description: str, sample_text: str, nemotron_client, nemotron_model, verbose: bool = False) -> Tuple[bool, str]:
-    """Validate voice matches description using Nemotron Omni.
+def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_model, verbose: bool = False) -> Tuple[bool, str]:
+    """Validate voice matches description using ChunkFormer model.
 
-    Uses a two-step approach: first asks Nemotron to classify the voice
-    independently (without knowing the expected description), then compares
-    the classification to the description to avoid prompt bias.
+    Uses ChunkFormer to classify the voice (gender, emotion, dialect, age),
+    then compares the classification to the description to check gender match.
     """
-    import soundfile as sf
-    import tempfile
-
-    # Nemotron was trained on 16kHz audio; resample if needed
-    data, sr = sf.read(voice_path)
-    if data.ndim > 1:
-        data = data.mean(axis=1)
-    if sr != 16000:
-        try:
-            import librosa
-            data = librosa.resample(data, orig_sr=sr, target_sr=16000)
-            sr = 16000
-        except ImportError:
-            if verbose:
-                print("    Warning: librosa not available, skipping resampling")
-    tmp_path = tempfile.mktemp(suffix=".wav")
-    sf.write(tmp_path, data, 16000, subtype="PCM_16")
-
     try:
-        from pathlib import Path
-        file_url = Path(tmp_path).resolve().as_uri()
+        result = chunkformer_model.classify_audio(audio_path=voice_path)
 
-        # Step 1: Ask Nemotron to classify the voice without knowing expectations
-        classify_prompt = (
-            "Listen to this voice sample. Analyze the voice carefully and output ONLY valid JSON with these exact fields:\n\n"
-            "1. gender: Must be exactly 'male' or 'female' based on vocal pitch and timbre\n"
-            "2. age_group: Must be exactly one of: 'young', 'middle-aged', 'old'\n"
-            "   - 'young': child through late 20s\n"
-            "   - 'middle-aged': 30s through 50s\n"
-            "   - 'old': 60s and above\n"
-            "3. pitch: Must be exactly one of: 'very low', 'low', 'moderate', 'high', 'very high'\n"
-            "4. tone_keywords: Up to 3 comma-separated words describing tone or emotion\n\n"
-            "Output format (replace values, do not include the options):\n"
-            '{\n'
-            '  "gender": "male",\n'
-            '  "age_group": "young",\n'
-            '  "pitch": "low",\n'
-            '  "tone_keywords": "calm, confident"\n'
-            "}\n\n"
-            "Return ONLY the JSON object. No explanation, no other text."
-        )
-        classify_response = nemotron_client.chat.completions.create(
-            model=nemotron_model,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "audio_url", "audio_url": {"url": file_url}},
-                    {"type": "text", "text": classify_prompt},
-                ],
-            }],
-            max_tokens=256,
-            temperature=0.2,
-            extra_body={"top_k": 1, "chat_template_kwargs": {"enable_thinking": False}},
-        )
-        classification = json.loads(classify_response.choices[0].message.content.strip())
-        if verbose:
-            print(f"      Nemotron raw: {classify_response.choices[0].message.content.strip()}")
+        predicted_gender = result["gender"]["label"]
+        predicted_emotion = result["emotion"]["label"]
+        predicted_age = result["age"]["label"]
+        predicted_dialect = result["dialect"]["label"]
 
-        # Step 2: Extract expected attributes from description
+        # Extract expected gender from description
         desc_lower = description.lower().strip()
-        if verbose:
-            print(f"      Raw description ({len(description)} chars): {repr(description[:100])}")
         expected_gender = "female" if any(w in desc_lower for w in ["female", "woman", "women", "girl"]) else ("male" if any(w in desc_lower for w in ["male", "man", "men", "boy"]) else None)
-        expected_age = None
-        if ", old, " in desc_lower or ", old." in desc_lower:
-            expected_age = "old"
-        elif ", middle-aged, " in desc_lower or ", middle-aged." in desc_lower:
-            expected_age = "middle-aged"
-        elif ", young, " in desc_lower or ", young." in desc_lower:
-            expected_age = "young"
 
-        # Step 3: Compare (gender only — age classification is unreliable across all voice types)
-        gender_ok = expected_gender is None or classification.get("gender") == expected_gender
+        # Compare gender only
+        gender_ok = expected_gender is None or predicted_gender == expected_gender
 
         is_valid = gender_ok
         reasons = []
         if not gender_ok:
-            reasons.append(f"gender mismatch: expected {expected_gender}, got {classification.get('gender')}")
+            reasons.append(f"gender mismatch: expected {expected_gender}, got {predicted_gender}")
 
         if verbose:
             print(f"      Description: {description[:80]}")
-            print(f"      Classified: {classification.get('gender')} / {classification.get('age_group')} / {classification.get('pitch')} / {classification.get('tone_keywords')}")
+            print(f"      Classified: {predicted_gender} / {predicted_age} / {predicted_emotion} / {predicted_dialect}")
             print(f"      Expected: {expected_gender}")
             print(f"      Overall: {'PASS' if is_valid else 'FAIL'}")
             if reasons:
@@ -129,27 +69,30 @@ def _validate_with_nemotron(voice_path: str, description: str, sample_text: str,
         log_entry = {
             "voice": os.path.basename(voice_path),
             "description": description,
-            "classification": classification,
+            "classification": {
+                "gender": {"label": predicted_gender, "prob": result["gender"]["prob"]},
+                "emotion": {"label": predicted_emotion, "prob": result["emotion"]["prob"]},
+                "age": {"label": predicted_age, "prob": result["age"]["prob"]},
+                "dialect": {"label": predicted_dialect, "prob": result["dialect"]["prob"]},
+            },
             "expected_gender": expected_gender,
             "gender_ok": gender_ok,
             "is_valid": is_valid,
             "reasons": reasons,
         }
-        log_path = os.path.join(os.path.dirname(voice_path), ".nemotron_validation.json")
+        log_path = os.path.join(os.path.dirname(voice_path), ".chunkformer_validation.json")
         with open(log_path, "a") as f:
             f.write(json.dumps(log_entry) + "\n")
 
-        return is_valid, json.dumps({"classification": classification, "gender_ok": gender_ok, "reasons": reasons})
+        return is_valid, json.dumps({"classification": {
+            "gender": predicted_gender, "emotion": predicted_emotion,
+            "age": predicted_age, "dialect": predicted_dialect,
+        }, "gender_ok": gender_ok, "reasons": reasons})
 
     except Exception as e:
         if verbose:
-            print(f"    Nemotron validation error: {e}")
+            print(f"    ChunkFormer validation error: {e}")
         return True, str(e)
-    finally:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
 
 
 def generate_voice_sample(character_name: str, description: str, voice_mapper: VoiceMapper,
@@ -232,7 +175,7 @@ def generate_voice_samples(
     validate: bool = False,
     engine=None,
     tts_engine: str = None,
-    nemotron_endpoint: str = None,
+    use_chunkformer: bool = False,
     seed_clone_fallback_engines: List[str] = None,
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters via VoiceMapper.
@@ -249,6 +192,7 @@ def generate_voice_samples(
         voice_engine: TTS engine for voice generation ('moss', 'omni', 'vox')
         force_regenerate: If True, regenerate voices even if they already exist
         validate: Deprecated - ignored
+        use_chunkformer: If True, validate voices with ChunkFormer model
         seed_clone_fallback_engines: List of engine names to try if primary engine fails
 
     Returns:
@@ -278,23 +222,20 @@ def generate_voice_samples(
         ref_words = [w.strip("!\"',.").lower() for w in _validation_text.split() if w.strip("!\"',.").isalpha()]
 
         # Pre-load whisper validation model once for all samples
-        from .utils import transcribe_audio_with_whisper, crop_to_ref_text, get_nemotron_client
+        from .utils import transcribe_audio_with_whisper, crop_to_ref_text, get_chunkformer_model
         from .audiobook_generator import setup_validation_model
         vm = setup_validation_model('cpu', cpu=True, fast=True)
 
-        # Set up Nemotron client if endpoint provided
-        nemotron_client = None
-        nemotron_model = None
-        if nemotron_endpoint:
+        # Set up ChunkFormer model if enabled
+        chunkformer_model = None
+        if use_chunkformer:
             try:
-                from .config import NEMOTRON_VALIDATION
-                nemotron_client = get_nemotron_client(nemotron_endpoint)
-                nemotron_model = NEMOTRON_VALIDATION["model"]
+                chunkformer_model = get_chunkformer_model()
                 if verbose:
-                    print(f"Nemotron validation enabled: {nemotron_endpoint}")
+                    print(f"ChunkFormer validation enabled")
             except Exception as e:
                 if verbose:
-                    print(f"Warning: Failed to connect to Nemotron: {e}")
+                    print(f"Warning: Failed to load ChunkFormer: {e}")
 
         # Filter out seed characters, keeping their descriptions for validation
         seed_descriptions = {}
@@ -584,21 +525,21 @@ def generate_voice_samples(
                         else:
                             use_path = output_file
                         all_attempts.append((matches, use_path, attempt, duration))
-                        # Validate against description with Nemotron if available
-                        if nemotron_client:
+                        # Validate against description with ChunkFormer if available
+                        if chunkformer_model:
                             if verbose:
-                                print(f"    Validating against description with Nemotron...")
-                            nemotron_ok, nemotron_msg = _validate_with_nemotron(
-                                use_path, char_desc, DEFAULTS["static_voice_text"],
-                                nemotron_client, nemotron_model, verbose=verbose
+                                print(f"    Validating against description with ChunkFormer...")
+                            cf_ok, cf_msg = _validate_with_chunkformer(
+                                use_path, char_desc,
+                                chunkformer_model, verbose=verbose
                             )
-                            if not nemotron_ok:
+                            if not cf_ok:
                                 if verbose:
-                                    print(f"    Sample {attempt}: Nemotron FAIL")
+                                    print(f"    Sample {attempt}: ChunkFormer FAIL")
                                 continue
                             else:
                                 if verbose:
-                                    print(f"    Sample {attempt}: Nemotron PASS")
+                                    print(f"    Sample {attempt}: ChunkFormer PASS")
                         if verbose:
                             print(f"    Sample {attempt}: {matches}/{len(ref_words)} words ({duration:.1f}s): {transcribed[:80]}...")
                         candidates.append((matches, use_path, attempt, duration))

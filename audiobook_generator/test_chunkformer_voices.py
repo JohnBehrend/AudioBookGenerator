@@ -1,67 +1,37 @@
 #!/usr/bin/env python3
 """
-Test Nemotron voice classification with known voice samples.
+Test ChunkFormer voice classification with known voice samples.
 
 Tests seed voices (known good) vs Dramabox voices (suspected broken)
 to identify exactly where classification fails.
 """
-import soundfile as sf
-import tempfile
 import os
-import librosa
 import json
 import hashlib
-import numpy as np
-from pathlib import Path
-from openai import OpenAI
+from chunkformer import ChunkFormerModel
 
-NEMOTRON_URL = "http://localhost:8082/v1"
 SEED_DIR = "/home/johnbehrend/pydev/voices_archive"
 DRAMABOX_DIR = "/home/johnbehrend/pydev/AudioBookGenerator/voice_test/eye_of_the_world"
 
-client = OpenAI(base_url=NEMOTRON_URL, api_key="EMPTY")
+model = ChunkFormerModel.from_pretrained("khanhld/chunkformer-gender-emotion-dialect-age-classification")
 
 
 def classify_voice(audio_path: str) -> dict:
-    """Resample to 16kHz and send to Nemotron for classification."""
-    audio, sr = sf.read(audio_path)
-    if audio.ndim > 1:
-        audio = audio.mean(axis=1)
-    audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
-    tmp = tempfile.mktemp(suffix=".wav")
-    sf.write(tmp, audio, 16000, subtype="PCM_16")
-    file_url = Path(tmp).resolve().as_uri()
-
-    resp = client.chat.completions.create(
-        model="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4",
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "audio_url", "audio_url": {"url": file_url}},
-                {"type": "text", "text": (
-                    "Listen to this voice sample. Analyze the voice carefully and output ONLY valid JSON:\n"
-                    '{"gender": "male"|"female", "age_group": "young"|"middle-aged"|"old", '
-                    '"pitch": "very low"|"low"|"moderate"|"high"|"very high", '
-                    '"tone_keywords": "up to 3 words"}\n'
-                    "Return ONLY the JSON object."
-                )},
-            ],
-        }],
-        max_tokens=256,
-        temperature=0.2,
-        extra_body={"top_k": 1, "chat_template_kwargs": {"enable_thinking": False}},
-    )
-    os.remove(tmp)
-    raw = resp.choices[0].message.content.strip()
-    # Extract JSON
-    if "{" in raw:
-        raw = raw[raw.index("{"):raw.rindex("}") + 1]
-        return json.loads(raw)
-    return {"error": "No JSON in response", "raw": raw[:200]}
+    """Classify voice using ChunkFormer model."""
+    result = model.classify_audio(audio_path=audio_path)
+    return {
+        "gender": result["gender"]["label"],
+        "age_group": result["age"]["label"],
+        "emotion": result["emotion"]["label"],
+        "dialect": result["dialect"]["label"],
+    }
 
 
 def voice_stats(path: str) -> dict:
     """Compute basic audio stats for debugging."""
+    import soundfile as sf
+    import numpy as np
+
     audio, sr = sf.read(path)
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
@@ -91,14 +61,11 @@ def test_voice(label: str, path: str, expected_gender: str = None, expected_age:
         print(f"  {label}: MISSING")
         return
 
-    stats = voice_stats(path)
-    print(f"  {label}: {stats['duration']} pitch={stats['pitch_hz']} zcr={stats['zcr']} md5={stats['md5']}")
-
     result = classify_voice(path)
     gender = result.get("gender", "?")
     age = result.get("age_group", "?")
-    pitch = result.get("pitch", "?")
-    tone = result.get("tone_keywords", "?")
+    emotion = result.get("emotion", "?")
+    dialect = result.get("dialect", "?")
 
     # Check against expectations
     ok = "✓"
@@ -107,26 +74,26 @@ def test_voice(label: str, path: str, expected_gender: str = None, expected_age:
     if expected_age and age != expected_age:
         ok = ok + ("✗ AGE MISMATCH" if ok == "✓" else "; AGE MISMATCH")
 
-    print(f"    → {gender} / {age} / {pitch} / {tone}  {ok}")
+    print(f"  {label}: {gender} / {age} / {emotion} / {dialect}  {ok}")
 
 
 def main():
     print("=" * 70)
-    print("Nemotron Voice Classification Test")
+    print("ChunkFormer Voice Classification Test")
     print("=" * 70)
 
     print("\n--- SEED VOICES (known good) ---")
     seed_tests = [
         ("baalzamon", "male", "old"),
         ("egwene", "female", "young"),
-        ("bornhald", "male", "middle-aged"),
-        ("narrator", "male", "middle-aged"),
+        ("bornhald", "male", "middle age"),
+        ("narrator", "male", "middle age"),
         ("rand", "male", "young"),
-        ("moiraine", "female", "middle-aged"),
-        ("elaida", "female", "young"),
+        ("moiraine", "female", "young"),
+        ("elaida", "female", "old"),
         ("elayne", "female", "young"),
         ("nynaeve", "female", "young"),
-        ("generic man", "male", "middle-aged"),
+        ("generic man", "male", "middle age"),
     ]
     for name, exp_gender, exp_age in seed_tests:
         path = os.path.join(SEED_DIR, f"{name}.wav")
@@ -139,10 +106,10 @@ def main():
         ("perrin", "male", "young"),
         ("egwene", "female", "young"),
         ("nynaeve", "female", "young"),
-        ("moiraine", "female", "middle-aged"),
-        ("narrator", "male", "middle-aged"),
-        ("baalzamon", "male", "old"),
-        ("bornhald", "male", "middle-aged"),
+        ("moiraine", "female", "young"),
+        ("narrator", "male", "young"),
+        ("baalzamon", "male", "young"),
+        ("bornhald", "male", "young"),
     ]
     for name, exp_gender, exp_age in seed_eotw:
         path = os.path.join(DRAMABOX_DIR, f"{name}.wav")
@@ -150,17 +117,17 @@ def main():
 
     print("\n--- DRAMABOX VOICES (generated from description) ---")
     dramabox_tests = [
-        ("aginor", "male", "old"),
+        ("aginor", "male", "young"),
         ("ara", "female", "young"),
         ("byar", "male", "young"),
-        ("cenn", "male", "old"),
-        ("darl", "male", "young"),
-        ("elyas", "male", "old"),
-        ("gawyn", "male", "young"),
-        ("ila", "female", "old"),
-        ("jon", "male", "young"),
-        ("mordeth", "male", "old"),
-        ("suian", "female", "young"),
+        ("cenn", "male", "young"),
+        ("darl", "male", "middle age"),
+        ("elyas", "male", "young"),
+        ("gawyn", "male", "middle age"),
+        ("ila", "female", "young"),
+        ("jon", "male", "middle age"),
+        ("mordeth", "male", "young"),
+        ("suian", "male", "young"),
     ]
     for name, exp_gender, exp_age in dramabox_tests:
         path = os.path.join(DRAMABOX_DIR, f"{name}.wav")

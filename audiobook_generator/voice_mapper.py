@@ -297,9 +297,12 @@ class VoiceMapper:
         if threshold is None:
             threshold = VOICE_VALIDATION["threshold"]
 
-        # Convert to absolute path for file:// URL
+        # Convert to absolute path and encode as base64 data URI
         abs_voice_path = os.path.abspath(voice_path)
-        file_url = f"file://{abs_voice_path}"
+        import base64
+        with open(abs_voice_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
+        file_url = f"data:audio/wav;base64,{audio_b64}"
         validation_prompt = VOICE_VALIDATION["prompt"]
 
         # Format the description for the prompt
@@ -399,7 +402,10 @@ class VoiceMapper:
             model = VOICE_VALIDATION["model"]
 
         abs_voice_path = os.path.abspath(voice_path)
-        file_url = f"file://{abs_voice_path}"
+        import base64
+        with open(abs_voice_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
+        file_url = f"data:audio/wav;base64,{audio_b64}"
 
         prompt = (
             "Analyze this voice sample and describe it using these EXACT attributes:\n\n"

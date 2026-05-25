@@ -46,6 +46,11 @@ uv run python audiobook_generator.py <epub_file> [OPTIONS]
 # --tts-engine ENGINE  TTS engine: kugelaudio (default) or vibevoice
 # --device DEVICE      CUDA device (default: cuda)
 # --num-llm-attempts N Number of LLM attempts (default: 2)
+# --whisper-cpu        Run Whisper validation on CPU
+# --whisper-concurrency N  Number of concurrent Whisper models for validation (default: 1)
+# --whisper-fast       Use faster Whisper settings (medium model, beam_size=3)
+# --gpus GPU [GPU ...] GPU devices to use (e.g., --gpus cuda:0 cuda:1)
+# --use-chunkformer    Enable ChunkFormer voice validation (gender/emotion/dialect/age classification)
 
 # Launch Gradio interface
 uv run python audiobook_generator.py --gradio
@@ -82,12 +87,13 @@ uv sync
 
 ### Core Dependencies
 
-- **Python 3.8+**
+- **Python 3.11+** (required for ChunkFormer voice validation)
 - **PyTorch** (with CUDA support optional: `torch`, `torchaudio`, `torchvision`)
 - **Transformers** and **tokenizers** (HuggingFace)
 - **Gradio** for the web interface
 - **WhisperX** / **faster-whisper** for STT validation
 - **OpenAI API** client for LLM operations
+- **ChunkFormer** for voice classification validation
 
 ### TTS Engine: KugelAudio
 
@@ -129,6 +135,14 @@ The package is installed directly from the GitHub repository and requires no man
 
 - **ebooklib** for EPUB parsing
 - **beautifulsoup4** for HTML parsing
+
+### Voice Validation
+
+The pipeline includes multiple layers of audio validation:
+
+1. **Whisper Transcription Validation**: TTS output is transcribed with Whisper and compared to the expected text using string similarity. Audio is clipped at valid word boundaries and retries are performed if quality is below threshold (0.85). Controlled by `--whisper-cpu`, `--whisper-fast`, and `--whisper-concurrency` flags.
+
+2. **ChunkFormer Voice Validation**: When enabled (`--use-chunkformer`), the ChunkFormer model classifies generated voice samples by gender, emotion, dialect, and age, then compares the classification against the character description to ensure gender match. Uses the `khanhld/chunkformer-gender-emotion-dialect-age-classification` model. Requires Python >= 3.11.
 
 
 ### LLM Settings

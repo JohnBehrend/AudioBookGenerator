@@ -149,8 +149,8 @@ class TestGenerateAudiobookFromChaptersBasic:
 class TestGenerateAudiobookFromChaptersVoiceResolution:
     """Tests for voice path resolution."""
 
-    def test_no_voice_path_raises_error(self, temp_dir, sample_chapters, sample_chapter_maps, sample_voices_map):
-        """Should raise exception when voice path is not found."""
+    def test_no_voice_path_skips_lines(self, temp_dir, sample_chapters, sample_chapter_maps, sample_voices_map):
+        """Lines without voice files should be skipped with a warning."""
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
         with _patch_all(temp_dir) as mock_tts:
@@ -158,13 +158,17 @@ class TestGenerateAudiobookFromChaptersVoiceResolution:
                 mock_mapper.return_value = MagicMock()
                 mock_mapper.return_value.add_voice_path.return_value = None
                 mock_mapper.return_value.get_voice_path.return_value = None
-                with pytest.raises(Exception, match="No voice path found"):
-                    generate_audiobook_from_chapters(
-                        chapters=sample_chapters,
-                        chapter_maps=sample_chapter_maps,
-                        voices_map=sample_voices_map,
-                        output_dir=str(temp_dir),
-                    )
+                result = generate_audiobook_from_chapters(
+                    chapters=sample_chapters,
+                    chapter_maps=sample_chapter_maps,
+                    voices_map=sample_voices_map,
+                    output_dir=str(temp_dir),
+                )
+
+        # Should complete without error, skipping lines without voice files
+        assert isinstance(result, tuple)
+        assert result[1] == 2
+        mock_tts.assert_not_called()
 
 
 class TestGenerateAudiobookFromChaptersDebugTTS:

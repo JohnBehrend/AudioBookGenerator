@@ -211,7 +211,15 @@ def extract_pitch_from_audio(audio_path: str) -> Tuple["np.ndarray", "np.ndarray
     Raises:
         Exception: If audio cannot be loaded or pitch cannot be estimated
     """
-    import librosa
+    import warnings
+
+    # audioread (librosa dependency) imports deprecated aifc/sunau at module load time.
+    # These are removed in Python 3.13. Suppress until audioread is fixed upstream.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="'aifc' is deprecated", category=DeprecationWarning)
+        warnings.filterwarnings("ignore", message="'sunau' is deprecated", category=DeprecationWarning)
+        import librosa
+
     import numpy as np
 
     y, sr = librosa.load(audio_path, sr=None)
@@ -313,7 +321,15 @@ def correct_voice_gender(
         - confidence: 0.0-1.0 confidence score from t-test, None if using threshold method
     """
     try:
-        import librosa
+        import warnings
+
+        # audioread (librosa dependency) imports deprecated aifc/sunau at module load time.
+        # These are removed in Python 3.13. Suppress until audioread is fixed upstream.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="'aifc' is deprecated", category=DeprecationWarning)
+            warnings.filterwarnings("ignore", message="'sunau' is deprecated", category=DeprecationWarning)
+            import librosa
+
         from psola import vocode
         import numpy as np
         from pathlib import Path

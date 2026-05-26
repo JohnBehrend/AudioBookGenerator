@@ -88,6 +88,7 @@ class TTSEngine(ABC):
         cfg_scale: float = 1.3,
         max_new_tokens: int = 19200,
         verbose: bool = False,
+        ref_text: Optional[str] = None,
     ) -> bool:
         """Generate audio for a single line (Stage 5).
 
@@ -96,11 +97,17 @@ class TTSEngine(ABC):
 
         Override for engines with extra parameters (e.g., ref_text).
         """
+        kwargs: dict[str, Any] = {
+            "text": text,
+            "voice_path": voice_path,
+            "output_path": output_path,
+        }
+        if ref_text is not None:
+            kwargs["ref_text"] = ref_text
+
         resp = self._worker_request(
             "generate_line",
-            text=text,
-            voice_path=voice_path,
-            output_path=output_path,
+            **kwargs,
         )
         self._clear_cuda_cache()
         return resp.get("success", False)

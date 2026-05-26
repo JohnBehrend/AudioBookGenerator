@@ -158,6 +158,8 @@ class EchoTTSAdapter(TTSEngine):
         verbose: bool = False,
     ) -> Tuple[bool, Optional[str], float]:
         """Echo TTS is only used for voice cloning, not voice sample generation."""
+        if verbose:
+            print(f"  WARNING: Echo TTS does not support voice sample generation")
         return False, None, 0
 
     def generate_line(
@@ -171,11 +173,4 @@ class EchoTTSAdapter(TTSEngine):
         max_new_tokens: int = 19200,
         verbose: bool = False,
     ) -> bool:
-        resp = self._worker_request(
-            "generate_line",
-            text=text,
-            voice_path=voice_path,
-            output_path=output_path,
-        )
-        self._clear_cuda_cache()
-        return resp.get("success", False)
+        return super().generate_line(text, voice_path, output_path, device, validation_model, cfg_scale, max_new_tokens, verbose)

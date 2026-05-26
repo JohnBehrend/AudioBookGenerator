@@ -125,7 +125,8 @@ class TestGenerateTTSForLineVoicePath:
 
         assert result[0] is False or result[0] is True
         assert isinstance(result[1], float)
-        mapper.get_voice_path.assert_called_once_with("narrator")
+        # get_voice_path may be called multiple times due to retry logic
+        mapper.get_voice_path.assert_called_with("narrator")
 
     def test_explicit_voice_path(self, temp_dir):
         """Should use explicit voice_path when provided."""

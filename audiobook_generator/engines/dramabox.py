@@ -167,21 +167,7 @@ class DramaboxEngine(TTSEngine):
         device: str,
         verbose: bool = False,
     ) -> Tuple[bool, Optional[str], float]:
-        if not description or not description.strip():
-            if verbose:
-                print(f"  ERROR: Skipping '{character_name}' due to empty description")
-            return False, None, 0
-
-        resp = self._worker_request(
-            "generate_voice_sample",
-            character_name=character_name,
-            description=description,
-            output_dir=str(output_dir),
-            device=device,
-        )
-        self._clear_cuda_cache()
-        success = resp.get("success", False)
-        return success, resp.get("output_file"), resp.get("duration", 0)
+        return super().generate_voice_sample(character_name, description, output_dir, device, verbose)
 
     def generate_line(
         self,

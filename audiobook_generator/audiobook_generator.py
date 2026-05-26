@@ -78,10 +78,12 @@ from .pipeline import (
     prepare_script_for_tts,
     score_strings_pop,
     calculate_clip_points,
+    apply_audio_clipping,
     should_retry,
     generate_output_filename,
     get_temp_filenames,
     is_generation_success,
+    collect_transcription_segments,
     MIN_RATIO_THRESHOLD,
     MAX_RETRIES,
 )
@@ -165,53 +167,6 @@ def color_word(word: str, score: float) -> str:
     return f"{color_code}{word}{reset_code}"
 
 
-def split_text_for_echo_tts(text: str, max_chunk_size: int = 500) -> list:
-    """Split text into chunks that fit within Echo TTS token limits.
-
-    Echo TTS has a sequence_length limit of 640 tokens (~30 seconds of audio).
-    Splits at sentence boundaries first, then commas, then word boundaries.
-    """
-    if len(text) <= max_chunk_size:
-        return [text]
-
-    chunks = []
-    remaining = text
-
-    while remaining:
-        if len(remaining) <= max_chunk_size:
-            chunks.append(remaining)
-            break
-
-        # Find the best split point (sentence boundary)
-        split_point = max_chunk_size
-
-        # Look for sentence endings first
-        for sep in ['. ', '! ', '? ', '.\n', '!\n', '?\n']:
-            idx = remaining[:max_chunk_size].rfind(sep)
-            if idx > max_chunk_size // 2:  # Must be past the middle
-                split_point = idx + len(sep)
-                break
-
-        # If no sentence boundary, look for comma
-        if split_point == max_chunk_size:
-            for sep in [', ', '; ']:
-                idx = remaining[:max_chunk_size].rfind(sep)
-                if idx > max_chunk_size // 2:
-                    split_point = idx + len(sep)
-                    break
-
-        # If still no good split, split at word boundary
-        if split_point == max_chunk_size:
-            last_space = remaining[:max_chunk_size].rfind(' ')
-            if last_space > max_chunk_size // 2:
-                split_point = last_space
-
-        chunks.append(remaining[:split_point].strip())
-        remaining = remaining[split_point:].strip()
-
-    return chunks
-
-
 def _get_ref_text_for_voice(voice_path: str, validation_model: Any, voice_name: str, verbose: bool) -> str:
     """Transcribe voice sample to get reference text for cloning, with fallback."""
     try:
@@ -273,14 +228,6 @@ def _tts_generate_only(
             traceback.print_exc()
         return None
 
-    gc.collect()
-    import torch
-    torch.cuda.empty_cache()
-
-    from scipy.io import wavfile
-    sample_rate, waveform = wavfile.read(output_path)
-    wavfile.write(output_path, sample_rate, waveform)
-
     return output_path
 
 
@@ -328,11 +275,7 @@ def _validate_and_clip_audio(
         else:
             segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
 
-        for segment in segments_list:
-            for word in segment.words:
-                segments.append(distill_string(word.word.strip()))
-                start_times.append(word.start)
-                end_times.append(word.end)
+        segments, start_times, end_times = collect_transcription_segments(segments_list)
 
         detected_string = distill_string(" ".join(segments))
         if tts_config.verbose:
@@ -355,41 +298,21 @@ def _validate_and_clip_audio(
                 if tts_config.verbose:
                     print(f"  [Clean Check] PASSED: {clean_msg}")
 
-        # Clipping
-        if tts_config.short_text_postfix and (distill_string(tts_config.short_text_postfix) in detected_string) and (postfix_detect_token in segments):
-            if detected_string.startswith(distill_string(tts_config.short_text_postfix)):
+        # Clipping - use shared pipeline functions instead of inline logic
+        # Check if only postfix was detected (TTS failure)
+        if tts_config.short_text_postfix:
+            postfix_distilled = distill_string(tts_config.short_text_postfix)
+            if postfix_distilled and postfix_distilled in detected_string and detected_string.startswith(postfix_distilled):
                 if tts_config.verbose:
                     print("\nERROR: POSTFIX DETECTED BUT ONLY POSTFIX! -> Ratio 0\n")
                 ratio = 0
-            else:
-                postfix_start_index = segments[::-1].index(postfix_detect_token)
-                if len(end_times) > postfix_start_index + 1:
-                    clip_end2 = end_times[::-1][postfix_start_index + 1]
-                else:
-                    clip_end2 = end_times[-1]
-                clip_end1 = start_times[::-1][postfix_start_index]
-                if tts_config.verbose:
-                    print(f"\nPOSTFIX DETECTED CLIPPING to {clip_end1} - {clip_end2}\n")
-                import pydub
-                audio = pydub.AudioSegment.from_wav(output_path)
-                trimmed_audio = audio[0:((clip_end1 + clip_end2) * 500)]
-                trimmed_audio.export(output_path, format="wav")
-        elif tts_config.short_text_postfix:
-            if ((last_valid_token is None) or (last_valid_token == "")):
-                if tts_config.verbose:
-                    print("\nERROR: POSTFIX UN-DETECTED and INVALID VALUES. SKIP.\n")
-            elif last_valid_token in segments:
-                lastvalid_index = segments[::-1].index(last_valid_token)
-                clip_end1 = end_times[::-1][lastvalid_index]
-                if tts_config.verbose:
-                    print(f"\nERROR: POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end1}\n")
-                import pydub
-                audio = pydub.AudioSegment.from_wav(output_path)
-                trimmed_audio = audio[0:(clip_end1 * 1000)]
-                trimmed_audio.export(output_path, format="wav")
-            else:
-                if tts_config.verbose:
-                    print(f"\nERROR: POSTFIX UN-DETECTED even though last_valid_token = {last_valid_token} should be in {segments}\n")
+
+        clip_points = calculate_clip_points(
+            segments, start_times, end_times,
+            postfix_detect_token, last_valid_token, verbose=tts_config.verbose
+        )
+        if clip_points is not None:
+            apply_audio_clipping(output_path, clip_points, verbose=tts_config.verbose)
 
     return ratio, last_valid_token
 
@@ -796,10 +719,6 @@ def generate_audiobook_from_chapters(
                             work_queue.task_done()
                             continue
 
-                        gc.collect()
-                        import torch
-                        torch.cuda.empty_cache()
-
                         validation_queue.put((item, output_path, key))
                         work_queue.task_done()
 
@@ -1156,30 +1075,19 @@ class PipelineState:
     def load_chapter_maps(self):
         """Load all chapter map files from the chapters directory."""
         self.chapter_maps = {}
-        # Only match map files with simple numeric names (chapter_X.map.json, not chapter_X.result.N.map.json)
         map_files = sorted([f for f in self.chapters_dir.glob("*.map.json")
                            if re.match(r"^chapter_\d+\.map\.json$", f.name)],
                           key=natural_sort_key)
 
         for map_file in map_files:
             try:
-                with open(map_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, list) and len(data) >= 2:
-                    character_map = data[0]
-                    line_map = data[1]
-                elif isinstance(data, dict):
-                    character_map = data.get("character_map", {})
-                    line_map = data.get("line_map", {})
-                else:
+                result = parse_map_file(map_file)
+                if result is None:
                     continue
-
-                character_map = {int(k): v for k, v in character_map.items()}
-                line_map = {int(k): v for k, v in line_map.items()}
-
+                char_map, line_map = result
                 map_filename = map_file.name.replace(".map.json", "")
                 chapter_idx = int(map_filename.replace("chapter_", ""))
-                self.chapter_maps[chapter_idx] = (character_map, line_map)
+                self.chapter_maps[chapter_idx] = (char_map, line_map)
             except Exception as e:
                 print(f"Error loading map file {map_file}: {e}")
 

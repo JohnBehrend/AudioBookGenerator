@@ -48,7 +48,6 @@ class TTSEngine(ABC):
         In worker mode, model loading happens in _run_worker().
         """
 
-    @abstractmethod
     def generate_voice_sample(
         self,
         character_name: str,
@@ -57,9 +56,28 @@ class TTSEngine(ABC):
         device: str,
         verbose: bool = False,
     ) -> Tuple[bool, Optional[str], float]:
-        """Generate a voice sample for a character (Stage 4)."""
+        """Generate a voice sample for a character (Stage 4).
 
-    @abstractmethod
+        Default implementation: checks for empty description, delegates to
+        worker via _worker_request, clears CUDA cache.
+
+        Override for engines with special handling needs.
+        """
+        if not description or not description.strip():
+            if verbose:
+                print(f"  ERROR: Skipping '{character_name}' due to empty description")
+            return False, None, 0
+
+        resp = self._worker_request(
+            "generate_voice_sample",
+            character_name=character_name,
+            description=description,
+            output_dir=str(output_dir),
+        )
+        self._clear_cuda_cache()
+        success = resp.get("success", False)
+        return success, resp.get("output_file"), resp.get("duration", 0)
+
     def generate_line(
         self,
         text: str,
@@ -71,7 +89,21 @@ class TTSEngine(ABC):
         max_new_tokens: int = 19200,
         verbose: bool = False,
     ) -> bool:
-        """Generate audio for a single line (Stage 5)."""
+        """Generate audio for a single line (Stage 5).
+
+        Default implementation: delegates to worker via _worker_request,
+        clears CUDA cache.
+
+        Override for engines with extra parameters (e.g., ref_text).
+        """
+        resp = self._worker_request(
+            "generate_line",
+            text=text,
+            voice_path=voice_path,
+            output_path=output_path,
+        )
+        self._clear_cuda_cache()
+        return resp.get("success", False)
 
     def _get_worker(self) -> "EngineWorker":
         """Get or create the EngineWorker for this engine."""

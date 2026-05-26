@@ -104,8 +104,6 @@ def score_strings_pop(
         score_ratio is between 0.0 and 1.0
         last_valid_token is the last token found in both strings
     """
-    import pandas as pd
-
     lookahead = max(0, lookahead)
     prev_undetected = False
     results = []
@@ -137,20 +135,33 @@ def score_strings_pop(
                 if not detected:
                     prev_undetected = True
 
-        diff_str = " ".join(diff_list)
-        results.append((i, i_tok, diff_str, detected, " ".join(detected_tokens[:lookahead])))
+        results.append((i, i_tok, detected))
 
-    df_temp = pd.DataFrame(results, columns=["i", "i_tok", "diff", "found", "next_tokens"])
-    last_valid_token_index = df_temp[df_temp["found"] == True]["i"].max()
-    last_valid_token = df_temp[df_temp["i"] == last_valid_token_index]["i_tok"]
+    # Compute metrics without pandas
+    found_count = sum(1 for _, _, found in results if found)
+    total_count = len(results)
+    mean_score = found_count / total_count if total_count > 0 else 0.0
 
-    if len(last_valid_token.values) == 0:
+    # Find last valid token (highest i where found == True)
+    last_valid_token_index = None
+    for i, i_tok, found in results:
+        if found:
+            last_valid_token_index = i
+
+    if last_valid_token_index is None:
         return 0.0, None
 
-    postfix_present = postfix and len(postfix) > 0 and postfix in detected_string[-len(postfix):]
-    score = float(df_temp["found"].mean()) - 0.5 * (not postfix_present)
+    # Get the token at that index
+    last_valid_token = None
+    for i, i_tok, found in results:
+        if i == last_valid_token_index:
+            last_valid_token = i_tok
+            break
 
-    return score, last_valid_token.values[0]
+    postfix_present = postfix and len(postfix) > 0 and postfix in detected_string[-len(postfix):]
+    score = float(mean_score) - 0.5 * (not postfix_present)
+
+    return score, last_valid_token
 
 
 def calculate_clip_points(
@@ -172,40 +183,42 @@ def calculate_clip_points(
         verbose: Enable debug output
 
     Returns:
-        Tuple of (clip_start_ms, clip_end_ms) or None if clipping not needed
+        Tuple of (clip_start_ms, clip_end_ms) or None if clipping not needed.
+        Both values are in milliseconds relative to audio start.
     """
     if not segments or not start_times or not end_times:
         return None
 
     if postfix_detect_token and postfix_detect_token in segments:
         try:
+            # Find last occurrence of postfix token
             postfix_start_index = len(segments) - 1 - segments[::-1].index(postfix_detect_token)
 
             if len(end_times) > postfix_start_index + 1:
-                clip_end_s = end_times[::-1][postfix_start_index + 1]
+                clip_end_s = end_times[postfix_start_index + 1]
             else:
                 clip_end_s = end_times[-1]
 
-            clip_start_s = start_times[::-1][postfix_start_index]
+            clip_start_s = start_times[postfix_start_index]
             clip_start_ms = (clip_start_s + clip_end_s) * 500
 
             if verbose:
                 print(f"POSTFIX DETECTED CLIPPING to {clip_start_s} - {clip_end_s}")
 
-            return None, clip_start_ms
+            return 0, clip_start_ms
         except (ValueError, IndexError):
             pass
 
     if last_valid_token and last_valid_token in segments:
         try:
             lastvalid_index = len(segments) - 1 - segments[::-1].index(last_valid_token)
-            clip_end_s = end_times[::-1][lastvalid_index]
+            clip_end_s = end_times[lastvalid_index]
             clip_end_ms = clip_end_s * 1000
 
             if verbose:
                 print(f"POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end_s}")
 
-            return None, clip_end_ms
+            return 0, clip_end_ms
         except (ValueError, IndexError):
             pass
 
@@ -213,6 +226,35 @@ def calculate_clip_points(
         print("No clipping needed")
 
     return None
+
+
+def apply_audio_clipping(
+    audio_path: str,
+    clip_points: Tuple[float, float],
+    verbose: bool = False,
+) -> bool:
+    """Apply audio clipping to a WAV file using calculated clip points.
+
+    Args:
+        audio_path: Path to the WAV file to clip (modified in-place)
+        clip_points: Tuple of (start_ms, end_ms) from calculate_clip_points
+        verbose: Print verbose output
+
+    Returns:
+        True if clipping was applied successfully, False otherwise
+    """
+    import pydub
+
+    clip_start_ms, clip_end_ms = clip_points
+    try:
+        audio = pydub.AudioSegment.from_wav(audio_path)
+        trimmed_audio = audio[int(clip_start_ms):int(clip_end_ms)]
+        trimmed_audio.export(audio_path, format="wav")
+        return True
+    except Exception as e:
+        if verbose:
+            print(f"Audio clipping failed: {e}")
+        return False
 
 
 def should_retry(

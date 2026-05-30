@@ -42,7 +42,7 @@ from audiobook_generator.pipeline import MIN_RATIO_THRESHOLD
 VOICE_ENGINES = ["omni", "vox", "dramabox"]
 
 # TTS engines that can generate line audio
-TTS_ENGINES = ["moss", "omni", "vox", "vibevoice", "dramabox"]
+TTS_ENGINES = ["omni", "vox", "vibevoice", "dramabox"]
 
 # Test EPUB
 TEST_EPUB = Path(__file__).parent / "voice_test" / "test_pride_and_prejudice.epub"
@@ -222,6 +222,7 @@ def run_single_combination(
                 verbose=verbose,
                 use_chunkformer=False,
                 seed_characters=None,
+                whisper_cpu=whisper_cpu,
             )
             result["voice_gen_time"] = time.time() - t0
 
@@ -229,7 +230,7 @@ def run_single_combination(
                 print(f"  [Voice Samples] {status_msg}")
 
             if not generated_voices:
-                result["errors"].append("No voice samples generated")
+                result["errors"].append(f"No voice samples generated: {status_msg}")
                 return result
 
             # Build voices_map from generated files
@@ -473,14 +474,13 @@ def run_single_combination(
 
         t1 = time.time()
 
-        # Capture [LINE_PROGRESS] output to extract per-line ratios
+        # Capture stderr to extract [LINE_PROGRESS] ratios
+        # LINE_PROGRESS is printed to stderr to avoid breaking multiprocessing pipes
         import io
         import contextlib
 
-        stdout_capture = io.StringIO()
-        capture_ctx = contextlib.redirect_stdout(stdout_capture) if not verbose else contextlib.nullcontext()
-
-        with capture_ctx:
+        stderr_capture = io.StringIO()
+        with contextlib.redirect_stderr(stderr_capture):
             status_msg, chapters_processed = generate_audiobook_from_chapters(
                 chapters=chapters,
                 chapter_maps=chapter_maps,
@@ -489,7 +489,7 @@ def run_single_combination(
                 device=device,
                 tts_engine=tts_engine,
                 max_chapters=1,
-                verbose=True,
+                verbose=verbose,
                 whisper_cpu=whisper_cpu,
                 concurrency=concurrency,
                 gpus=gpus,
@@ -502,8 +502,8 @@ def run_single_combination(
         if verbose:
             print(f"  [TTS] {status_msg}")
 
-        # Parse per-line ratios from [LINE_PROGRESS] output
-        captured = stdout_capture.getvalue()
+        # Parse per-line ratios from captured stderr
+        captured = stderr_capture.getvalue()
         ratio_pattern = re.compile(r'\[LINE_PROGRESS\].*Ratio:\s*(\d+)')
         ratios = []
         for match in ratio_pattern.finditer(captured):

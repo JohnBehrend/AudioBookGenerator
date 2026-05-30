@@ -611,7 +611,9 @@ def generate_voice_samples(
                         pass
 
             # Clean up TTS models after all characters are processed
-            voice_mapper.cleanup_tts_models()
+            # Skip cleanup if engine was injected (caller manages lifecycle)
+            if voice_mapper._injected_engine is None:
+                voice_mapper.cleanup_tts_models()
         except Exception as e:
             return f"Error generating voices: {str(e)}\n{traceback.format_exc()}", {}
 

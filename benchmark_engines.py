@@ -246,43 +246,39 @@ def run_single_combination(
                 best_details = None
                 best_quality = None
                 qualities = []
-                last_regenerated = None
+                last_voice_path = None
 
                 for sample in range(1, num_samples + 1):
                     t_step = time.time()
-                    # Generate single character voice using shared engine
-                    sample_desc = {char_name: char_desc}
-                    status_msg, regenerated = gen_voice_samples(
-                        descriptions=sample_desc,
+                    # Generate voice sample directly through shared engine
+                    sample_name = f"{char_name}.sample{sample}"
+                    success, output_file, duration = shared_engine.generate_voice_sample(
+                        character_name=sample_name,
+                        description=char_desc,
                         output_dir=combo_dir,
                         device=device,
-                        voice_engine=voice_engine,
                         verbose=False,
-                        use_chunkformer=False,
-                        seed_characters=None,
-                        force_regenerate=True,
-                        engine=shared_engine,
                     )
                     t_gen = time.time() - t_step
-                    last_regenerated = regenerated
 
-                    voice_path = regenerated.get(char_name)
-                    if not voice_path or not os.path.exists(voice_path):
+                    if not success or not output_file or not os.path.exists(output_file):
                         if verbose:
                             print(f"    Sample {sample}: generation failed ({t_gen:.1f}s)")
                         continue
 
+                    last_voice_path = output_file
+
                     # Validate with ChunkFormer
                     t_cf = time.time()
                     passed, log_json = _validate_with_chunkformer(
-                        voice_path, char_desc, cf_model, verbose=False,
+                        output_file, char_desc, cf_model, verbose=False,
                         check_fields=["gender", "age", "dialect"]
                     )
                     t_cf = time.time() - t_cf
 
                     # Analyze audio quality
                     t_qa = time.time()
-                    quality = _analyze_audio_quality(voice_path)
+                    quality = _analyze_audio_quality(output_file)
                     t_qa = time.time() - t_qa
                     qualities.append(quality)
 
@@ -305,17 +301,12 @@ def run_single_combination(
                         best_details = details
                         best_quality = quality
 
-                # Keep the final voice file (copy from last generated sample)
+                # Keep the final voice file
                 final_path = os.path.join(combo_dir, f"{char_name}.wav")
-                if last_regenerated and char_name in last_regenerated:
-                    src_path = last_regenerated[char_name]
-                    # Ensure absolute path
-                    if not os.path.isabs(src_path):
-                        src_path = os.path.abspath(src_path)
-                    if os.path.exists(src_path):
-                        if os.path.abspath(src_path) != os.path.abspath(final_path):
-                            shutil.copy2(src_path, final_path)
-                        generated_voices[char_name] = os.path.abspath(final_path)
+                if last_voice_path and os.path.exists(last_voice_path):
+                    if os.path.abspath(last_voice_path) != os.path.abspath(final_path):
+                        shutil.copy2(last_voice_path, final_path)
+                    generated_voices[char_name] = os.path.abspath(final_path)
 
                 char_results[char_name] = {
                     "pass_rate": passed_count / num_samples,
@@ -331,6 +322,9 @@ def run_single_combination(
                     age = best_details.get("age", "?") if best_details else "?"
                     dialect = best_details.get("dialect", "?") if best_details else "?"
                     print(f"    Pass rate: {passed_count}/{num_samples} ({pr:.0%}) | {gender} / {age} / {dialect}")
+
+            # Shutdown shared engine after all samples
+            shared_engine.shutdown_worker()
 
             result["voice_gen_time"] = time.time() - t0
             vram_after = _get_vram_usage_mb()

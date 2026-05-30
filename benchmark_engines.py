@@ -203,8 +203,10 @@ def run_single_combination(
                 from audiobook_generator.utils import get_chunkformer_model
                 cf_model = get_chunkformer_model()
             except Exception as e:
+                result["errors"].append(f"ChunkFormer failed to load: {e}")
                 if verbose:
                     print(f"  [CHUNKFORMER] Failed to load model: {e}")
+                return result
 
             # Track which characters still need validation
             pending = {k for k in generated_voices if k != "narrator"}

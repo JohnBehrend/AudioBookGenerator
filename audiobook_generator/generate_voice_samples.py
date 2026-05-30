@@ -215,6 +215,7 @@ def generate_voice_samples(
     tts_engine: str = None,
     use_chunkformer: bool = False,
     seed_clone_fallback_engines: List[str] = None,
+    whisper_cpu: bool = True,
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters via VoiceMapper.
 
@@ -262,8 +263,8 @@ def generate_voice_samples(
         # Pre-load whisper validation model once for all samples
         from .utils import transcribe_audio_with_whisper, crop_to_ref_text, get_chunkformer_model
         from .audiobook_generator import setup_validation_model
-        vm = setup_validation_model('cpu', cpu=True, fast=True)
 
+        vm = setup_validation_model(device, cpu=whisper_cpu, fast=True)
         # Set up ChunkFormer model if enabled
         chunkformer_model = None
         if use_chunkformer:

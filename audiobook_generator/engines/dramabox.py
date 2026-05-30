@@ -226,23 +226,16 @@ def _convert_description_to_prompt(description: str) -> str:
     else:
         person = "person"
 
-    # Dramabox struggles with age — repeat it explicitly
-    age_emphasis = {
-        "young": "young", "young adult": "young", "teen": "young", "teenager": "young",
-        "child": "young",
-        "middle-aged": "middle-aged", "middle aged": "middle-aged", "mature": "middle-aged",
-        "old": "elderly", "elderly": "elderly", "senior": "elderly",
-    }
-    age_label = age_emphasis.get(age, age)
-
     # Dramabox examples use pattern: "A [age] [gender] speaks with [character traits] in a [voice quality] voice"
+    # Split voice_desc: first part is voice quality, rest is character traits
     voice_parts = [v.strip() for v in voice_desc.split(",")]
     if len(voice_parts) >= 2:
         voice_quality = voice_parts[0]
         character = ", ".join(voice_parts[1:])
+        # Avoid double "voice" if voice_quality already ends with "voice"
         voice_suffix = "" if voice_quality.endswith("voice") else " voice"
-        prompt = f"A {age_label} {person} speaks with a {voice_quality}{voice_suffix}, {character}. This {person} is clearly {age_label}"
+        prompt = f"A {age} {person} speaks with a {voice_quality}{voice_suffix}, {character}"
     else:
         voice_suffix = "" if voice_desc.endswith("voice") else " voice"
-        prompt = f"A {age_label} {person} speaks with a {voice_desc}{voice_suffix}. This {person} is clearly {age_label}"
+        prompt = f"A {age} {person} speaks with a {voice_desc}{voice_suffix}"
     return prompt

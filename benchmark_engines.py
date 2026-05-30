@@ -232,6 +232,7 @@ def run_single_combination(
                 print(f"\n  [Voice Samples] voice_engine={voice_engine}, device={device}, {num_samples} samples/char")
 
             t0 = time.time()
+            peak_vram = 0
 
             # Create one VoiceMapper to reuse across all samples (avoids model reload)
             from audiobook_generator.voice_mapper import VoiceMapper as VMMapper
@@ -278,8 +279,7 @@ def run_single_combination(
                     # Validate with ChunkFormer
                     t_cf = time.time()
                     passed, log_json = _validate_with_chunkformer(
-                        output_file, char_desc, cf_model, verbose=False,
-                        check_fields=["gender", "age"]
+                        output_file, char_desc, cf_model, verbose=False
                     )
                     t_cf = time.time() - t_cf
 

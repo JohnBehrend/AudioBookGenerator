@@ -263,10 +263,12 @@ def _convert_description_to_instruct(description: str) -> str:
         "elderly": "elderly", "old": "elderly",
     }
     pitch_map = {
-        "very low": "very low pitch", "low": "low pitch",
+        "very low": "very low pitch", "very low pitch": "very low pitch",
+        "low": "low pitch", "low pitch": "low pitch",
         "medium": "moderate pitch", "mid": "moderate pitch",
-        "moderate": "moderate pitch", "high": "high pitch",
-        "very high": "very high pitch",
+        "moderate": "moderate pitch", "moderate pitch": "moderate pitch",
+        "high": "high pitch", "high pitch": "high pitch",
+        "very high": "very high pitch", "very high pitch": "very high pitch",
     }
     accent_map = {
         "american": "american accent", "british": "british accent",
@@ -277,11 +279,15 @@ def _convert_description_to_instruct(description: str) -> str:
     }
 
     mapped_parts = []
+    gender_val = None
+    age_val = None
     for part in parts:
         if part in gender_map:
             mapped_parts.append(gender_map[part])
+            gender_val = gender_map[part]
         elif part in age_map:
             mapped_parts.append(age_map[part])
+            age_val = age_map[part]
         elif part in pitch_map:
             mapped_parts.append(pitch_map[part])
         elif part == "whisper":
@@ -292,6 +298,12 @@ def _convert_description_to_instruct(description: str) -> str:
             mapped_parts.append(part)
         elif any(c in part for c in "河南陕西四川贵云南桂济石甘宁青岛东北话"):
             mapped_parts.append(part)
+
+    # Repeat gender and age at the end for emphasis (Omni struggles with these)
+    if gender_val:
+        mapped_parts.append(gender_val)
+    if age_val:
+        mapped_parts.append(age_val)
 
     return ", ".join(mapped_parts)
 

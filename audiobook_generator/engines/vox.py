@@ -67,7 +67,21 @@ class VoxEngine(TTSEngine):
                         continue
 
                     sample_text = DEFAULTS["static_voice_text"]
-                    voice_style = f"({description})"
+                    # Repeat gender/age for emphasis (Vox struggles with age)
+                    parts = [p.strip().lower() for p in description.split(",") if p.strip()]
+                    gender = age = None
+                    for p in parts:
+                        if p in ("male", "female"):
+                            gender = p
+                        elif p in ("young", "young adult", "middle-aged", "middle aged", "old", "elderly", "teen", "teenager", "child"):
+                            age = p
+                    extra = []
+                    if gender:
+                        extra.append(gender)
+                    if age:
+                        extra.append(age)
+                    emphasis = ", " + ", ".join(extra) if extra else ""
+                    voice_style = f"({description}{emphasis})"
                     instruct_text = f"{voice_style}{sample_text}"
 
                     try:

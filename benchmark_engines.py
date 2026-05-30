@@ -32,7 +32,7 @@ from audiobook_generator.config import DEFAULTS, AUDIO_SETTINGS
 from audiobook_generator import parse_chapter
 from audiobook_generator.llm_label_speakers import label_speakers
 from audiobook_generator.llm_describe_character import describe_characters
-from audiobook_generator.generate_voice_samples import generate_voice_samples as gen_voice_samples
+from audiobook_generator.generate_voice_samples import generate_voice_samples as gen_voice_samples, _validate_with_chunkformer
 from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 from audiobook_generator.utils import parse_map_file
 from audiobook_generator.pipeline import MIN_RATIO_THRESHOLD
@@ -69,6 +69,7 @@ def run_single_combination(
     gpus: Optional[List[str]],
     concurrency: int,
     whisper_cpu: bool,
+    voice_only: bool = False,
     verbose: bool = False,
 ) -> Dict:
     """Run a single voice_engine + tts_engine combination and return metrics.
@@ -131,6 +132,94 @@ def run_single_combination(
             return result
 
         # Step 2: Generate TTS audio using tts_engine (same as UI Stage 5)
+        if voice_only:
+            # Validate voices with ChunkFormer and retry until all pass
+            max_retries = 3
+            all_passed = False
+            cf_model = None
+            cf_results = {}
+
+            try:
+                from audiobook_generator.utils import get_chunkformer_model
+                cf_model = get_chunkformer_model()
+            except Exception as e:
+                if verbose:
+                    print(f"  [CHUNKFORMER] Failed to load model: {e}")
+
+            for attempt in range(1, max_retries + 1):
+                if attempt > 1:
+                    if verbose:
+                        print(f"\n  [CHUNKFORMER] Retry attempt {attempt}/{max_retries} for failed voices")
+                    # Remove failed voice files so they regenerate
+                    for char_name, passed in cf_results.items():
+                        if not passed:
+                            failed_path = os.path.join(combo_dir, f"{char_name}.wav")
+                            if os.path.exists(failed_path):
+                                os.remove(failed_path)
+
+                    # Regenerate only failed voices
+                    failed_descriptions = {k: v for k, v in character_descriptions.items() if not cf_results.get(k)}
+                    if failed_descriptions:
+                        if verbose:
+                            print(f"  [CHUNKFORMER] Regenerating {len(failed_descriptions)} failed voices")
+                        status_msg, regenerated = gen_voice_samples(
+                            descriptions=failed_descriptions,
+                            output_dir=combo_dir,
+                            device=device,
+                            voice_engine=voice_engine,
+                            verbose=verbose,
+                            use_chunkformer=False,
+                            seed_characters=None,
+                            force_regenerate=True,
+                        )
+                        result["voice_gen_time"] += time.time() - t0
+                        t0 = time.time()
+                        generated_voices.update(regenerated)
+
+                # Validate all voices
+                cf_results = {}
+                if cf_model and generated_voices:
+                    for char_name, voice_path in generated_voices.items():
+                        if char_name == "narrator":
+                            cf_results[char_name] = True
+                            continue
+                        desc = character_descriptions.get(char_name, "")
+                        passed, _ = _validate_with_chunkformer(
+                            voice_path, desc, cf_model, verbose=verbose,
+                            check_fields=["gender", "age", "dialect"]
+                        )
+                        cf_results[char_name] = passed
+
+                all_passed = all(cf_results.values()) if cf_results else True
+                if all_passed:
+                    break
+
+            # Build voices_map from generated files
+            voices_map = {}
+            for f in Path(combo_dir).glob("*.wav"):
+                if not f.name.endswith(".tmp.wav"):
+                    voices_map[f.stem] = str(f)
+
+            if not voices_map:
+                result["errors"].append("No voice samples generated")
+                return result
+
+            # Calculate validation stats
+            total_chars = len([k for k in generated_voices if k != "narrator"])
+            passed_chars = sum(1 for v in cf_results.values() if v)
+            failed_chars = total_chars - passed_chars
+
+            result["status"] = "voice_only"
+            result["total_lines"] = len(generated_voices)
+            result["successful_lines"] = passed_chars
+            result["failed_lines"] = failed_chars
+            result["avg_ratio"] = passed_chars / total_chars if total_chars > 0 else 1.0
+            result["min_ratio"] = 0.0 if failed_chars > 0 else 1.0
+            result["max_ratio"] = 1.0
+            if verbose:
+                print(f"  [VOICE ONLY] Generated {len(generated_voices)} voice samples, {passed_chars}/{total_chars} passed ChunkFormer validation")
+            return result
+
         if verbose:
             print(f"  [TTS] tts_engine={tts_engine}, concurrency={concurrency}")
 
@@ -208,6 +297,7 @@ def main():
                         help="Voice engines to test (default: all)")
     parser.add_argument("--tts-engines", nargs="+", choices=TTS_ENGINES, default=None,
                         help="TTS engines to test (default: all)")
+    parser.add_argument("--voice-only", action="store_true", help="Only benchmark voice generation, skip TTS")
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
     parser.add_argument("--resume", action="store_true", help="Resume from existing results, skipping done combinations")
     args = parser.parse_args()
@@ -215,11 +305,14 @@ def main():
     voice_engines = args.voice_engines or VOICE_ENGINES
     tts_engines = args.tts_engines or TTS_ENGINES
 
+    if args.voice_only:
+        tts_engines = [""]  # No TTS engines needed
+
     print(f"AudioBook Engine Benchmark")
     print(f"==========================")
     print(f"Test EPUB: {TEST_EPUB}")
     print(f"Voice engines: {voice_engines}")
-    print(f"TTS engines: {tts_engines}")
+    print(f"TTS engines: {tts_engines if not args.voice_only else '(voice only)'}")
     print(f"Combinations: {len(voice_engines) * len(tts_engines)}")
     print(f"Output: {args.output_dir}")
     print()
@@ -391,6 +484,7 @@ def main():
                 gpus=args.gpus,
                 concurrency=args.concurrency,
                 whisper_cpu=args.whisper_cpu,
+                voice_only=args.voice_only,
                 verbose=args.verbose,
             )
             results.append(result)

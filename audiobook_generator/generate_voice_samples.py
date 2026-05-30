@@ -31,12 +31,25 @@ def _word_match_count(ref_words, transcribed_lower):
     return sum(1 for w in ref_words if re.search(r'\b' + re.escape(w) + r'\b', transcribed_lower))
 
 
-def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_model, verbose: bool = False) -> Tuple[bool, str]:
+def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_model, verbose: bool = False, check_fields: List[str] = None) -> Tuple[bool, str]:
     """Validate voice matches description using ChunkFormer model.
 
     Uses ChunkFormer to classify the voice (gender, emotion, dialect, age),
-    then compares the classification to the description to check gender match.
+    then compares the classification to the description.
+
+    Args:
+        voice_path: Path to the voice sample
+        description: Voice description from LLM
+        chunkformer_model: Loaded ChunkFormer model
+        verbose: Print debug output
+        check_fields: Which fields to validate. Defaults to ["gender", "age", "dialect"].
+
+    Returns:
+        Tuple of (is_valid, json_log_string)
     """
+    if check_fields is None:
+        check_fields = ["gender", "age", "dialect"]
+
     try:
         result = chunkformer_model.classify_audio(audio_path=voice_path)
 
@@ -45,22 +58,44 @@ def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_mo
         predicted_age = result["age"]["label"]
         predicted_dialect = result["dialect"]["label"]
 
-        # Extract expected gender from description
         desc_lower = description.lower().strip()
-        expected_gender = "female" if any(w in desc_lower for w in ["female", "woman", "women", "girl"]) else ("male" if any(w in desc_lower for w in ["male", "man", "men", "boy"]) else None)
 
-        # Compare gender only
-        gender_ok = expected_gender is None or predicted_gender == expected_gender
+        # Extract expected values from description
+        expected_gender = None
+        if "female" in check_fields:
+            expected_gender = "female" if any(w in desc_lower for w in ["female", "woman", "women", "girl"]) else ("male" if any(w in desc_lower for w in ["male", "man", "men", "boy"]) else None)
 
-        is_valid = gender_ok
+        expected_age = None
+        if "age" in check_fields:
+            expected_age = "young" if any(w in desc_lower for w in ["young", "youth", "teen", "teenager", "child"]) else ("old" if any(w in desc_lower for w in ["old", "elder", "elderly", "senior", "ancient"]) else ("middle age" if any(w in desc_lower for w in ["middle", "mature", "adult", "forty", "fifty", "thirty"]) else None))
+
+        expected_dialect = None
+        if "dialect" in check_fields:
+            expected_dialect = "British" if any(w in desc_lower for w in ["british", "english", "uk", "scottish", "irish"]) else ("American" if any(w in desc_lower for w in ["american", "us", "southern", "midwestern"]) else None)
+
+        # Validate each requested field
+        is_valid = True
         reasons = []
-        if not gender_ok:
-            reasons.append(f"gender mismatch: expected {expected_gender}, got {predicted_gender}")
+
+        if "gender" in check_fields and expected_gender is not None:
+            if predicted_gender != expected_gender:
+                is_valid = False
+                reasons.append(f"gender mismatch: expected {expected_gender}, got {predicted_gender}")
+
+        if "age" in check_fields and expected_age is not None:
+            if predicted_age != expected_age:
+                is_valid = False
+                reasons.append(f"age mismatch: expected {expected_age}, got {predicted_age}")
+
+        if "dialect" in check_fields and expected_dialect is not None:
+            if predicted_dialect != expected_dialect:
+                is_valid = False
+                reasons.append(f"dialect mismatch: expected {expected_dialect}, got {predicted_dialect}")
 
         if verbose:
             print(f"      Description: {description[:80]}")
             print(f"      Classified: {predicted_gender} / {predicted_age} / {predicted_emotion} / {predicted_dialect}")
-            print(f"      Expected: {expected_gender}")
+            print(f"      Expected: gender={expected_gender}, age={expected_age}, dialect={expected_dialect}")
             print(f"      Overall: {'PASS' if is_valid else 'FAIL'}")
             if reasons:
                 print(f"      Reasons: {'; '.join(reasons)}")
@@ -75,8 +110,11 @@ def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_mo
                 "age": {"label": predicted_age, "prob": result["age"]["prob"]},
                 "dialect": {"label": predicted_dialect, "prob": result["dialect"]["prob"]},
             },
-            "expected_gender": expected_gender,
-            "gender_ok": gender_ok,
+            "expected": {
+                "gender": expected_gender,
+                "age": expected_age,
+                "dialect": expected_dialect,
+            },
             "is_valid": is_valid,
             "reasons": reasons,
         }
@@ -87,7 +125,7 @@ def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_mo
         return is_valid, json.dumps({"classification": {
             "gender": predicted_gender, "emotion": predicted_emotion,
             "age": predicted_age, "dialect": predicted_dialect,
-        }, "gender_ok": gender_ok, "reasons": reasons})
+        }, "is_valid": is_valid, "reasons": reasons})
 
     except Exception as e:
         if verbose:
@@ -450,8 +488,9 @@ def generate_voice_samples(
 
         if verbose:
             print("\n" + "=" * 60)
-            print("NOTE: Character descriptions are no longer used for voice generation.")
-            print("      Voices use a static string from config instead.")
+            print("NOTE: All voices speak the same static text from config.")
+            print("      Character descriptions shape voice style (gender, age, tone).")
+            print("      Whisper validates the spoken text matches the static string.")
             print("=" * 60 + "\n")
 
         # Create VoiceMapper once to cache the TTS model across all characters

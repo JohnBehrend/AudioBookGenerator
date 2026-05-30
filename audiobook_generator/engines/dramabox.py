@@ -208,7 +208,6 @@ def _convert_description_to_prompt(description: str) -> str:
     """
     parts = [p.strip() for p in description.split(",")]
     if len(parts) < 3:
-        # Fallback: use as-is
         prompt = description.strip()
         if not prompt.endswith("."):
             prompt = prompt + "."
@@ -216,26 +215,58 @@ def _convert_description_to_prompt(description: str) -> str:
 
     gender = parts[0].strip().lower()
     age = parts[1].strip().lower()
-    voice_desc = ", ".join(p.strip() for p in parts[2:]) if len(parts) > 2 else "clear voice"
+    remaining = [p.strip() for p in parts[2:] if p.strip()]
 
-    # Map gender to explicit noun
-    if gender in ("male", "man"):
-        person = "man"
-    elif gender in ("female", "woman"):
-        person = "woman"
-    else:
-        person = "person"
+    # Map gender to noun
+    person = "man" if gender in ("male", "man") else ("woman" if gender in ("female", "woman") else "person")
 
-    # Dramabox examples use pattern: "A [age] [gender] speaks with [character traits] in a [voice quality] voice"
-    # Split voice_desc: first part is voice quality, rest is character traits
-    voice_parts = [v.strip() for v in voice_desc.split(",")]
-    if len(voice_parts) >= 2:
-        voice_quality = voice_parts[0]
-        character = ", ".join(voice_parts[1:])
-        # Avoid double "voice" if voice_quality already ends with "voice"
-        voice_suffix = "" if voice_quality.endswith("voice") else " voice"
-        prompt = f"A {age} {person} speaks with a {voice_quality}{voice_suffix}, {character}"
+    # Map age to natural language
+    age_map = {
+        "young": "young", "young adult": "young", "teen": "young", "teenager": "young",
+        "child": "young",
+        "middle-aged": "middle-aged", "middle aged": "middle-aged", "mature": "middle-aged",
+        "old": "older", "elderly": "older", "senior": "older",
+    }
+    age_str = age_map.get(age, age)
+
+    # Extract pitch and accent from remaining parts
+    pitch = accent = personality = None
+    for part in remaining:
+        pl = part.lower()
+        if any(w in pl for w in ["very low pitch", "low pitch", "low", "deep"]):
+            pitch = "low"
+        elif any(w in pl for w in ["very high pitch", "high pitch", "high", "soprano"]):
+            pitch = "high"
+        elif any(w in pl for w in ["moderate", "medium", "mid"]):
+            pitch = "moderate"
+        elif any(w in pl for w in ["baritone", "bass"]):
+            pitch = "deep"
+        elif any(w in pl for w in ["soprano", "alto"]):
+            pitch = "clear"
+        elif any(w in pl for w in ["british", "english", "scottish", "irish"]):
+            accent = "British"
+        elif any(w in pl for w in ["american", "us"]):
+            accent = "American"
+        elif any(w in pl for w in ["australian"]):
+            accent = "Australian"
+        else:
+            personality = part
+
+    # Build voice quality from pitch + personality
+    voice_parts = []
+    if pitch:
+        voice_parts.append(f"{pitch} voice")
+    if personality:
+        voice_parts.append(personality)
+    if not voice_parts:
+        voice_parts.append("clear voice")
+
+    voice_str = ", ".join(voice_parts)
+
+    # Add accent as delivery cue, not technical parameter
+    if accent:
+        prompt = f"A {age_str} {person} speaks in a {accent} accent with a {voice_str}"
     else:
-        voice_suffix = "" if voice_desc.endswith("voice") else " voice"
-        prompt = f"A {age} {person} speaks with a {voice_desc}{voice_suffix}"
+        prompt = f"A {age_str} {person} speaks with a {voice_str}"
+
     return prompt

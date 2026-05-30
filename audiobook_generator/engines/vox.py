@@ -33,7 +33,7 @@ class VoxEngine(TTSEngine):
             if model is not None:
                 return
             model_path = "openbmb/VoxCPM2"
-            model = VoxCPM.from_pretrained(model_path, load_denoiser=False).to(device)
+            model = VoxCPM.from_pretrained(model_path, load_denoiser=False)
 
         response_queue.put({"type": "ready"})
 

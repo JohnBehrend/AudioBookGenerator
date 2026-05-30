@@ -334,11 +334,10 @@ def run_single_combination(
             result["avg_ratio"] = overall_pass_rate
             result["min_ratio"] = 0.0 if total_passed < total_samples else 1.0
             result["max_ratio"] = 1.0
-            result["errors"] = [json.dumps({
-                "duration_cv": duration_cv,
-                "total_samples": total_samples,
-                "total_passed": total_passed,
-            })]
+            result["duration_cv"] = duration_cv
+            result["total_samples"] = total_samples
+            result["total_passed"] = total_passed
+            result["errors"] = []
 
             # Print per-character breakdown
             if verbose and char_results:
@@ -583,6 +582,7 @@ def main():
         "total_lines", "successful_lines", "failed_lines",
         "avg_ratio", "min_ratio", "max_ratio",
         "voice_gen_time", "tts_gen_time", "total_time",
+        "duration_cv", "total_samples", "total_passed",
         "errors",
     ]
 
@@ -659,14 +659,8 @@ def main():
         for r in sorted_results:
             rate_str = f"{r['avg_ratio']:.0%}"
             time_str = f"{r['total_time']:.0f}s"
-            dur_cv = "?"
-            if r["errors"]:
-                try:
-                    meta = json.loads(r["errors"])
-                    dur_cv = f"{meta.get('duration_cv', 0):.2f}"
-                except (json.JSONDecodeError, KeyError):
-                    pass
-            print(f"{r['voice_engine']:<12} {r['successful_lines']:>3}/{r['failed_lines']+r['successful_lines']:>3} {rate_str:>7} {dur_cv:>7} {time_str:>10}")
+            dur_cv = f"{r.get('duration_cv', 0):.2f}" if r.get('duration_cv') is not None else "?"
+            print(f"{r['voice_engine']:<12} {r['successful_lines']:>3}/{r.get('total_samples', r['successful_lines']+r['failed_lines']):>3} {rate_str:>7} {dur_cv:>7} {time_str:>10}")
     else:
         print(f"{'Voice':<12} {'TTS':<12} {'Status':<12} {'Lines':<10} {'Avg Ratio':<12} {'Time':<12}")
         print("-" * 80)

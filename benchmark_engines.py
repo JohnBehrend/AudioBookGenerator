@@ -249,6 +249,7 @@ def run_single_combination(
                 last_regenerated = None
 
                 for sample in range(1, num_samples + 1):
+                    t_step = time.time()
                     # Generate single character voice using shared engine
                     sample_desc = {char_name: char_desc}
                     status_msg, regenerated = gen_voice_samples(
@@ -262,21 +263,31 @@ def run_single_combination(
                         force_regenerate=True,
                         engine=shared_engine,
                     )
+                    t_gen = time.time() - t_step
                     last_regenerated = regenerated
 
                     voice_path = regenerated.get(char_name)
                     if not voice_path or not os.path.exists(voice_path):
+                        if verbose:
+                            print(f"    Sample {sample}: generation failed ({t_gen:.1f}s)")
                         continue
 
                     # Validate with ChunkFormer
+                    t_cf = time.time()
                     passed, log_json = _validate_with_chunkformer(
                         voice_path, char_desc, cf_model, verbose=False,
                         check_fields=["gender", "age", "dialect"]
                     )
+                    t_cf = time.time() - t_cf
 
                     # Analyze audio quality
+                    t_qa = time.time()
                     quality = _analyze_audio_quality(voice_path)
+                    t_qa = time.time() - t_qa
                     qualities.append(quality)
+
+                    if verbose:
+                        print(f"    Sample {sample}: gen={t_gen:.1f}s, cf={t_cf:.2f}s, qa={t_qa:.2f}s | {'PASS' if passed else 'FAIL'}")
 
                     try:
                         log_data = json.loads(log_json)

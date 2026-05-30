@@ -433,7 +433,6 @@ def run_single_combination(
             result["duration_cv"] = duration_cv
             result["total_samples"] = total_samples
             result["total_passed"] = total_passed
-            result["peak_vram_mb"] = peak_vram
             result["errors"] = []
 
             # Print per-character breakdown

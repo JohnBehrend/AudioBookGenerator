@@ -215,8 +215,8 @@ def run_single_combination(
 
             t0 = time.time()
 
-            # Characters to benchmark (exclude narrator)
-            benchmark_chars = {k: v for k, v in character_descriptions.items() if k != "narrator"}
+            # Characters to benchmark (include narrator)
+            benchmark_chars = character_descriptions
             char_results = {}  # char_name -> {pass_rate, best_details, qualities}
 
             for char_idx, (char_name, char_desc) in enumerate(benchmark_chars.items()):
@@ -227,6 +227,7 @@ def run_single_combination(
                 best_details = None
                 best_quality = None
                 qualities = []
+                last_regenerated = None
 
                 for sample in range(1, num_samples + 1):
                     # Generate single character voice
@@ -241,6 +242,7 @@ def run_single_combination(
                         seed_characters=None,
                         force_regenerate=True,
                     )
+                    last_regenerated = regenerated
 
                     voice_path = regenerated.get(char_name)
                     if not voice_path or not os.path.exists(voice_path):
@@ -269,16 +271,16 @@ def run_single_combination(
 
                     if passed:
                         passed_count += 1
-                        # Keep the last passing sample (will overwrite with each pass)
                         best_details = details
                         best_quality = quality
 
-                # Keep the best passing voice file
+                # Keep the final voice file
                 final_path = os.path.join(combo_dir, f"{char_name}.wav")
                 if os.path.exists(final_path):
                     os.remove(final_path)
-                if regenerated and char_name in regenerated:
-                    shutil.copy2(regenerated[char_name], final_path)
+                if last_regenerated and char_name in last_regenerated:
+                    shutil.copy2(last_regenerated[char_name], final_path)
+                    generated_voices[char_name] = final_path
 
                 char_results[char_name] = {
                     "pass_rate": passed_count / num_samples,
@@ -295,36 +297,13 @@ def run_single_combination(
                     dialect = best_details.get("dialect", "?") if best_details else "?"
                     print(f"    Pass rate: {passed_count}/{num_samples} ({pr:.0%}) | {gender} / {age} / {dialect}")
 
-            # Also generate narrator voice (1 sample, no validation needed)
-            if verbose:
-                print(f"\n  [Narrator] generating voice...")
-            status_msg, narrator_voices = gen_voice_samples(
-                descriptions={"narrator": character_descriptions.get("narrator", "A neutral, clear narrator voice suitable for audiobook narration")},
-                output_dir=combo_dir,
-                device=device,
-                voice_engine=voice_engine,
-                verbose=False,
-                use_chunkformer=False,
-                seed_characters=None,
-                force_regenerate=True,
-            )
-            if narrator_voices and "narrator" in narrator_voices:
-                generated_voices["narrator"] = narrator_voices["narrator"]
-                char_results["narrator"] = {
-                    "pass_rate": 1.0,
-                    "passed": 1,
-                    "total": 1,
-                    "best_details": None,
-                    "qualities": [_analyze_audio_quality(narrator_voices["narrator"])],
-                }
-
             result["voice_gen_time"] = time.time() - t0
             if verbose:
                 print(f"  [Voice Samples] Generated {len(generated_voices)} voices in {result['voice_gen_time']:.0f}s")
 
             # Aggregate stats
-            total_samples = sum(r["total"] for r in char_results.values() if r["best_details"])
-            total_passed = sum(r["passed"] for r in char_results.values() if r["best_details"])
+            total_samples = sum(r["total"] for r in char_results.values())
+            total_passed = sum(r["passed"] for r in char_results.values())
             overall_pass_rate = total_passed / total_samples if total_samples > 0 else 0
 
             # Duration consistency across characters (from best samples)
@@ -369,10 +348,6 @@ def run_single_combination(
                 print(f"  {'Character':<18} {'Pass':>5} {'Rate':>7} {'Gender':<8} {'Age':<8} {'Dialect':<10} {'Dur':<6} {'SNR':<7} {'Clip%':<6} {'Sil%':<6}")
                 print(f"  {'-'*91}")
                 for char_name, r in sorted(char_results.items()):
-                    if char_name == "narrator":
-                        q = r["qualities"][-1] if r["qualities"] else {}
-                        print(f"  {char_name:<18} {'N/A':>5} {'—':>7} {'—':<8} {'—':<8} {'—':<10} {q.get('duration',0):.1f}s {q.get('snr_db',0):.0f}dB {q.get('clipping_pct',0):.1f}% {q.get('silence_ratio',0)*100:.0f}%")
-                        continue
                     best = r["best_details"] or {}
                     # Use average quality across all samples
                     avg_dur = statistics.mean([q["duration"] for q in r["qualities"]]) if r["qualities"] else 0

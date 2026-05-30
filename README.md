@@ -187,6 +187,53 @@ AudioBookGenerator/
 └── tests/                              # Test suite (227 tests)
 ```
 
+## Benchmarking
+
+Benchmark voice and TTS engines for quality and performance:
+
+```bash
+# Voice-only benchmark (recommended, fast)
+uv run python benchmark_engines.py --voice-only --gpus cuda:0 --verbose
+
+# Full benchmark (voice + TTS, slower)
+uv run python benchmark_engines.py --gpus cuda:0 cuda:1 --concurrency 2
+
+# Specific engines only
+uv run python benchmark_engines.py --voice-only --voice-engines omni vox
+
+# Resume interrupted run
+uv run python benchmark_engines.py --voice-only --resume
+```
+
+### Voice-Only Mode
+
+The `--voice-only` flag benchmarks voice engines (omni, vox, dramabox) without running TTS. For each character, it:
+
+1. Generates 5 voice samples per character for statistical significance
+2. Validates each sample with ChunkFormer (gender and age accuracy)
+3. Measures audio quality metrics (SNR, clipping, silence ratio, duration)
+4. Tracks peak VRAM usage via nvidia-smi
+
+Output includes per-sample `[✓✗]` marks for gender/age correctness, per-character accuracy scores (e.g., `3/5`), and overall field accuracy (e.g., `gender=14/20(70%) age=5/20(25%)`).
+
+### Full Benchmark
+
+Without `--voice-only`, each combination runs the full pipeline: voice generation + TTS audiobook generation. Measures line accuracy (Whisper transcription), speed ratio, and timing.
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--voice-only` | Only benchmark voice engines, skip TTS |
+| `--voice-engines` | Voice engines to test: `omni`, `vox`, `dramabox` |
+| `--tts-engines` | TTS engines to test: `kugelaudio`, `vibevoice`, `echo_tts` |
+| `--gpus` | GPU devices (e.g., `--gpus cuda:0 cuda:1`) |
+| `--concurrency` | TTS concurrency level |
+| `--resume` | Skip already-completed combinations |
+| `--verbose` | Detailed per-sample output |
+
+Results are saved to `benchmark_results/` with per-combination CSV and audio samples.
+
 ## Testing
 
 Run the test suite:

@@ -107,6 +107,17 @@ def _analyze_audio_quality(voice_path: str) -> Dict:
     return result
 
 
+def _get_vram_usage_mb() -> float:
+    """Get current VRAM usage in MB for the primary GPU."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return torch.cuda.memory_allocated(0) / (1024 ** 2)
+    except Exception:
+        pass
+    return 0.0
+
+
 def _free_gpu_memory():
     """Free GPU memory."""
     try:
@@ -141,6 +152,8 @@ def run_single_combination(
     combo_dir = os.path.join(output_base_dir, f"{voice_engine}_v_{tts_engine}_t")
     os.makedirs(combo_dir, exist_ok=True)
 
+    vram_before = _get_vram_usage_mb()
+
     result = {
         "voice_engine": voice_engine,
         "tts_engine": tts_engine,
@@ -154,6 +167,7 @@ def run_single_combination(
         "voice_gen_time": 0.0,
         "tts_gen_time": 0.0,
         "total_time": 0.0,
+        "peak_vram_mb": 0.0,
         "errors": [],
     }
 
@@ -308,8 +322,10 @@ def run_single_combination(
                     print(f"    Pass rate: {passed_count}/{num_samples} ({pr:.0%}) | {gender} / {age} / {dialect}")
 
             result["voice_gen_time"] = time.time() - t0
+            vram_after = _get_vram_usage_mb()
+            result["peak_vram_mb"] = max(vram_after, result["peak_vram_mb"])
             if verbose:
-                print(f"  [Voice Samples] Generated {len(generated_voices)} voices in {result['voice_gen_time']:.0f}s")
+                print(f"  [Voice Samples] Generated {len(generated_voices)} voices in {result['voice_gen_time']:.0f}s (VRAM: {vram_after:.0f}MB)")
 
             # Aggregate stats
             total_samples = sum(r["total"] for r in char_results.values())
@@ -347,6 +363,7 @@ def run_single_combination(
             result["duration_cv"] = duration_cv
             result["total_samples"] = total_samples
             result["total_passed"] = total_passed
+            result["peak_vram_mb"] = _get_vram_usage_mb()
             result["errors"] = []
 
             # Print per-character breakdown
@@ -592,7 +609,7 @@ def main():
         "total_lines", "successful_lines", "failed_lines",
         "avg_ratio", "min_ratio", "max_ratio",
         "voice_gen_time", "tts_gen_time", "total_time",
-        "duration_cv", "total_samples", "total_passed",
+        "peak_vram_mb", "duration_cv", "total_samples", "total_passed",
         "errors",
     ]
 
@@ -663,14 +680,15 @@ def main():
     print("SUMMARY")
     print("=" * 80)
     if args.voice_only:
-        print(f"{'Voice':<12} {'Pass':>7} {'Rate':>7} {'DurCV':>7} {'Time':>10}")
-        print("-" * 45)
+        print(f"{'Voice':<12} {'Pass':>7} {'Rate':>7} {'VRAM':>8} {'DurCV':>7} {'Time':>10}")
+        print("-" * 55)
         sorted_results = sorted(results, key=lambda x: x["avg_ratio"], reverse=True)
         for r in sorted_results:
             rate_str = f"{r['avg_ratio']:.0%}"
             time_str = f"{r['total_time']:.0f}s"
+            vram_str = f"{r.get('peak_vram_mb', 0)/1024:.1f}GB" if r.get('peak_vram_mb', 0) > 0 else "?"
             dur_cv = f"{r.get('duration_cv', 0):.2f}" if r.get('duration_cv') is not None else "?"
-            print(f"{r['voice_engine']:<12} {r['successful_lines']:>3}/{r.get('total_samples', r['successful_lines']+r['failed_lines']):>3} {rate_str:>7} {dur_cv:>7} {time_str:>10}")
+            print(f"{r['voice_engine']:<12} {r['successful_lines']:>3}/{r.get('total_samples', r['successful_lines']+r['failed_lines']):>3} {rate_str:>7} {vram_str:>8} {dur_cv:>7} {time_str:>10}")
     else:
         print(f"{'Voice':<12} {'TTS':<12} {'Status':<12} {'Lines':<10} {'Avg Ratio':<12} {'Time':<12}")
         print("-" * 80)

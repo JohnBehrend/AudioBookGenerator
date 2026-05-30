@@ -134,10 +134,10 @@ def run_single_combination(
         # Step 2: Generate TTS audio using tts_engine (same as UI Stage 5)
         if voice_only:
             # Validate voices with ChunkFormer and retry until all pass
-            max_retries = 3
-            all_passed = False
+            max_retries = 5
             cf_model = None
-            cf_results = {}
+            char_attempts = {}  # char_name -> attempts to pass
+            char_details = {}   # char_name -> {gender, age, dialect, passed}
 
             try:
                 from audiobook_generator.utils import get_chunkformer_model
@@ -146,19 +146,23 @@ def run_single_combination(
                 if verbose:
                     print(f"  [CHUNKFORMER] Failed to load model: {e}")
 
+            # Track which characters still need validation
+            pending = {k for k in generated_voices if k != "narrator"}
+            for char_name in pending:
+                char_attempts[char_name] = 0
+
             for attempt in range(1, max_retries + 1):
-                if attempt > 1:
+                if attempt > 1 and pending:
                     if verbose:
-                        print(f"\n  [CHUNKFORMER] Retry attempt {attempt}/{max_retries} for failed voices")
+                        print(f"\n  [CHUNKFORMER] Retry attempt {attempt}/{max_retries} for {len(pending)} failed voices")
                     # Remove failed voice files so they regenerate
-                    for char_name, passed in cf_results.items():
-                        if not passed:
-                            failed_path = os.path.join(combo_dir, f"{char_name}.wav")
-                            if os.path.exists(failed_path):
-                                os.remove(failed_path)
+                    for char_name in list(pending):
+                        failed_path = os.path.join(combo_dir, f"{char_name}.wav")
+                        if os.path.exists(failed_path):
+                            os.remove(failed_path)
 
                     # Regenerate only failed voices
-                    failed_descriptions = {k: v for k, v in character_descriptions.items() if not cf_results.get(k)}
+                    failed_descriptions = {k: v for k, v in character_descriptions.items() if k in pending}
                     if failed_descriptions:
                         if verbose:
                             print(f"  [CHUNKFORMER] Regenerating {len(failed_descriptions)} failed voices")
@@ -176,22 +180,37 @@ def run_single_combination(
                         t0 = time.time()
                         generated_voices.update(regenerated)
 
-                # Validate all voices
-                cf_results = {}
-                if cf_model and generated_voices:
-                    for char_name, voice_path in generated_voices.items():
-                        if char_name == "narrator":
-                            cf_results[char_name] = True
+                # Validate pending voices
+                still_pending = set()
+                if cf_model:
+                    for char_name in list(pending):
+                        voice_path = generated_voices.get(char_name)
+                        if not voice_path or not os.path.exists(voice_path):
+                            still_pending.add(char_name)
                             continue
+                        char_attempts[char_name] = attempt
                         desc = character_descriptions.get(char_name, "")
-                        passed, _ = _validate_with_chunkformer(
+                        passed, log_json = _validate_with_chunkformer(
                             voice_path, desc, cf_model, verbose=verbose,
                             check_fields=["gender", "age", "dialect"]
                         )
-                        cf_results[char_name] = passed
+                        try:
+                            log_data = json.loads(log_json)
+                            char_details[char_name] = {
+                                "gender": log_data["classification"]["gender"],
+                                "age": log_data["classification"]["age"],
+                                "dialect": log_data["classification"]["dialect"],
+                                "passed": passed,
+                                "attempts": attempt,
+                            }
+                        except (json.JSONDecodeError, KeyError):
+                            char_details[char_name] = {"passed": passed, "attempts": attempt}
 
-                all_passed = all(cf_results.values()) if cf_results else True
-                if all_passed:
+                        if not passed:
+                            still_pending.add(char_name)
+
+                pending = still_pending
+                if not pending:
                     break
 
             # Build voices_map from generated files
@@ -205,9 +224,10 @@ def run_single_combination(
                 return result
 
             # Calculate validation stats
-            total_chars = len([k for k in generated_voices if k != "narrator"])
-            passed_chars = sum(1 for v in cf_results.values() if v)
+            total_chars = len(char_details)
+            passed_chars = sum(1 for d in char_details.values() if d.get("passed"))
             failed_chars = total_chars - passed_chars
+            avg_attempts = sum(d.get("attempts", 0) for d in char_details.values()) / total_chars if total_chars > 0 else 0
 
             result["status"] = "voice_only"
             result["total_lines"] = len(generated_voices)
@@ -216,8 +236,25 @@ def run_single_combination(
             result["avg_ratio"] = passed_chars / total_chars if total_chars > 0 else 1.0
             result["min_ratio"] = 0.0 if failed_chars > 0 else 1.0
             result["max_ratio"] = 1.0
-            if verbose:
-                print(f"  [VOICE ONLY] Generated {len(generated_voices)} voice samples, {passed_chars}/{total_chars} passed ChunkFormer validation")
+
+            # Print per-character breakdown
+            if verbose and char_details:
+                print(f"\n  {'='*50}")
+                print(f"  Voice Quality Results ({voice_engine})")
+                print(f"  {'='*50}")
+                print(f"  {'Character':<20} {'Gender':<10} {'Age':<10} {'Dialect':<12} {'Pass':<6} {'Tries':<6}")
+                print(f"  {'-'*64}")
+                for char_name, details in sorted(char_details.items()):
+                    gender = details.get("gender", "?")
+                    age = details.get("age", "?")
+                    dialect = details.get("dialect", "?")
+                    passed = "✓" if details.get("passed") else "✗"
+                    tries = details.get("attempts", 0)
+                    print(f"  {char_name:<20} {gender:<10} {age:<10} {dialect:<12} {passed:<6} {tries:<6}")
+                print(f"  {'-'*64}")
+                print(f"  Score: {passed_chars}/{total_chars} passed, avg {avg_attempts:.1f} tries per voice")
+                print(f"  {'='*50}\n")
+
             return result
 
         if verbose:
@@ -511,15 +548,22 @@ def main():
     print("\n" + "=" * 80)
     print("SUMMARY")
     print("=" * 80)
-    print(f"{'Voice':<12} {'TTS':<12} {'Status':<12} {'Lines':<10} {'Avg Ratio':<12} {'Time':<12}")
-    print("-" * 80)
-
-    # Sort by avg_ratio descending
-    sorted_results = sorted(results, key=lambda x: x["avg_ratio"], reverse=True)
-    for r in sorted_results:
-        lines_str = f"{r['successful_lines']}/{r['total_lines']}"
-        time_str = f"{r['total_time']:.0f}s"
-        print(f"{r['voice_engine']:<12} {r['tts_engine']:<12} {r['status']:<12} {lines_str:<10} {r['avg_ratio']:<12.3f} {time_str:<12}")
+    if args.voice_only:
+        print(f"{'Voice':<12} {'Pass':<8} {'Failed':<8} {'Score':<10} {'Time':<12}")
+        print("-" * 50)
+        sorted_results = sorted(results, key=lambda x: x["avg_ratio"], reverse=True)
+        for r in sorted_results:
+            score_str = f"{r['avg_ratio']:.0%}"
+            time_str = f"{r['total_time']:.0f}s"
+            print(f"{r['voice_engine']:<12} {r['successful_lines']:<8} {r['failed_lines']:<8} {score_str:<10} {time_str:<12}")
+    else:
+        print(f"{'Voice':<12} {'TTS':<12} {'Status':<12} {'Lines':<10} {'Avg Ratio':<12} {'Time':<12}")
+        print("-" * 80)
+        sorted_results = sorted(results, key=lambda x: x["avg_ratio"], reverse=True)
+        for r in sorted_results:
+            lines_str = f"{r['successful_lines']}/{r['total_lines']}"
+            time_str = f"{r['total_time']:.0f}s"
+            print(f"{r['voice_engine']:<12} {r['tts_engine']:<12} {r['status']:<12} {lines_str:<10} {r['avg_ratio']:<12.3f} {time_str:<12}")
 
     print(f"\nResults saved to: {csv_path}")
     print(f"Audio files saved to: {output_base}")

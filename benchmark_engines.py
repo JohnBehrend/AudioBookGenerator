@@ -215,6 +215,11 @@ def run_single_combination(
 
             t0 = time.time()
 
+            # Create one VoiceMapper to reuse across all samples (avoids model reload)
+            from audiobook_generator.voice_mapper import VoiceMapper as VMMapper
+            benchmark_mapper = VMMapper(output_dir=combo_dir, device=device, tts_engine=voice_engine)
+            shared_engine = benchmark_mapper.get_engine()
+
             # Characters to benchmark (include narrator)
             benchmark_chars = character_descriptions
             char_results = {}  # char_name -> {pass_rate, best_details, qualities}
@@ -230,7 +235,7 @@ def run_single_combination(
                 last_regenerated = None
 
                 for sample in range(1, num_samples + 1):
-                    # Generate single character voice
+                    # Generate single character voice using shared engine
                     sample_desc = {char_name: char_desc}
                     status_msg, regenerated = gen_voice_samples(
                         descriptions=sample_desc,
@@ -241,6 +246,7 @@ def run_single_combination(
                         use_chunkformer=False,
                         seed_characters=None,
                         force_regenerate=True,
+                        engine=shared_engine,
                     )
                     last_regenerated = regenerated
 
@@ -274,13 +280,17 @@ def run_single_combination(
                         best_details = details
                         best_quality = quality
 
-                # Keep the final voice file
+                # Keep the final voice file (copy from last generated sample)
                 final_path = os.path.join(combo_dir, f"{char_name}.wav")
-                if os.path.exists(final_path):
-                    os.remove(final_path)
                 if last_regenerated and char_name in last_regenerated:
-                    shutil.copy2(last_regenerated[char_name], final_path)
-                    generated_voices[char_name] = final_path
+                    src_path = last_regenerated[char_name]
+                    # Ensure absolute path
+                    if not os.path.isabs(src_path):
+                        src_path = os.path.abspath(src_path)
+                    if os.path.exists(src_path):
+                        if os.path.abspath(src_path) != os.path.abspath(final_path):
+                            shutil.copy2(src_path, final_path)
+                        generated_voices[char_name] = os.path.abspath(final_path)
 
                 char_results[char_name] = {
                     "pass_rate": passed_count / num_samples,

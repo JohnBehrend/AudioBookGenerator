@@ -404,7 +404,8 @@ def generate_tts_for_line(
     if os.path.exists(temp_path):
         os.unlink(temp_path)
 
-    return is_generation_success(max_ratio, MIN_RATIO_THRESHOLD), max_ratio
+    final_ratio = max_ratio if max_ratio != float('-inf') else 0.0
+    return is_generation_success(final_ratio, MIN_RATIO_THRESHOLD), final_ratio
 
 
 # ============================================================================
@@ -779,11 +780,12 @@ def generate_audiobook_from_chapters(
                                         os.unlink(temp_path)
                                 with completed_lock:
                                     completed_count += 1
+                                safe_ratio = int(state['max_ratio'] * 100) if state['max_ratio'] != float('-inf') else 0
                                 if verbose:
-                                    print(f"[LINE_PROGRESS] Chapter {item['chapter_idx']}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(state['max_ratio'] * 100)}")
+                                    print(f"[LINE_PROGRESS] Chapter {item['chapter_idx']}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {safe_ratio}")
                                 progress_handler.update(
                                     completed_count / total_items,
-                                    desc=f"Processing Chapter {item['chapter_idx']} Line {item['line_idx']} Ratio {int(state['max_ratio'] * 100)}"
+                                    desc=f"Processing Chapter {item['chapter_idx']} Line {item['line_idx']} Ratio {safe_ratio}"
                                 )
 
                         validation_queue.task_done()

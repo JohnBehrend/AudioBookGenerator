@@ -33,7 +33,7 @@ class VoxEngine(TTSEngine):
             if model is not None:
                 return
             model_path = "openbmb/VoxCPM2"
-            model = VoxCPM.from_pretrained(model_path, load_denoiser=False)
+            model = VoxCPM.from_pretrained(model_path, load_denoiser=False).to(device)
 
         response_queue.put({"type": "ready"})
 
@@ -158,9 +158,21 @@ class VoxEngine(TTSEngine):
         return resp.get("success", False)
 
     def _get_ref_text(self, voice_path: str, validation_model: Optional[Any], verbose: bool) -> str:
+        if validation_model is None:
+            if verbose:
+                print(f"  [VoxCPM ref_text] No validation model, using static_voice_text")
+            return DEFAULTS["static_voice_text"]
+
         try:
-            from ..utils import transcribe_audio_with_whisper
-            ref_text, _, _ = transcribe_audio_with_whisper(validation_model, voice_path)
-            return ref_text
-        except Exception:
+            from ..utils import transcribe_audio_for_ref_text
+            ref_text = transcribe_audio_for_ref_text(validation_model, voice_path, verbose)
+            if ref_text:
+                return ref_text
+            else:
+                if verbose:
+                    print(f"  [VoxCPM ref_text] Transcription returned empty, using static_voice_text")
+                return DEFAULTS["static_voice_text"]
+        except Exception as e:
+            if verbose:
+                print(f"  [VoxCPM ref_text] Transcription failed: {e}, using static_voice_text")
             return DEFAULTS["static_voice_text"]

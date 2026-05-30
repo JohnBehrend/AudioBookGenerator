@@ -413,6 +413,7 @@ def crop_to_ref_text(audio_path: str, output_path: str, ref_words: List[str], tr
 
     Uses Whisper word-level timestamps to find the contiguous span of
     reference words in the transcription, then crops the audio to that range.
+    Ensures the crop starts at a valid reference word, not at garbled prefix.
 
     Args:
         audio_path: Path to the source audio file (.wav)
@@ -461,9 +462,25 @@ def crop_to_ref_text(audio_path: str, output_path: str, ref_words: List[str], tr
     if best_len < 3:
         return False
 
-    buffer_ms = 1000
-    crop_start_ms = max(0, int(start_times[best_start] * 1000) - buffer_ms)
-    crop_end_ms = min(len(seg), int(end_times[best_end - 1] * 1000) + buffer_ms)
+    # Find the first word in the best span that is actually a reference word
+    # This ensures we don't start at garbled prefix text
+    actual_start = best_start
+    for k in range(best_start, best_end):
+        if transcribed_words[k] in ref_set:
+            actual_start = k
+            break
+
+    # Small buffer at start (200ms) to avoid clipping the beginning of the word
+    # Large buffer at end (1000ms) to ensure we capture the full word
+    start_buffer_ms = 200
+    end_buffer_ms = 1000
+
+    crop_start_ms = max(0, int(start_times[actual_start] * 1000) - start_buffer_ms)
+    crop_end_ms = min(len(seg), int(end_times[best_end - 1] * 1000) + end_buffer_ms)
+
+    if verbose:
+        print(f"  [Crop] Start at '{transcribed_words[actual_start]}' ({start_times[actual_start]:.2f}s), end at '{transcribed_words[best_end-1]}' ({end_times[best_end-1]:.2f}s)")
+
     cropped = seg[crop_start_ms:crop_end_ms]
     cropped.export(output_path, format="wav")
     return True

@@ -35,6 +35,57 @@ def normalize_script(text: str) -> str:
     return full_script
 
 
+def clean_text_for_tts(text: str) -> str:
+    """Clean text before sending to TTS engine.
+
+    Removes annotations, stage directions, and other non-speech content
+    that could cause extra text or unclear audio in the output.
+
+    Args:
+        text: Raw input text from EPUB parsing
+
+    Returns:
+        Cleaned text suitable for TTS generation
+    """
+    if not text or not text.strip():
+        return ""
+
+    # Remove parenthetical annotations (e.g., "(sighing)", "(whispering)")
+    # Use a loop to handle nested parentheses
+    while '(' in text and ')' in text:
+        new_text = re.sub(r'\([^()]*\)', '', text)
+        if new_text == text:
+            break  # No more non-nested matches, stop to avoid infinite loop
+        text = new_text
+
+    # Remove bracket annotations (e.g., "[whispering]", "[stage direction]")
+    while '[' in text and ']' in text:
+        new_text = re.sub(r'\[[^\[\]]*\]', '', text)
+        if new_text == text:
+            break
+        text = new_text
+
+    # Remove asterisk-based emphasis/directions (e.g., "*shouting*"), handling nesting
+    while '*' in text:
+        new_text = re.sub(r'\*[^*]*\*', '', text)
+        if new_text == text:
+            # Orphan asterisks that don't form pairs, just remove them
+            text = text.replace('*', '')
+            break
+        text = new_text
+
+    # Remove spaces before punctuation (left behind by annotation removal)
+    text = re.sub(r' +([?.!,;:])', r'\1', text)
+
+    # Normalize whitespace (collapse multiple spaces)
+    text = re.sub(r'  +', ' ', text)
+
+    # Strip leading/trailing whitespace
+    text = text.strip()
+
+    return text
+
+
 def add_postfix(script: str, postfix: Optional[str]) -> Tuple[str, Optional[str]]:
     """Add postfix to script for validation detection.
 
@@ -66,7 +117,7 @@ def prepare_script_for_tts(
 ) -> Tuple[str, Optional[str]]:
     """Prepare a script for TTS generation.
 
-    Combines normalize_script and add_postfix into a single operation.
+    Cleans text, normalizes, and adds postfix for validation.
 
     Args:
         text: Raw input text
@@ -78,7 +129,11 @@ def prepare_script_for_tts(
     if not text or not text.strip():
         return "", None
 
-    normalized = normalize_script(text)
+    cleaned = clean_text_for_tts(text)
+    if not cleaned:
+        return "", None
+
+    normalized = normalize_script(cleaned)
     return add_postfix(normalized, short_text_postfix)
 
 
@@ -170,9 +225,12 @@ def calculate_clip_points(
     end_times: List[float],
     postfix_detect_token: Optional[str],
     last_valid_token: Optional[str],
+    input_tokens: Optional[List[str]] = None,
     verbose: bool = False
 ) -> Optional[Tuple[float, float]]:
     """Calculate audio clip points based on detected tokens.
+
+    Clips both start (prefix garbage) and end (postfix) of the audio.
 
     Args:
         segments: List of distilled word tokens from STT
@@ -180,6 +238,7 @@ def calculate_clip_points(
         end_times: List of end times for each segment
         postfix_detect_token: Token to use as postfix marker (None to skip)
         last_valid_token: Last valid token for fallback clipping
+        input_tokens: Expected input tokens for finding first valid word
         verbose: Enable debug output
 
     Returns:
@@ -189,27 +248,78 @@ def calculate_clip_points(
     if not segments or not start_times or not end_times:
         return None
 
+    # Find start clip point: match a sequence of input tokens to avoid false matches
+    clip_start_ms = 0
+    start_found = False
+    if input_tokens and len(input_tokens) >= 2:
+        # Find the first single-token match of any input word in the transcription.
+        # This anchors the search so we don't accept windows that start too late.
+        first_single_match = None
+        for i, seg in enumerate(segments):
+            if seg in input_tokens[:5]:
+                first_single_match = i
+                break
+
+        # Try to find a sequence of 3 input tokens in the transcription
+        # Try different starting positions in input to handle first-word mismatches
+        match_length = min(3, len(input_tokens))
+        best_match_start = None
+
+        for skip in range(min(3, len(input_tokens) - match_length + 1)):
+            target = input_tokens[skip:skip + match_length]
+            # Limit search to windows that start at or before the first single match
+            search_limit = (first_single_match + 1) if first_single_match is not None else len(segments) - match_length + 1
+            for i in range(min(search_limit, len(segments) - match_length + 1)):
+                window = segments[i:i + match_length]
+                matches = sum(1 for t, s in zip(target, window) if t == s)
+                if matches >= match_length - 1:
+                    best_match_start = i
+                    break
+            if best_match_start is not None:
+                break
+
+        if best_match_start is not None:
+            clip_start_ms = max(0, int(start_times[best_match_start] * 1000) - 200)
+            start_found = True
+            if verbose:
+                print(f"PREFIX DETECTED CLIPPING at '{segments[best_match_start]}' ({start_times[best_match_start]:.2f}s)")
+
+        # Fallback: if sequence not found, match any of the first 5 input tokens
+        if not start_found:
+            fallback_tokens = input_tokens[:5]
+            for i, seg in enumerate(segments):
+                if seg in fallback_tokens:
+                    clip_start_ms = max(0, int(start_times[i] * 1000) - 200)
+                    start_found = True
+                    if verbose:
+                        print(f"PREFIX FALLBACK CLIPPING at '{seg}' ({start_times[i]:.2f}s)")
+                    break
+
+    # Find end clip point: before postfix or at last valid token
+    clip_end_ms = None
+
     if postfix_detect_token and postfix_detect_token in segments:
         try:
             # Find last occurrence of postfix token
             postfix_start_index = len(segments) - 1 - segments[::-1].index(postfix_detect_token)
 
-            if len(end_times) > postfix_start_index + 1:
-                clip_end_s = end_times[postfix_start_index + 1]
+            # Clip before the postfix starts with a small buffer
+            # Use midpoint between postfix start and next word's end for safety
+            if postfix_start_index == 0:
+                # No content before postfix, clip to 0 so guard catches it
+                clip_end_s = 0.0
+            elif postfix_start_index + 1 < len(segments):
+                clip_end_s = (start_times[postfix_start_index] + end_times[postfix_start_index + 1]) / 2
             else:
-                clip_end_s = end_times[-1]
-
-            clip_start_s = start_times[postfix_start_index]
-            clip_start_ms = (clip_start_s + clip_end_s) * 500
+                clip_end_s = start_times[postfix_start_index]
+            clip_end_ms = clip_end_s * 1000
 
             if verbose:
-                print(f"POSTFIX DETECTED CLIPPING to {clip_start_s} - {clip_end_s}")
-
-            return 0, clip_start_ms
+                print(f"POSTFIX DETECTED CLIPPING at {clip_end_s}s ({clip_end_ms}ms)")
         except (ValueError, IndexError):
             pass
 
-    if last_valid_token and last_valid_token in segments:
+    if clip_end_ms is None and last_valid_token and last_valid_token in segments:
         try:
             lastvalid_index = len(segments) - 1 - segments[::-1].index(last_valid_token)
             clip_end_s = end_times[lastvalid_index]
@@ -217,15 +327,26 @@ def calculate_clip_points(
 
             if verbose:
                 print(f"POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end_s}")
-
-            return 0, clip_end_ms
         except (ValueError, IndexError):
             pass
 
-    if verbose:
-        print("No clipping needed")
+    # If neither start nor end clipping is needed
+    if not start_found and clip_end_ms is None:
+        if verbose:
+            print("No clipping needed")
+        return None
 
-    return None
+    # If only start clipping is needed, use full audio length
+    if clip_end_ms is None:
+        clip_end_ms = end_times[-1] * 1000
+
+    # Guard: if start >= end, the content is empty or garbled
+    if clip_start_ms >= clip_end_ms:
+        if verbose:
+            print(f"CLIP START ({clip_start_ms}ms) >= END ({clip_end_ms}ms), skipping")
+        return None
+
+    return clip_start_ms, clip_end_ms
 
 
 def apply_audio_clipping(

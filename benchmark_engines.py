@@ -1,0 +1,435 @@
+#!/usr/bin/env python3
+"""
+Benchmark script to profile all combinations of voice and TTS engines.
+
+Uses the exact same interface as the Gradio UI:
+- gen_voice_samples() for voice generation (voice_engine only)
+- generate_audiobook_from_chapters() for TTS generation (tts_engine)
+
+Tests each combination on the first chapter of Pride & Prejudice and saves
+results to a CSV file with accuracy metrics and timing.
+
+Usage:
+    .venv/bin/python benchmark_engines.py [--gpus cuda:0] [--concurrency 1]
+"""
+
+import os
+import re
+import sys
+import csv
+import json
+import time
+import shutil
+import argparse
+import tempfile
+from pathlib import Path
+from typing import Dict, List, Optional
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from audiobook_generator.config import DEFAULTS, AUDIO_SETTINGS
+from audiobook_generator import parse_chapter
+from audiobook_generator.llm_label_speakers import label_speakers
+from audiobook_generator.llm_describe_character import describe_characters
+from audiobook_generator.generate_voice_samples import generate_voice_samples as gen_voice_samples
+from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
+from audiobook_generator.utils import parse_map_file
+from audiobook_generator.pipeline import MIN_RATIO_THRESHOLD
+
+# Voice engines that can generate voice samples
+VOICE_ENGINES = ["omni", "vox", "dramabox"]
+
+# TTS engines that can generate line audio
+TTS_ENGINES = ["moss", "omni", "vox", "vibevoice", "dramabox"]
+
+# Test EPUB
+TEST_EPUB = Path(__file__).parent / "voice_test" / "test_pride_and_prejudice.epub"
+
+
+def _free_gpu_memory():
+    """Free GPU memory."""
+    try:
+        import torch
+        torch.cuda.empty_cache()
+    except ImportError:
+        pass
+    import gc
+    gc.collect()
+
+
+def run_single_combination(
+    voice_engine: str,
+    tts_engine: str,
+    chapters: List,
+    chapter_maps: Dict,
+    character_descriptions: Dict,
+    output_base_dir: str,
+    device: str,
+    gpus: Optional[List[str]],
+    concurrency: int,
+    whisper_cpu: bool,
+    verbose: bool = False,
+) -> Dict:
+    """Run a single voice_engine + tts_engine combination and return metrics.
+
+    Uses the exact same interface as the Gradio UI pipeline:
+    1. gen_voice_samples() with voice_engine
+    2. generate_audiobook_from_chapters() with tts_engine
+    """
+    combo_dir = os.path.join(output_base_dir, f"{voice_engine}_v_{tts_engine}_t")
+    os.makedirs(combo_dir, exist_ok=True)
+
+    result = {
+        "voice_engine": voice_engine,
+        "tts_engine": tts_engine,
+        "status": "failed",
+        "total_lines": 0,
+        "successful_lines": 0,
+        "failed_lines": 0,
+        "avg_ratio": 0.0,
+        "min_ratio": 1.0,
+        "max_ratio": 0.0,
+        "voice_gen_time": 0.0,
+        "tts_gen_time": 0.0,
+        "total_time": 0.0,
+        "errors": [],
+    }
+
+    try:
+        # Step 1: Generate voice samples using voice_engine (same as UI Stage 4)
+        if verbose:
+            print(f"\n  [Voice Samples] voice_engine={voice_engine}, device={device}")
+
+        t0 = time.time()
+        status_msg, generated_voices = gen_voice_samples(
+            descriptions=character_descriptions,
+            output_dir=combo_dir,
+            device=device,
+            voice_engine=voice_engine,
+            verbose=verbose,
+            use_chunkformer=False,
+            seed_characters=None,
+        )
+        result["voice_gen_time"] = time.time() - t0
+
+        if verbose:
+            print(f"  [Voice Samples] {status_msg}")
+
+        if not generated_voices:
+            result["errors"].append("No voice samples generated")
+            return result
+
+        # Build voices_map from generated files
+        voices_map = {}
+        for f in Path(combo_dir).glob("*.wav"):
+            if not f.name.endswith(".tmp.wav"):
+                voices_map[f.stem] = str(f)
+
+        if not voices_map:
+            result["errors"].append("No voice samples generated")
+            return result
+
+        # Step 2: Generate TTS audio using tts_engine (same as UI Stage 5)
+        if verbose:
+            print(f"  [TTS] tts_engine={tts_engine}, concurrency={concurrency}")
+
+        t1 = time.time()
+
+        # Capture [LINE_PROGRESS] output to extract per-line ratios
+        import io
+        import contextlib
+
+        stdout_capture = io.StringIO()
+        capture_ctx = contextlib.redirect_stdout(stdout_capture) if not verbose else contextlib.nullcontext()
+
+        with capture_ctx:
+            status_msg, chapters_processed = generate_audiobook_from_chapters(
+                chapters=chapters,
+                chapter_maps=chapter_maps,
+                voices_map=voices_map,
+                output_dir=combo_dir,
+                device=device,
+                tts_engine=tts_engine,
+                max_chapters=1,
+                verbose=True,
+                whisper_cpu=whisper_cpu,
+                concurrency=concurrency,
+                gpus=gpus,
+                whisper_concurrency=1,
+                whisper_fast=True,
+            )
+
+        result["tts_gen_time"] = time.time() - t1
+
+        if verbose:
+            print(f"  [TTS] {status_msg}")
+
+        # Parse per-line ratios from [LINE_PROGRESS] output
+        captured = stdout_capture.getvalue()
+        ratio_pattern = re.compile(r'\[LINE_PROGRESS\].*Ratio:\s*(\d+)')
+        ratios = []
+        for match in ratio_pattern.finditer(captured):
+            ratio_pct = int(match.group(1))
+            ratios.append(ratio_pct / 100.0)
+
+        # Count total lines from chapter
+        result["total_lines"] = len(chapters[0]) if chapters else 0
+
+        if ratios:
+            result["successful_lines"] = sum(1 for r in ratios if r >= MIN_RATIO_THRESHOLD)
+            result["failed_lines"] = sum(1 for r in ratios if r < MIN_RATIO_THRESHOLD)
+            result["avg_ratio"] = sum(ratios) / len(ratios)
+            result["min_ratio"] = min(ratios)
+            result["max_ratio"] = max(ratios)
+            result["status"] = "completed"
+        else:
+            result["status"] = "no_lines_processed"
+            if verbose:
+                print(f"  [TTS] No ratios captured from output")
+
+    except Exception as e:
+        result["errors"].append(str(e))
+        if verbose:
+            import traceback
+            traceback.print_exc()
+
+    result["total_time"] = result["voice_gen_time"] + result["tts_gen_time"]
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Benchmark TTS engine combinations")
+    parser.add_argument("--output-dir", default="benchmark_results", help="Output directory")
+    parser.add_argument("--gpus", nargs="+", default=["cuda:0"], help="GPU devices")
+    parser.add_argument("--concurrency", type=int, default=1, help="TTS concurrency")
+    parser.add_argument("--whisper-cpu", action="store_true", help="Run Whisper on CPU")
+    parser.add_argument("--voice-engines", nargs="+", choices=VOICE_ENGINES, default=None,
+                        help="Voice engines to test (default: all)")
+    parser.add_argument("--tts-engines", nargs="+", choices=TTS_ENGINES, default=None,
+                        help="TTS engines to test (default: all)")
+    parser.add_argument("--verbose", action="store_true", help="Verbose output")
+    parser.add_argument("--resume", action="store_true", help="Resume from existing results, skipping done combinations")
+    args = parser.parse_args()
+
+    voice_engines = args.voice_engines or VOICE_ENGINES
+    tts_engines = args.tts_engines or TTS_ENGINES
+
+    print(f"AudioBook Engine Benchmark")
+    print(f"==========================")
+    print(f"Test EPUB: {TEST_EPUB}")
+    print(f"Voice engines: {voice_engines}")
+    print(f"TTS engines: {tts_engines}")
+    print(f"Combinations: {len(voice_engines) * len(tts_engines)}")
+    print(f"Output: {args.output_dir}")
+    print()
+
+    # Find existing output directory for resume
+    existing_output_base = None
+    done_combos = set()
+    existing_results = []
+
+    if args.resume:
+        for entry in sorted(Path(args.output_dir).glob("2026*"), reverse=True):
+            if entry.is_dir():
+                existing_output_base = str(entry)
+                break
+        if existing_output_base:
+            print(f"[RESUME] Found existing run: {existing_output_base}")
+
+            # Load CSV results if available
+            for csv_file in sorted(Path(args.output_dir).glob("benchmark_*.csv"), reverse=True):
+                with open(csv_file) as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        existing_results.append(row)
+                if existing_results:
+                    break
+
+            if existing_results:
+                done_combos = {(r["voice_engine"], r["tts_engine"]) for r in existing_results if r.get("status") == "completed"}
+                print(f"[RESUME] Skipping {len(done_combos)} completed combinations (from CSV)")
+            else:
+                # Fallback: use directory contents to determine what's done
+                for subdir in Path(existing_output_base).glob("*_v_*_t"):
+                    if subdir.is_dir():
+                        mp3_count = len(list(subdir.glob("chapter_*.mp3")))
+                        name = subdir.name
+                        parts = name.replace("_v_", "|").replace("_t", "").split("|")
+                        if len(parts) == 2:
+                            ve_name, te_name = parts
+                            if mp3_count > 0:
+                                done_combos.add((ve_name, te_name))
+                                existing_results.append({"voice_engine": ve_name, "tts_engine": te_name, "status": "completed"})
+                print(f"[RESUME] Skipping {len(done_combos)} completed combinations (from directories)")
+        else:
+            existing_output_base = os.path.join(args.output_dir, time.strftime("%Y%m%d_%H%M%S"))
+    else:
+        existing_output_base = os.path.join(args.output_dir, time.strftime("%Y%m%d_%H%M%S"))
+
+    # Parse EPUB and label speakers (once, shared across all combinations)
+    print("[1/3] Parsing EPUB...")
+    chapters = parse_chapter.parse_epub_to_chapters(str(TEST_EPUB), max_chapters=1)
+    if not chapters:
+        print("ERROR: Failed to parse EPUB")
+        sys.exit(1)
+
+    print(f"  Parsed {len(chapters)} chapter(s), {len(chapters[0])} lines")
+
+    # Cache directory for labeling/descriptions (persists across runs)
+    cache_dir = Path(args.output_dir) / ".benchmark_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write chapter files for labeling
+    parse_chapter.write_chapters_to_txt(chapters, str(cache_dir))
+
+    # Label speakers only if map files don't exist
+    map_files = sorted(cache_dir.glob("chapter_*.map.json"))
+    if not map_files:
+        print("[2/3] Labeling speakers...")
+        for txt_file in sorted(cache_dir.glob("chapter_*.txt")):
+            label_speakers(
+                str(txt_file),
+                api_key="lm-studio",
+                port=2136,
+                model="coder-model",
+                num_attempts=1,
+                verbose=args.verbose,
+            )
+    else:
+        print("[2/3] Labeling speakers... SKIPPED (cached)")
+
+    # Load chapter maps
+    chapter_maps = {}
+    for map_file in sorted(cache_dir.glob("chapter_*.map.json")):
+        result = parse_map_file(map_file)
+        if result:
+            char_map, line_map = result
+            chapter_idx = int(map_file.stem.replace("chapter_", "").replace(".map", ""))
+            chapter_maps[chapter_idx] = (char_map, line_map)
+
+    # Describe characters only if not cached
+    desc_file = cache_dir / "characters_descriptions.json"
+    if not desc_file.exists():
+        print("[3/3] Describing characters...")
+        desc_result = describe_characters(
+            output_dir=str(cache_dir),
+            chapters_dir=str(cache_dir),
+            api_key="lm-studio",
+            port=2136,
+            model="coder-model",
+            voice_engine="omni",
+            verbose=args.verbose,
+        )
+        if isinstance(desc_result, tuple):
+            char_descriptions = desc_result[1]
+        else:
+            char_descriptions = desc_result
+    else:
+        print("[3/3] Describing characters... SKIPPED (cached)")
+        with open(desc_file) as f:
+            char_descriptions = json.load(f)
+
+    print(f"\n  Characters: {len(char_descriptions)}")
+    print(f"\nStarting benchmark...")
+    print("=" * 80)
+
+    # Run combinations
+    results = list(existing_results) if args.resume else []
+    total_combos = len(voice_engines) * len(tts_engines)
+    combo_num = 0
+
+    output_base = existing_output_base
+    os.makedirs(output_base, exist_ok=True)
+
+    # CSV path — written incrementally after each combination so we can resume anytime
+    csv_path = os.path.join(args.output_dir, f"benchmark_{time.strftime('%Y%m%d_%H%M%S')}.csv")
+    fieldnames = [
+        "voice_engine", "tts_engine", "status",
+        "total_lines", "successful_lines", "failed_lines",
+        "avg_ratio", "min_ratio", "max_ratio",
+        "voice_gen_time", "tts_gen_time", "total_time",
+        "errors",
+    ]
+
+    # Write header once
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+    for ve in voice_engines:
+        print(f"\n{'='*60}")
+        print(f"Voice engine: {ve}")
+        print(f"{'='*60}")
+
+        prev_te = None
+        for te in tts_engines:
+            combo_num += 1
+
+            # Skip completed combinations on resume
+            if args.resume and (ve, te) in done_combos:
+                print(f"\n[{combo_num}/{total_combos}] voice={ve}, tts={te} — SKIPPED (already completed)")
+                prev_te = te
+                continue
+
+            print(f"\n[{combo_num}/{total_combos}] voice={ve}, tts={te}")
+            print("-" * 60)
+
+            # Cleanup when TTS engine changes to free GPU memory
+            if prev_te is not None:
+                print(f"  [MEMORY] Cleaning up between engine switches")
+                _free_gpu_memory()
+
+            result = run_single_combination(
+                voice_engine=ve,
+                tts_engine=te,
+                chapters=chapters,
+                chapter_maps=chapter_maps,
+                character_descriptions=char_descriptions,
+                output_base_dir=output_base,
+                device=args.gpus[0],
+                gpus=args.gpus,
+                concurrency=args.concurrency,
+                whisper_cpu=args.whisper_cpu,
+                verbose=args.verbose,
+            )
+            results.append(result)
+
+            # Append result to CSV immediately so we can resume anytime
+            with open(csv_path, "a", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                row = result.copy()
+                row["errors"] = "; ".join(row["errors"])
+                writer.writerow(row)
+
+            print(f"  Status: {result['status']}")
+            print(f"  Lines: {result['successful_lines']}/{result['total_lines']} successful")
+            print(f"  Avg ratio: {result['avg_ratio']:.3f}")
+            print(f"  Time: voice={result['voice_gen_time']:.0f}s, tts={result['tts_gen_time']:.0f}s")
+
+            prev_te = te
+
+        # Cleanup after all TTS engines for this voice engine
+        print(f"\n  [MEMORY] Cleaning up after voice engine: {ve}")
+        _free_gpu_memory()
+
+    # Print summary table
+    print("\n" + "=" * 80)
+    print("SUMMARY")
+    print("=" * 80)
+    print(f"{'Voice':<12} {'TTS':<12} {'Status':<12} {'Lines':<10} {'Avg Ratio':<12} {'Time':<12}")
+    print("-" * 80)
+
+    # Sort by avg_ratio descending
+    sorted_results = sorted(results, key=lambda x: x["avg_ratio"], reverse=True)
+    for r in sorted_results:
+        lines_str = f"{r['successful_lines']}/{r['total_lines']}"
+        time_str = f"{r['total_time']:.0f}s"
+        print(f"{r['voice_engine']:<12} {r['tts_engine']:<12} {r['status']:<12} {lines_str:<10} {r['avg_ratio']:<12.3f} {time_str:<12}")
+
+    print(f"\nResults saved to: {csv_path}")
+    print(f"Audio files saved to: {output_base}")
+
+
+if __name__ == "__main__":
+    main()

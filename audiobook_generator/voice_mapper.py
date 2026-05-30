@@ -537,7 +537,6 @@ class VoiceMapper:
         if success:
             self.add_voice_path(character_name, output_file)
 
-        engine.shutdown_worker()
         return success, output_file, duration
 
     def build_voice_clone_prompt(

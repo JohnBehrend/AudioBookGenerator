@@ -309,7 +309,9 @@ def _validate_and_clip_audio(
 
         clip_points = calculate_clip_points(
             segments, start_times, end_times,
-            postfix_detect_token, last_valid_token, verbose=tts_config.verbose
+            postfix_detect_token, last_valid_token,
+            input_tokens=distill_string(full_script).split(),
+            verbose=tts_config.verbose
         )
         if clip_points is not None:
             apply_audio_clipping(output_path, clip_points, verbose=tts_config.verbose)

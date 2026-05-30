@@ -752,6 +752,44 @@ def transcribe_audio_with_whisper(validation_model: Any, audio_path: str) -> Tup
     return detected_string, start_times, end_times
 
 
+def transcribe_audio_for_ref_text(validation_model: Any, audio_path: str, verbose: bool = False) -> Optional[str]:
+    """Transcribe audio to get reference text for voice cloning.
+
+    Unlike transcribe_audio_with_whisper, this returns the raw transcribed text
+    (not distilled) suitable for passing as ref_text to TTS engines.
+
+    Args:
+        validation_model: The WhisperModel instance
+        audio_path: Path to the audio file (.wav)
+        verbose: Print verbose output
+
+    Returns:
+        Raw transcribed text suitable for ref_text, or None if transcription fails
+    """
+    try:
+        segments_list, info = validation_model.transcribe(audio_path, beam_size=5, word_timestamps=True)
+        words = []
+        for segment in segments_list:
+            for word in segment.words:
+                w = word.word.strip()
+                if w:
+                    words.append(w)
+
+        if not words:
+            if verbose:
+                print(f"  [Whisper ref_text] Empty transcription for {audio_path}")
+            return None
+
+        ref_text = " ".join(words)
+        if verbose:
+            print(f"  [Whisper ref_text] Transcribed: {ref_text}")
+        return ref_text
+    except Exception as e:
+        if verbose:
+            print(f"  [Whisper ref_text] Transcription failed: {e}")
+        return None
+
+
 # ============================================================================
 # MAP FILE PARSING
 # ============================================================================

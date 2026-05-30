@@ -47,6 +47,66 @@ TTS_ENGINES = ["moss", "omni", "vox", "vibevoice", "dramabox"]
 TEST_EPUB = Path(__file__).parent / "voice_test" / "test_pride_and_prejudice.epub"
 
 
+def _analyze_audio_quality(voice_path: str) -> Dict:
+    """Analyze audio quality metrics for a voice sample.
+
+    Returns dict with duration, snr, clipping, silence_ratio.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    result = {
+        "duration": 0.0,
+        "snr_db": 0.0,
+        "clipping_pct": 0.0,
+        "silence_ratio": 0.0,
+        "peak_db": 0.0,
+        "rms_db": 0.0,
+    }
+
+    try:
+        audio, sr = sf.read(voice_path)
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+
+        result["duration"] = len(audio) / sr
+
+        # Peak and RMS levels
+        peak = np.max(np.abs(audio))
+        result["peak_db"] = -np.inf if peak == 0 else 20 * np.log10(peak)
+        rms = np.sqrt(np.mean(audio ** 2))
+        result["rms_db"] = -np.inf if rms == 0 else 20 * np.log10(rms)
+
+        # Clipping: percentage of samples within 1% of max value
+        threshold = 0.99
+        clipped = np.sum((audio > threshold) | (audio < -threshold))
+        result["clipping_pct"] = (clipped / len(audio)) * 100 if len(audio) > 0 else 0
+
+        # Silence ratio: frames below -40dB threshold
+        frame_size = int(0.025 * sr)  # 25ms frames
+        if frame_size > 0 and len(audio) >= frame_size:
+            frames = [audio[i:i + frame_size] for i in range(0, len(audio) - frame_size + 1, frame_size // 2)]
+            silence_threshold = 10 ** (-40 / 20)
+            silent_frames = sum(1 for f in frames if np.sqrt(np.mean(f ** 2)) < silence_threshold)
+            result["silence_ratio"] = silent_frames / len(frames) if frames else 0
+
+        # SNR: ratio of signal power (above -40dB) to noise power (below -40dB)
+        signal = audio[np.abs(audio) > silence_threshold]
+        noise = audio[np.abs(audio) <= silence_threshold]
+        if len(signal) > 0 and len(noise) > 0:
+            signal_power = np.mean(signal ** 2)
+            noise_power = np.mean(noise ** 2)
+            if noise_power > 0:
+                result["snr_db"] = 10 * np.log10(signal_power / noise_power)
+            else:
+                result["snr_db"] = float('inf')
+
+    except Exception:
+        pass
+
+    return result
+
+
 def _free_gpu_memory():
     """Free GPU memory."""
     try:
@@ -229,6 +289,28 @@ def run_single_combination(
             failed_chars = total_chars - passed_chars
             avg_attempts = sum(d.get("attempts", 0) for d in char_details.values()) / total_chars if total_chars > 0 else 0
 
+            # Analyze audio quality for each voice
+            durations = []
+            for char_name, voice_path in generated_voices.items():
+                quality = _analyze_audio_quality(voice_path)
+                char_details[char_name]["duration_s"] = quality["duration"]
+                char_details[char_name]["snr_db"] = quality["snr_db"]
+                char_details[char_name]["clipping_pct"] = quality["clipping_pct"]
+                char_details[char_name]["silence_ratio"] = quality["silence_ratio"]
+                char_details[char_name]["peak_db"] = quality["peak_db"]
+                char_details[char_name]["rms_db"] = quality["rms_db"]
+                if char_name != "narrator":
+                    durations.append(quality["duration"])
+
+            # Duration consistency: std/mean of durations (lower is better)
+            duration_cv = 0.0
+            if len(durations) > 1:
+                import statistics
+                duration_cv = statistics.stdev(durations) / statistics.mean(durations) if statistics.mean(durations) > 0 else 0
+
+            # Retry rate: fraction of characters that needed >1 attempt
+            retry_rate = sum(1 for d in char_details.values() if d.get("attempts", 0) > 1) / total_chars if total_chars > 0 else 0
+
             result["status"] = "voice_only"
             result["total_lines"] = len(generated_voices)
             result["successful_lines"] = passed_chars
@@ -236,24 +318,34 @@ def run_single_combination(
             result["avg_ratio"] = passed_chars / total_chars if total_chars > 0 else 1.0
             result["min_ratio"] = 0.0 if failed_chars > 0 else 1.0
             result["max_ratio"] = 1.0
+            # Store extra metrics in errors field for CSV persistence
+            result["errors"] = [json.dumps({
+                "avg_attempts": avg_attempts,
+                "duration_cv": duration_cv,
+                "retry_rate": retry_rate,
+            })]
 
             # Print per-character breakdown
             if verbose and char_details:
-                print(f"\n  {'='*50}")
+                print(f"\n  {'='*70}")
                 print(f"  Voice Quality Results ({voice_engine})")
-                print(f"  {'='*50}")
-                print(f"  {'Character':<20} {'Gender':<10} {'Age':<10} {'Dialect':<12} {'Pass':<6} {'Tries':<6}")
-                print(f"  {'-'*64}")
+                print(f"  {'='*70}")
+                print(f"  {'Character':<18} {'Gender':<8} {'Age':<8} {'Dialect':<10} {'Pass':<5} {'Tries':<6} {'Dur':<6} {'SNR':<7} {'Clip%':<6} {'Sil%':<6}")
+                print(f"  {'-'*86}")
                 for char_name, details in sorted(char_details.items()):
                     gender = details.get("gender", "?")
                     age = details.get("age", "?")
                     dialect = details.get("dialect", "?")
                     passed = "✓" if details.get("passed") else "✗"
                     tries = details.get("attempts", 0)
-                    print(f"  {char_name:<20} {gender:<10} {age:<10} {dialect:<12} {passed:<6} {tries:<6}")
-                print(f"  {'-'*64}")
-                print(f"  Score: {passed_chars}/{total_chars} passed, avg {avg_attempts:.1f} tries per voice")
-                print(f"  {'='*50}\n")
+                    dur = f"{details.get('duration_s', 0):.1f}s"
+                    snr = f"{details.get('snr_db', 0):.0f}dB" if details.get('snr_db', 0) > 0 else "?"
+                    clip = f"{details.get('clipping_pct', 0):.1f}%"
+                    silence = f"{details.get('silence_ratio', 0)*100:.0f}%"
+                    print(f"  {char_name:<18} {gender:<8} {age:<8} {dialect:<10} {passed:<5} {tries:<6} {dur:<6} {snr:<7} {clip:<6} {silence:<6}")
+                print(f"  {'-'*86}")
+                print(f"  Score: {passed_chars}/{total_chars} passed, avg {avg_attempts:.1f} tries, duration CV={duration_cv:.2f}, retry rate={retry_rate:.0%}")
+                print(f"  {'='*70}\n")
 
             return result
 
@@ -549,13 +641,23 @@ def main():
     print("SUMMARY")
     print("=" * 80)
     if args.voice_only:
-        print(f"{'Voice':<12} {'Pass':<8} {'Failed':<8} {'Score':<10} {'Time':<12}")
-        print("-" * 50)
+        print(f"{'Voice':<12} {'Pass':<6} {'Fail':<6} {'Score':<8} {'AvgTries':<9} {'DurCV':<8} {'Time':<10}")
+        print("-" * 65)
         sorted_results = sorted(results, key=lambda x: x["avg_ratio"], reverse=True)
         for r in sorted_results:
             score_str = f"{r['avg_ratio']:.0%}"
             time_str = f"{r['total_time']:.0f}s"
-            print(f"{r['voice_engine']:<12} {r['successful_lines']:<8} {r['failed_lines']:<8} {score_str:<10} {time_str:<12}")
+            # Extract avg_attempts and duration_cv from errors field (stored as JSON)
+            avg_tries = "?"
+            dur_cv = "?"
+            if r["errors"]:
+                try:
+                    meta = json.loads(r["errors"])
+                    avg_tries = f"{meta.get('avg_attempts', 0):.1f}"
+                    dur_cv = f"{meta.get('duration_cv', 0):.2f}"
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            print(f"{r['voice_engine']:<12} {r['successful_lines']:<6} {r['failed_lines']:<6} {score_str:<8} {avg_tries:<9} {dur_cv:<8} {time_str:<10}")
     else:
         print(f"{'Voice':<12} {'TTS':<12} {'Status':<12} {'Lines':<10} {'Avg Ratio':<12} {'Time':<12}")
         print("-" * 80)

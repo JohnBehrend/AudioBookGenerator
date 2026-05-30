@@ -429,7 +429,7 @@ def run_single_combination(
             result["duration_cv"] = duration_cv
             result["total_samples"] = total_samples
             result["total_passed"] = total_passed
-            result["peak_vram_mb"] = _get_vram_usage_mb()
+            result["peak_vram_mb"] = peak_vram
             result["errors"] = []
 
             # Print per-character breakdown
@@ -760,9 +760,9 @@ def main():
     if args.voice_only:
         print(f"{'Voice':<12} {'Pass':>7} {'Rate':>7} {'VRAM':>8} {'DurCV':>7} {'Time':>10}")
         print("-" * 55)
-        sorted_results = sorted(results, key=lambda x: x["avg_ratio"], reverse=True)
+        sorted_results = sorted(results, key=lambda x: float(x["avg_ratio"]), reverse=True)
         for r in sorted_results:
-            rate_str = f"{r['avg_ratio']:.0%}"
+            rate_str = f"{float(r['avg_ratio']):.0%}"
             time_str = f"{r['total_time']:.0f}s"
             vram_str = f"{r.get('peak_vram_mb', 0)/1024:.1f}GB" if r.get('peak_vram_mb', 0) > 0 else "?"
             dur_cv = f"{r.get('duration_cv', 0):.2f}" if r.get('duration_cv') is not None else "?"

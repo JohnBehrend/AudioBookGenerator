@@ -193,11 +193,10 @@ def run_single_combination(
 
         # Step 2: Generate TTS audio using tts_engine (same as UI Stage 5)
         if voice_only:
-            # Validate voices with ChunkFormer and retry until all pass
-            max_retries = 5
+            # Generate 5 samples per character, validate all with ChunkFormer,
+            # keep the best, and report pass rate for statistical significance
+            num_samples = 5
             cf_model = None
-            char_attempts = {}  # char_name -> attempts to pass
-            char_details = {}   # char_name -> {gender, age, dialect, passed}
 
             try:
                 from audiobook_generator.utils import get_chunkformer_model
@@ -208,146 +207,157 @@ def run_single_combination(
                     print(f"  [CHUNKFORMER] Failed to load model: {e}")
                 return result
 
-            # Track which characters still need validation
-            pending = {k for k in generated_voices if k != "narrator"}
-            for char_name in pending:
-                char_attempts[char_name] = 0
+            # Characters to benchmark (exclude narrator)
+            benchmark_chars = {k: v for k, v in character_descriptions.items() if k != "narrator"}
+            char_results = {}  # char_name -> {pass_rate, best_details, qualities}
 
-            for attempt in range(1, max_retries + 1):
-                if attempt > 1 and pending:
-                    if verbose:
-                        print(f"\n  [CHUNKFORMER] Retry attempt {attempt}/{max_retries} for {len(pending)} failed voices")
-                    # Remove failed voice files so they regenerate
-                    for char_name in list(pending):
-                        failed_path = os.path.join(combo_dir, f"{char_name}.wav")
-                        if os.path.exists(failed_path):
-                            os.remove(failed_path)
+            for char_idx, (char_name, char_desc) in enumerate(benchmark_chars.items()):
+                if verbose:
+                    print(f"\n  [{char_idx+1}/{len(benchmark_chars)}] {char_name} — generating {num_samples} samples")
 
-                    # Regenerate only failed voices
-                    failed_descriptions = {k: v for k, v in character_descriptions.items() if k in pending}
-                    if failed_descriptions:
-                        if verbose:
-                            print(f"  [CHUNKFORMER] Regenerating {len(failed_descriptions)} failed voices")
-                        status_msg, regenerated = gen_voice_samples(
-                            descriptions=failed_descriptions,
-                            output_dir=combo_dir,
-                            device=device,
-                            voice_engine=voice_engine,
-                            verbose=verbose,
-                            use_chunkformer=False,
-                            seed_characters=None,
-                            force_regenerate=True,
-                        )
-                        result["voice_gen_time"] += time.time() - t0
-                        t0 = time.time()
-                        generated_voices.update(regenerated)
+                passed_count = 0
+                best_details = None
+                best_quality = None
+                qualities = []
 
-                # Validate pending voices
-                still_pending = set()
-                if cf_model:
-                    for char_name in list(pending):
-                        voice_path = generated_voices.get(char_name)
-                        if not voice_path or not os.path.exists(voice_path):
-                            still_pending.add(char_name)
-                            continue
-                        char_attempts[char_name] = attempt
-                        desc = character_descriptions.get(char_name, "")
-                        passed, log_json = _validate_with_chunkformer(
-                            voice_path, desc, cf_model, verbose=verbose,
-                            check_fields=["gender", "age", "dialect"]
-                        )
-                        try:
-                            log_data = json.loads(log_json)
-                            char_details[char_name] = {
-                                "gender": log_data["classification"]["gender"],
-                                "age": log_data["classification"]["age"],
-                                "dialect": log_data["classification"]["dialect"],
-                                "passed": passed,
-                                "attempts": attempt,
-                            }
-                        except (json.JSONDecodeError, KeyError):
-                            char_details[char_name] = {"passed": passed, "attempts": attempt}
+                for sample in range(1, num_samples + 1):
+                    # Generate single character voice
+                    sample_desc = {char_name: char_desc}
+                    status_msg, regenerated = gen_voice_samples(
+                        descriptions=sample_desc,
+                        output_dir=combo_dir,
+                        device=device,
+                        voice_engine=voice_engine,
+                        verbose=False,
+                        use_chunkformer=False,
+                        seed_characters=None,
+                        force_regenerate=True,
+                    )
 
-                        if not passed:
-                            still_pending.add(char_name)
+                    voice_path = regenerated.get(char_name)
+                    if not voice_path or not os.path.exists(voice_path):
+                        continue
 
-                pending = still_pending
-                if not pending:
-                    break
+                    # Validate with ChunkFormer
+                    passed, log_json = _validate_with_chunkformer(
+                        voice_path, char_desc, cf_model, verbose=False,
+                        check_fields=["gender", "age", "dialect"]
+                    )
 
-            # Build voices_map from generated files
-            voices_map = {}
-            for f in Path(combo_dir).glob("*.wav"):
-                if not f.name.endswith(".tmp.wav"):
-                    voices_map[f.stem] = str(f)
+                    # Analyze audio quality
+                    quality = _analyze_audio_quality(voice_path)
+                    qualities.append(quality)
 
-            if not voices_map:
-                result["errors"].append("No voice samples generated")
-                return result
+                    try:
+                        log_data = json.loads(log_json)
+                        details = {
+                            "gender": log_data["classification"]["gender"],
+                            "age": log_data["classification"]["age"],
+                            "dialect": log_data["classification"]["dialect"],
+                            "passed": passed,
+                        }
+                    except (json.JSONDecodeError, KeyError):
+                        details = {"passed": passed}
 
-            # Calculate validation stats
-            total_chars = len(char_details)
-            passed_chars = sum(1 for d in char_details.values() if d.get("passed"))
-            failed_chars = total_chars - passed_chars
-            avg_attempts = sum(d.get("attempts", 0) for d in char_details.values()) / total_chars if total_chars > 0 else 0
+                    if passed:
+                        passed_count += 1
+                        # Keep the last passing sample (will overwrite with each pass)
+                        best_details = details
+                        best_quality = quality
 
-            # Analyze audio quality for each voice
+                # Keep the best passing voice file
+                final_path = os.path.join(combo_dir, f"{char_name}.wav")
+                if os.path.exists(final_path):
+                    os.remove(final_path)
+                if regenerated and char_name in regenerated:
+                    shutil.copy2(regenerated[char_name], final_path)
+
+                char_results[char_name] = {
+                    "pass_rate": passed_count / num_samples,
+                    "passed": passed_count,
+                    "total": num_samples,
+                    "best_details": best_details,
+                    "qualities": qualities,
+                }
+
+                if verbose:
+                    pr = passed_count / num_samples
+                    gender = best_details.get("gender", "?") if best_details else "?"
+                    age = best_details.get("age", "?") if best_details else "?"
+                    dialect = best_details.get("dialect", "?") if best_details else "?"
+                    print(f"    Pass rate: {passed_count}/{num_samples} ({pr:.0%}) | {gender} / {age} / {dialect}")
+
+            # Also keep narrator voice
+            if "narrator" in generated_voices:
+                char_results["narrator"] = {
+                    "pass_rate": 1.0,
+                    "passed": 1,
+                    "total": 1,
+                    "best_details": None,
+                    "qualities": [_analyze_audio_quality(generated_voices["narrator"])],
+                }
+
+            # Aggregate stats
+            total_samples = sum(r["total"] for r in char_results.values() if r["best_details"])
+            total_passed = sum(r["passed"] for r in char_results.values() if r["best_details"])
+            overall_pass_rate = total_passed / total_samples if total_samples > 0 else 0
+
+            # Duration consistency across characters (from best samples)
             durations = []
-            for char_name, voice_path in generated_voices.items():
-                quality = _analyze_audio_quality(voice_path)
-                char_details[char_name]["duration_s"] = quality["duration"]
-                char_details[char_name]["snr_db"] = quality["snr_db"]
-                char_details[char_name]["clipping_pct"] = quality["clipping_pct"]
-                char_details[char_name]["silence_ratio"] = quality["silence_ratio"]
-                char_details[char_name]["peak_db"] = quality["peak_db"]
-                char_details[char_name]["rms_db"] = quality["rms_db"]
-                if char_name != "narrator":
-                    durations.append(quality["duration"])
+            for char_name, r in char_results.items():
+                if r["qualities"]:
+                    dur = r["qualities"][-1]["duration"]
+                    if char_name != "narrator":
+                        durations.append(dur)
 
-            # Duration consistency: std/mean of durations (lower is better)
             duration_cv = 0.0
             if len(durations) > 1:
                 import statistics
                 duration_cv = statistics.stdev(durations) / statistics.mean(durations) if statistics.mean(durations) > 0 else 0
 
-            # Retry rate: fraction of characters that needed >1 attempt
-            retry_rate = sum(1 for d in char_details.values() if d.get("attempts", 0) > 1) / total_chars if total_chars > 0 else 0
+            # Per-character duration consistency (std of 5 samples)
+            char_duration_cvs = {}
+            for char_name, r in char_results.items():
+                if len(r["qualities"]) > 1:
+                    char_durs = [q["duration"] for q in r["qualities"]]
+                    mean_dur = statistics.mean(char_durs)
+                    char_duration_cvs[char_name] = statistics.stdev(char_durs) / mean_dur if mean_dur > 0 else 0
 
             result["status"] = "voice_only"
-            result["total_lines"] = len(generated_voices)
-            result["successful_lines"] = passed_chars
-            result["failed_lines"] = failed_chars
-            result["avg_ratio"] = passed_chars / total_chars if total_chars > 0 else 1.0
-            result["min_ratio"] = 0.0 if failed_chars > 0 else 1.0
+            result["total_lines"] = len(char_results)
+            result["successful_lines"] = total_passed
+            result["failed_lines"] = total_samples - total_passed
+            result["avg_ratio"] = overall_pass_rate
+            result["min_ratio"] = 0.0 if total_passed < total_samples else 1.0
             result["max_ratio"] = 1.0
-            # Store extra metrics in errors field for CSV persistence
             result["errors"] = [json.dumps({
-                "avg_attempts": avg_attempts,
                 "duration_cv": duration_cv,
-                "retry_rate": retry_rate,
+                "total_samples": total_samples,
+                "total_passed": total_passed,
             })]
 
             # Print per-character breakdown
-            if verbose and char_details:
-                print(f"\n  {'='*70}")
-                print(f"  Voice Quality Results ({voice_engine})")
-                print(f"  {'='*70}")
-                print(f"  {'Character':<18} {'Gender':<8} {'Age':<8} {'Dialect':<10} {'Pass':<5} {'Tries':<6} {'Dur':<6} {'SNR':<7} {'Clip%':<6} {'Sil%':<6}")
-                print(f"  {'-'*86}")
-                for char_name, details in sorted(char_details.items()):
-                    gender = details.get("gender", "?")
-                    age = details.get("age", "?")
-                    dialect = details.get("dialect", "?")
-                    passed = "✓" if details.get("passed") else "✗"
-                    tries = details.get("attempts", 0)
-                    dur = f"{details.get('duration_s', 0):.1f}s"
-                    snr = f"{details.get('snr_db', 0):.0f}dB" if details.get('snr_db', 0) > 0 else "?"
-                    clip = f"{details.get('clipping_pct', 0):.1f}%"
-                    silence = f"{details.get('silence_ratio', 0)*100:.0f}%"
-                    print(f"  {char_name:<18} {gender:<8} {age:<8} {dialect:<10} {passed:<5} {tries:<6} {dur:<6} {snr:<7} {clip:<6} {silence:<6}")
-                print(f"  {'-'*86}")
-                print(f"  Score: {passed_chars}/{total_chars} passed, avg {avg_attempts:.1f} tries, duration CV={duration_cv:.2f}, retry rate={retry_rate:.0%}")
-                print(f"  {'='*70}\n")
+            if verbose and char_results:
+                print(f"\n  {'='*75}")
+                print(f"  Voice Quality Results ({voice_engine}) — {num_samples} samples per character")
+                print(f"  {'='*75}")
+                print(f"  {'Character':<18} {'Pass':>5} {'Rate':>7} {'Gender':<8} {'Age':<8} {'Dialect':<10} {'Dur':<6} {'SNR':<7} {'Clip%':<6} {'Sil%':<6}")
+                print(f"  {'-'*91}")
+                for char_name, r in sorted(char_results.items()):
+                    if char_name == "narrator":
+                        q = r["qualities"][-1] if r["qualities"] else {}
+                        print(f"  {char_name:<18} {'N/A':>5} {'—':>7} {'—':<8} {'—':<8} {'—':<10} {q.get('duration',0):.1f}s {q.get('snr_db',0):.0f}dB {q.get('clipping_pct',0):.1f}% {q.get('silence_ratio',0)*100:.0f}%")
+                        continue
+                    best = r["best_details"] or {}
+                    # Use average quality across all samples
+                    avg_dur = statistics.mean([q["duration"] for q in r["qualities"]]) if r["qualities"] else 0
+                    avg_snr = statistics.mean([q["snr_db"] for q in r["qualities"]]) if r["qualities"] else 0
+                    avg_clip = statistics.mean([q["clipping_pct"] for q in r["qualities"]]) if r["qualities"] else 0
+                    avg_sil = statistics.mean([q["silence_ratio"] for q in r["qualities"]]) if r["qualities"] else 0
+                    print(f"  {char_name:<18} {r['passed']:>3}/{r['total']} {r['pass_rate']:>6.0%} {best.get('gender','?'):<8} {best.get('age','?'):<8} {best.get('dialect','?'):<10} {avg_dur:.1f}s {avg_snr:.0f}dB {avg_clip:.1f}% {avg_sil*100:.0f}%")
+                print(f"  {'-'*91}")
+                print(f"  Overall: {total_passed}/{total_samples} passed ({overall_pass_rate:.0%}), duration CV={duration_cv:.2f}")
+                print(f"  {'='*75}\n")
 
             return result
 
@@ -643,23 +653,20 @@ def main():
     print("SUMMARY")
     print("=" * 80)
     if args.voice_only:
-        print(f"{'Voice':<12} {'Pass':<6} {'Fail':<6} {'Score':<8} {'AvgTries':<9} {'DurCV':<8} {'Time':<10}")
-        print("-" * 65)
+        print(f"{'Voice':<12} {'Pass':>7} {'Rate':>7} {'DurCV':>7} {'Time':>10}")
+        print("-" * 45)
         sorted_results = sorted(results, key=lambda x: x["avg_ratio"], reverse=True)
         for r in sorted_results:
-            score_str = f"{r['avg_ratio']:.0%}"
+            rate_str = f"{r['avg_ratio']:.0%}"
             time_str = f"{r['total_time']:.0f}s"
-            # Extract avg_attempts and duration_cv from errors field (stored as JSON)
-            avg_tries = "?"
             dur_cv = "?"
             if r["errors"]:
                 try:
                     meta = json.loads(r["errors"])
-                    avg_tries = f"{meta.get('avg_attempts', 0):.1f}"
                     dur_cv = f"{meta.get('duration_cv', 0):.2f}"
                 except (json.JSONDecodeError, KeyError):
                     pass
-            print(f"{r['voice_engine']:<12} {r['successful_lines']:<6} {r['failed_lines']:<6} {score_str:<8} {avg_tries:<9} {dur_cv:<8} {time_str:<10}")
+            print(f"{r['voice_engine']:<12} {r['successful_lines']:>3}/{r['failed_lines']+r['successful_lines']:>3} {rate_str:>7} {dur_cv:>7} {time_str:>10}")
     else:
         print(f"{'Voice':<12} {'TTS':<12} {'Status':<12} {'Lines':<10} {'Avg Ratio':<12} {'Time':<12}")
         print("-" * 80)

@@ -268,6 +268,9 @@ def run_single_combination(
                         verbose=False,
                     )
                     t_gen = time.time() - t_step
+                    # Track peak VRAM during generation
+                    current_vram = _get_vram_usage_mb(device)
+                    peak_vram = max(peak_vram, current_vram)
 
                     if not success or not output_file or not os.path.exists(output_file):
                         if verbose:
@@ -351,10 +354,9 @@ def run_single_combination(
             shared_engine.shutdown_worker()
 
             result["voice_gen_time"] = time.time() - t0
-            vram_after = _get_vram_usage_mb()
-            result["peak_vram_mb"] = max(vram_after, result["peak_vram_mb"])
+            result["peak_vram_mb"] = peak_vram
             if verbose:
-                print(f"  [Voice Samples] Generated {len(generated_voices)} voices in {result['voice_gen_time']:.0f}s (VRAM: {vram_after:.0f}MB)")
+                print(f"  [Voice Samples] Generated {len(generated_voices)} voices in {result['voice_gen_time']:.0f}s (VRAM: {peak_vram:.0f}MB)")
 
             # Aggregate stats
             total_samples = sum(r["total"] for r in char_results.values())

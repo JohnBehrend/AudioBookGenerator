@@ -159,37 +159,39 @@ def run_single_combination(
 
     try:
         # Step 1: Generate voice samples using voice_engine (same as UI Stage 4)
-        if verbose:
-            print(f"\n  [Voice Samples] voice_engine={voice_engine}, device={device}")
+        # Skip in voice_only mode — we generate per-character samples below for stats
+        if not voice_only:
+            if verbose:
+                print(f"\n  [Voice Samples] voice_engine={voice_engine}, device={device}")
 
-        t0 = time.time()
-        status_msg, generated_voices = gen_voice_samples(
-            descriptions=character_descriptions,
-            output_dir=combo_dir,
-            device=device,
-            voice_engine=voice_engine,
-            verbose=verbose,
-            use_chunkformer=False,
-            seed_characters=None,
-        )
-        result["voice_gen_time"] = time.time() - t0
+            t0 = time.time()
+            status_msg, generated_voices = gen_voice_samples(
+                descriptions=character_descriptions,
+                output_dir=combo_dir,
+                device=device,
+                voice_engine=voice_engine,
+                verbose=verbose,
+                use_chunkformer=False,
+                seed_characters=None,
+            )
+            result["voice_gen_time"] = time.time() - t0
 
-        if verbose:
-            print(f"  [Voice Samples] {status_msg}")
+            if verbose:
+                print(f"  [Voice Samples] {status_msg}")
 
-        if not generated_voices:
-            result["errors"].append("No voice samples generated")
-            return result
+            if not generated_voices:
+                result["errors"].append("No voice samples generated")
+                return result
 
-        # Build voices_map from generated files
-        voices_map = {}
-        for f in Path(combo_dir).glob("*.wav"):
-            if not f.name.endswith(".tmp.wav"):
-                voices_map[f.stem] = str(f)
+            # Build voices_map from generated files
+            voices_map = {}
+            for f in Path(combo_dir).glob("*.wav"):
+                if not f.name.endswith(".tmp.wav"):
+                    voices_map[f.stem] = str(f)
 
-        if not voices_map:
-            result["errors"].append("No voice samples generated")
-            return result
+            if not voices_map:
+                result["errors"].append("No voice samples generated")
+                return result
 
         # Step 2: Generate TTS audio using tts_engine (same as UI Stage 5)
         if voice_only:
@@ -197,6 +199,7 @@ def run_single_combination(
             # keep the best, and report pass rate for statistical significance
             num_samples = 5
             cf_model = None
+            generated_voices = {}
 
             try:
                 from audiobook_generator.utils import get_chunkformer_model
@@ -206,6 +209,11 @@ def run_single_combination(
                 if verbose:
                     print(f"  [CHUNKFORMER] Failed to load model: {e}")
                 return result
+
+            if verbose:
+                print(f"\n  [Voice Samples] voice_engine={voice_engine}, device={device}, {num_samples} samples/char")
+
+            t0 = time.time()
 
             # Characters to benchmark (exclude narrator)
             benchmark_chars = {k: v for k, v in character_descriptions.items() if k != "narrator"}
@@ -287,15 +295,32 @@ def run_single_combination(
                     dialect = best_details.get("dialect", "?") if best_details else "?"
                     print(f"    Pass rate: {passed_count}/{num_samples} ({pr:.0%}) | {gender} / {age} / {dialect}")
 
-            # Also keep narrator voice
-            if "narrator" in generated_voices:
+            # Also generate narrator voice (1 sample, no validation needed)
+            if verbose:
+                print(f"\n  [Narrator] generating voice...")
+            status_msg, narrator_voices = gen_voice_samples(
+                descriptions={"narrator": character_descriptions.get("narrator", "A neutral, clear narrator voice suitable for audiobook narration")},
+                output_dir=combo_dir,
+                device=device,
+                voice_engine=voice_engine,
+                verbose=False,
+                use_chunkformer=False,
+                seed_characters=None,
+                force_regenerate=True,
+            )
+            if narrator_voices and "narrator" in narrator_voices:
+                generated_voices["narrator"] = narrator_voices["narrator"]
                 char_results["narrator"] = {
                     "pass_rate": 1.0,
                     "passed": 1,
                     "total": 1,
                     "best_details": None,
-                    "qualities": [_analyze_audio_quality(generated_voices["narrator"])],
+                    "qualities": [_analyze_audio_quality(narrator_voices["narrator"])],
                 }
+
+            result["voice_gen_time"] = time.time() - t0
+            if verbose:
+                print(f"  [Voice Samples] Generated {len(generated_voices)} voices in {result['voice_gen_time']:.0f}s")
 
             # Aggregate stats
             total_samples = sum(r["total"] for r in char_results.values() if r["best_details"])

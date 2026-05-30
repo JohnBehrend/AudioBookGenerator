@@ -377,7 +377,7 @@ def generate_tts_for_line(
     full_script, _ = prepare_script_for_tts(text, tts_config.short_text_postfix)
 
     ratio = 0.0
-    max_ratio = float('-inf')
+    max_ratio = 0.0
     retries = 0
 
     from transformers import set_seed
@@ -404,7 +404,7 @@ def generate_tts_for_line(
     if os.path.exists(temp_path):
         os.unlink(temp_path)
 
-    final_ratio = max_ratio if max_ratio != float('-inf') else 0.0
+    final_ratio = max_ratio
     return is_generation_success(final_ratio, MIN_RATIO_THRESHOLD), final_ratio
 
 
@@ -655,7 +655,7 @@ def generate_audiobook_from_chapters(
                 line_state: Dict[str, dict] = {}
                 for item in work_items:
                     key = f"{item['chapter_idx']}_{item['line_idx']}"
-                    line_state[key] = {"retries": 0, "max_ratio": float('-inf')}
+                    line_state[key] = {"retries": 0, "max_ratio": 0.0}
                 line_state_lock = threading.Lock()
                 completed_count = 0
                 completed_lock = threading.Lock()
@@ -780,12 +780,11 @@ def generate_audiobook_from_chapters(
                                         os.unlink(temp_path)
                                 with completed_lock:
                                     completed_count += 1
-                                safe_ratio = int(state['max_ratio'] * 100) if state['max_ratio'] != float('-inf') else 0
                                 if verbose:
-                                    print(f"[LINE_PROGRESS] Chapter {item['chapter_idx']}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {safe_ratio}")
+                                    print(f"[LINE_PROGRESS] Chapter {item['chapter_idx']}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(state['max_ratio'] * 100)}")
                                 progress_handler.update(
                                     completed_count / total_items,
-                                    desc=f"Processing Chapter {item['chapter_idx']} Line {item['line_idx']} Ratio {safe_ratio}"
+                                    desc=f"Processing Chapter {item['chapter_idx']} Line {item['line_idx']} Ratio {int(state['max_ratio'] * 100)}"
                                 )
 
                         validation_queue.task_done()

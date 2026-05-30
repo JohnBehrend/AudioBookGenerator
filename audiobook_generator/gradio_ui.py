@@ -484,9 +484,10 @@ def generate_voice_samples(
             return log_output, pipeline_state
         log_output += f"\nFound {num_characters} characters to process. (temp: {chapters_dir.parent})"
 
-        # Use provided voice_engine or default to moss
+        # Use provided voice_engine or default to omni
+
         if voice_engine is None:
-            voice_engine = "moss"
+            voice_engine = "omni"
 
         # Call generate_voice_samples from package
         progress(0, desc=f"Generating voice samples for {num_characters} characters with TTS engine '{voice_engine}'... (temp: {chapters_dir.parent})")
@@ -545,9 +546,9 @@ def regenerate_voice_sample(
             return log_output, pipeline_state, None
 
         char_description = descriptions[character_name]
+        # Voice generation uses omni by default
 
-        # Voice generation uses moss by default
-        voice_engine = "moss"
+        voice_engine = "omni"
 
         # Call generate_voice_samples from package
         progress(0, desc=f"Regenerating voice sample for {character_name} with TTS engine '{voice_engine}'...")

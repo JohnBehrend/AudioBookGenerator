@@ -192,7 +192,7 @@ def generate_voice_samples(
     verbose: bool = False,
     progress=None,
     seed_characters: Dict[str, str] = None,
-    voice_engine: str = "moss",
+    voice_engine: str = "omni",
     force_regenerate: bool = False,
     validate: bool = False,
     engine=None,
@@ -212,7 +212,7 @@ def generate_voice_samples(
         verbose: Print verbose output
         progress: Gradio progress bar to update during generation
         seed_characters: Dict mapping character names to existing voice paths from seed voices_map
-        voice_engine: TTS engine for voice generation ('moss', 'omni', 'vox')
+        voice_engine: TTS engine for voice generation ('omni', 'vox', 'dramabox')
         force_regenerate: If True, regenerate voices even if they already exist
         validate: Deprecated - ignored
         use_chunkformer: If True, validate voices with ChunkFormer model

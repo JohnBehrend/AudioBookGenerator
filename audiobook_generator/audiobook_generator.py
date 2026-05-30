@@ -1164,7 +1164,7 @@ class PipelineState:
 
 def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       verbose: bool = False, api_key: str = None, llm_port: str = None,
-                      voice_engine: str = "moss", tts_engine: str = "omni", turbo: bool = False,
+                       voice_engine: str = "omni", tts_engine: str = "omni", turbo: bool = False,
                       device: str = AUDIO_SETTINGS["default_device"], seed_voice_map: str = None,
                       num_llm_attempts: int = DEFAULTS["num_llm_attempts"],
                       resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
@@ -1184,8 +1184,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         verbose: Print verbose output
         api_key: LLM API key for speaker labeling and character descriptions
         llm_port: LLM endpoint port (e.g., LM Studio)
-        voice_engine: TTS engine for voice sample generation ('moss', 'omni', 'vox')
-        tts_engine: TTS engine for audiobook generation ('vibevoice', 'moss', 'echo-tts', 'omni', 'vox')
+        voice_engine: TTS engine for voice sample generation ('omni', 'vox', 'dramabox')
+        tts_engine: TTS engine for audiobook generation ('vibevoice', 'echo-tts', 'omni', 'vox')
         turbo: Reserved for future turbo models
         device: CUDA device (e.g., 'cuda', 'cuda:1')
         seed_voice_map: Path to existing voices_map.json to seed voices

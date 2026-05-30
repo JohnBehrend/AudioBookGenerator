@@ -107,12 +107,16 @@ def _analyze_audio_quality(voice_path: str) -> Dict:
     return result
 
 
-def _get_vram_usage_mb() -> float:
-    """Get current VRAM usage in MB for the primary GPU."""
+def _get_vram_usage_mb(device: str = "cuda:0") -> float:
+    """Get current VRAM usage in MB from nvidia-smi (sees all processes)."""
     try:
-        import torch
-        if torch.cuda.is_available():
-            return torch.cuda.memory_allocated(0) / (1024 ** 2)
+        gpu_id = int(device.split(":")[-1]) if ":" in device else 0
+        import subprocess
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=memory.used", f"--id={gpu_id}", "--format=csv,noheader"],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+        return float(out.split()[0])
     except Exception:
         pass
     return 0.0
@@ -247,6 +251,9 @@ def run_single_combination(
                 best_quality = None
                 qualities = []
                 last_voice_path = None
+                # Track per-field correctness
+                field_correct = {"gender": 0, "age": 0}
+                expected_fields = {"gender": None, "age": None}
 
                 for sample in range(1, num_samples + 1):
                     t_step = time.time()
@@ -272,7 +279,7 @@ def run_single_combination(
                     t_cf = time.time()
                     passed, log_json = _validate_with_chunkformer(
                         output_file, char_desc, cf_model, verbose=False,
-                        check_fields=["gender", "age", "dialect"]
+                        check_fields=["gender", "age"]
                     )
                     t_cf = time.time() - t_cf
 
@@ -282,24 +289,41 @@ def run_single_combination(
                     t_qa = time.time() - t_qa
                     qualities.append(quality)
 
-                    if verbose:
-                        print(f"    Sample {sample}: gen={t_gen:.1f}s, cf={t_cf:.2f}s, qa={t_qa:.2f}s | {'PASS' if passed else 'FAIL'}")
-
                     try:
                         log_data = json.loads(log_json)
                         details = {
                             "gender": log_data["classification"]["gender"],
                             "age": log_data["classification"]["age"],
-                            "dialect": log_data["classification"]["dialect"],
                             "passed": passed,
                         }
+                        field_marks = {}
+                        for field in ["gender", "age"]:
+                            pred = log_data["classification"][field]
+                            exp = log_data["expected"][field]
+                            if exp is not None and pred == exp:
+                                field_correct[field] += 1
+                                field_marks[field] = "✓"
+                            elif exp is not None:
+                                field_marks[field] = "✗"
+                            else:
+                                field_marks[field] = "-"
+                            expected_fields[field] = exp
                     except (json.JSONDecodeError, KeyError):
                         details = {"passed": passed}
+                        field_marks = {}
+
+                    if verbose:
+                        marks = "".join(field_marks.get(f, "?") for f in ["gender", "age"])
+                        print(f"    Sample {sample}: gen={t_gen:.1f}s, cf={t_cf:.2f}s, qa={t_qa:.2f}s | {'PASS' if passed else 'FAIL'} [{marks}]")
 
                     if passed:
                         passed_count += 1
                         best_details = details
                         best_quality = quality
+                    else:
+                        # Keep last details for display even when all fail
+                        if best_details is None:
+                            best_details = details
 
                 # Keep the final voice file
                 final_path = os.path.join(combo_dir, f"{char_name}.wav")
@@ -314,14 +338,14 @@ def run_single_combination(
                     "total": num_samples,
                     "best_details": best_details,
                     "qualities": qualities,
+                    "field_correct": field_correct,
                 }
 
                 if verbose:
                     pr = passed_count / num_samples
                     gender = best_details.get("gender", "?") if best_details else "?"
                     age = best_details.get("age", "?") if best_details else "?"
-                    dialect = best_details.get("dialect", "?") if best_details else "?"
-                    print(f"    Pass rate: {passed_count}/{num_samples} ({pr:.0%}) | {gender} / {age} / {dialect}")
+                    print(f"    Pass rate: {passed_count}/{num_samples} ({pr:.0%}) | {gender} / {age}")
 
             # Shutdown shared engine after all samples
             shared_engine.shutdown_worker()
@@ -337,18 +361,19 @@ def run_single_combination(
             total_passed = sum(r["passed"] for r in char_results.values())
             overall_pass_rate = total_passed / total_samples if total_samples > 0 else 0
 
-            # Duration consistency across characters (from best samples)
+            # Duration consistency across all samples
             durations = []
             for char_name, r in char_results.items():
-                if r["qualities"]:
-                    dur = r["qualities"][-1]["duration"]
-                    if char_name != "narrator":
-                        durations.append(dur)
+                for q in r["qualities"]:
+                    durations.append(q["duration"])
 
             duration_cv = 0.0
+            duration_std = 0.0
             if len(durations) > 1:
                 import statistics
-                duration_cv = statistics.stdev(durations) / statistics.mean(durations) if statistics.mean(durations) > 0 else 0
+                dur_mean = statistics.mean(durations)
+                duration_std = statistics.stdev(durations)
+                duration_cv = duration_std / dur_mean if dur_mean > 0 else 0
 
             # Per-character duration consistency (std of 5 samples)
             char_duration_cvs = {}
@@ -376,18 +401,30 @@ def run_single_combination(
                 print(f"\n  {'='*75}")
                 print(f"  Voice Quality Results ({voice_engine}) — {num_samples} samples per character")
                 print(f"  {'='*75}")
-                print(f"  {'Character':<18} {'Pass':>5} {'Rate':>7} {'Gender':<8} {'Age':<8} {'Dialect':<10} {'Dur':<6} {'SNR':<7} {'Clip%':<6} {'Sil%':<6}")
-                print(f"  {'-'*91}")
+                total_field_correct = {"gender": 0, "age": 0}
+                print(f"  {'Character':<18} {'Pass':>5} {'Gender':>8} {'Age':>8} {'Dur':>6} {'SNR':>6} {'Clip':>6} {'Sil':>5}")
+                print(f"  {'-'*78}")
                 for char_name, r in sorted(char_results.items()):
-                    best = r["best_details"] or {}
-                    # Use average quality across all samples
+                    fc = r.get("field_correct", {})
+                    nf = r["total"]
+                    def field_score(field):
+                        correct = fc.get(field, 0)
+                        total_field_correct[field] += correct
+                        return f"{correct}/{nf}".rjust(8)
+                    g_s = field_score("gender")
+                    a_s = field_score("age")
                     avg_dur = statistics.mean([q["duration"] for q in r["qualities"]]) if r["qualities"] else 0
                     avg_snr = statistics.mean([q["snr_db"] for q in r["qualities"]]) if r["qualities"] else 0
                     avg_clip = statistics.mean([q["clipping_pct"] for q in r["qualities"]]) if r["qualities"] else 0
                     avg_sil = statistics.mean([q["silence_ratio"] for q in r["qualities"]]) if r["qualities"] else 0
-                    print(f"  {char_name:<18} {r['passed']:>3}/{r['total']} {r['pass_rate']:>6.0%} {best.get('gender','?'):<8} {best.get('age','?'):<8} {best.get('dialect','?'):<10} {avg_dur:.1f}s {avg_snr:.0f}dB {avg_clip:.1f}% {avg_sil*100:.0f}%")
-                print(f"  {'-'*91}")
-                print(f"  Overall: {total_passed}/{total_samples} passed ({overall_pass_rate:.0%}), duration CV={duration_cv:.2f}")
+                    print(f"  {char_name:<18} {r['passed']:>3}/{nf} {g_s} {a_s} {avg_dur:>5.1f}s {avg_snr:>5.0f}dB {avg_clip:>5.1f}% {avg_sil*100:>4.0f}%")
+                print(f"  {'-'*78}")
+                # Overall field accuracy across all characters
+                field_summary = []
+                for f in ["gender", "age"]:
+                    total_possible = total_samples  # 4 chars × 5 samples = 20
+                    field_summary.append(f"{f}={total_field_correct[f]}/{total_possible}({total_field_correct[f]*100//total_possible}%)")
+                print(f"  Overall: {total_passed}/{total_samples} passed ({overall_pass_rate:.0%}), dur std={duration_std:.2f}s, {' '.join(field_summary)}")
                 print(f"  {'='*75}\n")
 
             return result

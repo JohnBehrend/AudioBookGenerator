@@ -20,6 +20,7 @@ import csv
 import json
 import time
 import shutil
+import threading
 import argparse
 import tempfile
 from pathlib import Path
@@ -120,6 +121,36 @@ def _get_vram_usage_mb(device: str = "cuda:0") -> float:
     except Exception:
         pass
     return 0.0
+
+
+class VRAMTracker:
+    """Background thread that samples nvidia-smi to capture peak VRAM during operations."""
+
+    def __init__(self, device: str = "cuda:0", interval: float = 0.5):
+        self._device = device
+        self._interval = interval
+        self._peak = 0.0
+        self._running = False
+        self._thread = None
+
+    def _sample_loop(self):
+        while self._running:
+            val = _get_vram_usage_mb(self._device)
+            if val > self._peak:
+                self._peak = val
+            time.sleep(self._interval)
+
+    def start(self):
+        self._running = True
+        self._peak = 0.0
+        self._thread = threading.Thread(target=self._sample_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> float:
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=3)
+        return self._peak
 
 
 def _free_gpu_memory():
@@ -232,7 +263,10 @@ def run_single_combination(
                 print(f"\n  [Voice Samples] voice_engine={voice_engine}, device={device}, {num_samples} samples/char")
 
             t0 = time.time()
-            peak_vram = 0
+
+            # Start background VRAM tracker
+            vram_tracker = VRAMTracker(device=device, interval=0.5)
+            vram_tracker.start()
 
             # Create one VoiceMapper to reuse across all samples (avoids model reload)
             from audiobook_generator.voice_mapper import VoiceMapper as VMMapper
@@ -268,9 +302,6 @@ def run_single_combination(
                         verbose=False,
                     )
                     t_gen = time.time() - t_step
-                    # Track peak VRAM during generation
-                    current_vram = _get_vram_usage_mb(device)
-                    peak_vram = max(peak_vram, current_vram)
 
                     if not success or not output_file or not os.path.exists(output_file):
                         if verbose:
@@ -353,10 +384,13 @@ def run_single_combination(
             # Shutdown shared engine after all samples
             shared_engine.shutdown_worker()
 
+            # Stop VRAM tracker and get peak
+            peak_vram = vram_tracker.stop()
+
             result["voice_gen_time"] = time.time() - t0
             result["peak_vram_mb"] = peak_vram
             if verbose:
-                print(f"  [Voice Samples] Generated {len(generated_voices)} voices in {result['voice_gen_time']:.0f}s (VRAM: {peak_vram:.0f}MB)")
+                print(f"  [Voice Samples] Generated {len(generated_voices)} voices in {result['voice_gen_time']:.0f}s (Peak VRAM: {peak_vram/1024:.1f}GB)")
 
             # Aggregate stats
             total_samples = sum(r["total"] for r in char_results.values())

@@ -264,14 +264,17 @@ def run_single_combination(
 
             t0 = time.time()
 
-            # Start background VRAM tracker
-            vram_tracker = VRAMTracker(device=device, interval=0.5)
-            vram_tracker.start()
+            # Measure baseline VRAM before engine loads
+            vram_baseline = _get_vram_usage_mb(device)
 
             # Create one VoiceMapper to reuse across all samples (avoids model reload)
             from audiobook_generator.voice_mapper import VoiceMapper as VMMapper
             benchmark_mapper = VMMapper(output_dir=combo_dir, device=device, tts_engine=voice_engine)
             shared_engine = benchmark_mapper.get_engine()
+
+            # Start background VRAM tracker after model is loaded
+            vram_tracker = VRAMTracker(device=device, interval=0.5)
+            vram_tracker.start()
 
             # Characters to benchmark (include narrator)
             benchmark_chars = character_descriptions
@@ -384,13 +387,14 @@ def run_single_combination(
             # Shutdown shared engine after all samples
             shared_engine.shutdown_worker()
 
-            # Stop VRAM tracker and get peak
+            # Stop VRAM tracker and compute delta from baseline
             peak_vram = vram_tracker.stop()
+            vram_delta = peak_vram - vram_baseline
 
             result["voice_gen_time"] = time.time() - t0
-            result["peak_vram_mb"] = peak_vram
+            result["peak_vram_mb"] = vram_delta
             if verbose:
-                print(f"  [Voice Samples] Generated {len(generated_voices)} voices in {result['voice_gen_time']:.0f}s (Peak VRAM: {peak_vram/1024:.1f}GB)")
+                print(f"  [Voice Samples] Generated {len(generated_voices)} voices in {result['voice_gen_time']:.0f}s (VRAM: {vram_baseline/1024:.1f}GB -> {peak_vram/1024:.1f}GB, +{vram_delta/1024:.1f}GB)")
 
             # Aggregate stats
             total_samples = sum(r["total"] for r in char_results.values())

@@ -780,7 +780,7 @@ def generate_audiobook_from_chapters(
                                         os.unlink(temp_path)
                                 with completed_lock:
                                     completed_count += 1
-                                print(f"[LINE_PROGRESS] Chapter {item['chapter_idx']}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(state['max_ratio'] * 100)}", file=sys.stderr)
+                                print(f"[LINE_PROGRESS] Chapter {item['chapter_idx']}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(state['max_ratio'] * 100)}")
                                 progress_handler.update(
                                     completed_count / total_items,
                                     desc=f"Processing Chapter {item['chapter_idx']} Line {item['line_idx']} Ratio {int(state['max_ratio'] * 100)}"
@@ -842,7 +842,7 @@ def generate_audiobook_from_chapters(
                         desc=f"Processing Chapter {i} Line {item['line_idx']} Ratio {int(ratio * 100)}"
                     )
                     if verbose:
-                        print(f"[LINE_PROGRESS] Chapter {i}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(ratio * 100)}", file=sys.stderr)
+                        print(f"[LINE_PROGRESS] Chapter {i}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(ratio * 100)}")
 
             # Assemble chapter MP3 from WAV files
             progress_handler.update(1, desc=f"Assembling Chapters")

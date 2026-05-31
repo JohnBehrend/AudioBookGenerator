@@ -767,7 +767,8 @@ def main():
         sorted_results = sorted(results, key=lambda x: float(x["avg_ratio"]), reverse=True)
         for r in sorted_results:
             rate_str = f"{float(r['avg_ratio']):.0%}"
-            time_str = f"{r['total_time']:.0f}s"
+            total_time_val = float(r.get('total_time', 0) or 0)
+            time_str = f"{total_time_val:.0f}s"
             vram_str = f"{r.get('peak_vram_mb', 0)/1024:.1f}GB" if r.get('peak_vram_mb', 0) > 0 else "?"
             dur_cv = f"{r.get('duration_cv', 0):.2f}" if r.get('duration_cv') is not None else "?"
             print(f"{r['voice_engine']:<12} {r['successful_lines']:>3}/{r.get('total_samples', r['successful_lines']+r['failed_lines']):>3} {rate_str:>7} {vram_str:>8} {dur_cv:>7} {time_str:>10}")
@@ -777,7 +778,8 @@ def main():
         sorted_results = sorted(results, key=lambda x: x["avg_ratio"], reverse=True)
         for r in sorted_results:
             lines_str = f"{r['successful_lines']}/{r['total_lines']}"
-            time_str = f"{r['total_time']:.0f}s"
+            total_time_val = float(r.get('total_time', 0) or 0)
+            time_str = f"{total_time_val:.0f}s"
             print(f"{r['voice_engine']:<12} {r['tts_engine']:<12} {r['status']:<12} {lines_str:<10} {r['avg_ratio']:<12.3f} {time_str:<12}")
 
     print(f"\nResults saved to: {csv_path}")

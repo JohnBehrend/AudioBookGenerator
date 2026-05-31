@@ -423,6 +423,7 @@ def run_single_combination(
             overall_pass_rate = total_passed / total_samples if total_samples > 0 else 0
 
             # Duration consistency across all samples
+            import statistics
             durations = []
             for char_name, r in char_results.items():
                 for q in r["qualities"]:
@@ -431,7 +432,6 @@ def run_single_combination(
             duration_cv = 0.0
             duration_std = 0.0
             if len(durations) > 1:
-                import statistics
                 dur_mean = statistics.mean(durations)
                 duration_std = statistics.stdev(durations)
                 duration_cv = duration_std / dur_mean if dur_mean > 0 else 0
@@ -487,6 +487,7 @@ def run_single_combination(
                 print(f"  Overall: {total_passed}/{total_samples} passed ({overall_pass_rate:.0%}), dur std={duration_std:.2f}s, {' '.join(field_summary)}")
                 print(f"  {'='*75}\n")
 
+            result["total_time"] = result["voice_gen_time"]
             return result
 
         if verbose:

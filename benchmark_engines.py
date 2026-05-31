@@ -474,13 +474,15 @@ def run_single_combination(
 
         t1 = time.time()
 
-        # Capture stderr to extract [LINE_PROGRESS] ratios
-        # LINE_PROGRESS is printed to stderr to avoid breaking multiprocessing pipes
-        import io
-        import contextlib
+        # Redirect stdout to a temp file to capture [LINE_PROGRESS] without
+        # breaking multiprocessing pipes. Use os.dup2 instead of redirect_stdout.
+        progress_log = os.path.join(combo_dir, ".progress.log")
+        orig_stdout_fd = os.dup(1)
+        log_fd = os.open(progress_log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        os.dup2(log_fd, 1)
+        os.close(log_fd)
 
-        stderr_capture = io.StringIO()
-        with contextlib.redirect_stderr(stderr_capture):
+        try:
             status_msg, chapters_processed = generate_audiobook_from_chapters(
                 chapters=chapters,
                 chapter_maps=chapter_maps,
@@ -496,14 +498,21 @@ def run_single_combination(
                 whisper_concurrency=1,
                 whisper_fast=True,
             )
+        finally:
+            os.dup2(orig_stdout_fd, 1)
+            os.close(orig_stdout_fd)
 
         result["tts_gen_time"] = time.time() - t1
 
         if verbose:
             print(f"  [TTS] {status_msg}")
 
-        # Parse per-line ratios from captured stderr
-        captured = stderr_capture.getvalue()
+        # Parse per-line ratios from progress log
+        captured = ""
+        if os.path.exists(progress_log):
+            with open(progress_log, 'r') as f:
+                captured = f.read()
+            os.unlink(progress_log)
         ratio_pattern = re.compile(r'\[LINE_PROGRESS\].*Ratio:\s*(\d+)')
         ratios = []
         for match in ratio_pattern.finditer(captured):

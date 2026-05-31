@@ -84,7 +84,6 @@ VOICE_GENDER_CORRECTION = {
 
 # TTS Model paths for each engine
 TTS_MODEL_PATHS = {
-    "vibevoice": "Jmica/VibeVoice7B",
     "moss": "OpenMOSS-Team/MOSS-TTS-Local-Transformer",
     "echo-tts": "jordand/echo-tts-base",
     "omni": "drbaph/OmniVoice-bf16",

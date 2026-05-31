@@ -43,7 +43,7 @@ TEST_DESCRIPTIONS = {
 TEST_TEXT = "Hello, world."
 
 # Engines that require special setup or large models
-OPTIONAL_ENGINES = {"echo-tts", "vibevoice"}
+OPTIONAL_ENGINES = {"echo-tts"}
 
 # Persistent output directory for generated test voices
 _TEST_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "voice_test" / "test_voices"

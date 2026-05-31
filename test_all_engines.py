@@ -55,7 +55,7 @@ def main():
         ("omni", "male, middle-aged, british accent"),
         ("vox", "male, middle aged, american accent"),
         ("kugelaudio", "a warm female voice with a gentle accent"),
-        ("vibevoice", "young female voice, cheerful and energetic"),
+        ("omni", "young female voice, cheerful and energetic"),
         ("dramabox", "A middle-aged man speaks calmly, his voice steady and measured."),
     ]
 

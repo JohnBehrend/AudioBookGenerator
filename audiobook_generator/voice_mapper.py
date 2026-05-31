@@ -52,7 +52,7 @@ class VoiceMapper:
         Args:
             output_dir: Directory to save/load voice samples and maps
             device: Device to run TTS models ('cuda:0', 'cuda:1', etc.)
-            tts_engine: TTS engine to use ('vibevoice', 'moss', 'echo-tts', 'omni', 'vox')
+            tts_engine: TTS engine to use ('moss', 'echo-tts', 'omni', 'vox', 'dramabox')
                        Defaults to AUDIO_SETTINGS['default_tts_engine']
             duplicate_replacement_map: Optional dict mapping duplicate character names to canonical names
             engine: Optional pre-created TTS engine instance for injection (for testing/mocking)

@@ -20,10 +20,9 @@ class TestEngineRegistry:
         assert "moss" in engines
         assert "omni" in engines
         assert "vox" in engines
-        assert "vibevoice" in engines
         assert "echo-tts" in engines
         assert "dramabox" in engines
-        assert len(engines) == 6
+        assert len(engines) == 5
 
     def test_get_engine_returns_correct_class(self):
         """get_engine should return the correct engine class."""
@@ -46,14 +45,12 @@ class TestEngineRegistry:
         from audiobook_generator.engines.moss import MossEngine
         from audiobook_generator.engines.omni import OmniEngine
         from audiobook_generator.engines.vox import VoxEngine
-        from audiobook_generator.engines.vibevoice import VibeVoiceEngine
         from audiobook_generator.engines.echo_tts import EchoTTSAdapter
         from audiobook_generator.engines.dramabox import DramaboxEngine
 
         assert _ENGINE_REGISTRY["moss"] is MossEngine
         assert _ENGINE_REGISTRY["omni"] is OmniEngine
         assert _ENGINE_REGISTRY["vox"] is VoxEngine
-        assert _ENGINE_REGISTRY["vibevoice"] is VibeVoiceEngine
         assert _ENGINE_REGISTRY["echo-tts"] is EchoTTSAdapter
         assert _ENGINE_REGISTRY["dramabox"] is DramaboxEngine
 
@@ -101,12 +98,6 @@ class TestEngineInstances:
         engine = VoxEngine(device="cpu")
         assert engine._device == "cpu"
 
-    def test_vibevoice_engine_creation(self):
-        """VibeVoiceEngine should be creatable."""
-        from audiobook_generator.engines.vibevoice import VibeVoiceEngine
-        engine = VibeVoiceEngine(device="cpu")
-        assert engine._device == "cpu"
-
     def test_echo_tts_engine_creation(self):
         """EchoTTSAdapter should be creatable."""
         from audiobook_generator.engines.echo_tts import EchoTTSAdapter
@@ -141,12 +132,6 @@ class TestEngineFactory:
         engine = get_engine("vox", device="cpu")
         from audiobook_generator.engines.vox import VoxEngine
         assert isinstance(engine, VoxEngine)
-
-    def test_get_engine_vibevoice(self):
-        """get_engine('vibevoice') returns VibeVoiceEngine."""
-        engine = get_engine("vibevoice", device="cpu")
-        from audiobook_generator.engines.vibevoice import VibeVoiceEngine
-        assert isinstance(engine, VibeVoiceEngine)
 
     def test_get_engine_echo_tts(self):
         """get_engine('echo-tts') returns EchoTTSAdapter."""

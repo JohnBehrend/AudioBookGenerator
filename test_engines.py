@@ -53,7 +53,7 @@ def main():
         ("moss", "a calm male voice with a smooth tone"),
         ("omni", "male, middle-aged, british accent"),
         ("vox", "male, middle aged, american accent"),
-        ("vibevoice", "young female voice, cheerful and energetic"),
+        ("omni", "young female voice, cheerful and energetic"),
     ]
 
     results = {}

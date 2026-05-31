@@ -97,7 +97,7 @@ from .pipeline import (
 class TTSConfig:
     """Configuration for TTS generation."""
     device: str = "cuda"
-    tts_engine: str = "vibevoice"
+    tts_engine: str = "omni"
     cfg_scale: float = 1.3
     output_dir: str = ""
     short_text_postfix: Optional[str] = DEFAULTS["short_text_postfix"]
@@ -451,7 +451,7 @@ def generate_audiobook_from_chapters(
         voices_map: Dict mapping character names to voice file paths (wav)
         output_dir: Output directory for audio files
         device: Device to run on
-        tts_engine: 'vibevoice', 'moss', 'echo-tts', 'omni', or 'vox'
+        tts_engine: 'moss', 'echo-tts', 'omni', 'vox', or 'dramabox'
         cfg_scale: CFG scale value
         max_chapters: Maximum number of chapters to process
         verbose: Print verbose output
@@ -1191,7 +1191,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         api_key: LLM API key for speaker labeling and character descriptions
         llm_port: LLM endpoint port (e.g., LM Studio)
         voice_engine: TTS engine for voice sample generation ('omni', 'vox', 'dramabox')
-        tts_engine: TTS engine for audiobook generation ('vibevoice', 'echo-tts', 'omni', 'vox')
+        tts_engine: TTS engine for audiobook generation ('echo-tts', 'omni', 'vox', 'dramabox')
         turbo: Reserved for future turbo models
         device: CUDA device (e.g., 'cuda', 'cuda:1')
         seed_voice_map: Path to existing voices_map.json to seed voices
@@ -1442,7 +1442,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         num_characters = len(state.character_descriptions)
         with ProgressHandler(progress=None, use_tqdm=True, total=num_characters, desc="Generating voice samples") as handler:
             # Build fallback chain: try all cloning-capable engines if primary fails
-            _all_engines = ["omni", "vibevoice", "vox", "moss", "echo-tts"]
+            _all_engines = ["omni", "vox", "moss", "echo-tts", "dramabox"]
             _fallback_engines = [e for e in _all_engines if e != tts_engine]
 
             result_msg, generated_voices = gen_voice_samples(
@@ -1556,7 +1556,7 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         seed_voice_map: Path to existing voices_map.json to seed voices
         epub_file: Path to EPUB file to pre-load in the interface
         saved_temp_dir: Optional path to a saved temp directory to restore from
-        tts_engine: TTS engine to use ('vibevoice', 'moss', 'echo-tts', 'omni', 'vox')
+        tts_engine: TTS engine to use ('moss', 'echo-tts', 'omni', 'vox', 'dramabox')
     """
     # Set TTS_ENGINE environment variable for Gradio UI
     if tts_engine:
@@ -1653,7 +1653,7 @@ def main():
     parser.add_argument("--seed-voice-map", help="Path to existing voices_map.json to seed voices")
     parser.add_argument("epub_file", nargs="?", help="Path to EPUB file to process")
     parser.add_argument("--saved-temp-dir", help="Path to saved temp directory to restore from")
-    parser.add_argument("--tts-engine", choices=["vibevoice", "moss", "echo-tts", "omni", "vox", "dramabox"], help="TTS engine to use")
+    parser.add_argument("--tts-engine", choices=["moss", "echo-tts", "omni", "vox", "dramabox"], help="TTS engine to use")
     parser.add_argument("--model", default=None, help="LLM model name (e.g., coder-model)")
     parser.add_argument("--voice-engine", choices=["omni", "vox", "dramabox"], default="omni", help="Voice engine for character descriptions")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
@@ -1899,7 +1899,7 @@ def main():
 
             # Stage 4: Generate voice samples
             print("=== Stage 4: Generating voice samples ===")
-            _all_engines = ["omni", "vibevoice", "vox", "moss", "echo-tts"]
+            _all_engines = ["omni", "vox", "moss", "echo-tts", "dramabox"]
             _fallback_engines = [e for e in _all_engines if e != args.tts_engine]
 
             result_msg, generated = gen_voice_samples(

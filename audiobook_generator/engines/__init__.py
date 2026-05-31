@@ -4,7 +4,6 @@ from .base import TTSEngine
 from .moss import MossEngine
 from .omni import OmniEngine
 from .vox import VoxEngine
-from .vibevoice import VibeVoiceEngine
 from .echo_tts import EchoTTSAdapter
 from .dramabox import DramaboxEngine
 
@@ -14,7 +13,6 @@ _ENGINE_REGISTRY = {
     "moss": MossEngine,
     "omni": OmniEngine,
     "vox": VoxEngine,
-    "vibevoice": VibeVoiceEngine,
     "echo-tts": EchoTTSAdapter,
     "dramabox": DramaboxEngine,
 }
@@ -24,7 +22,7 @@ def get_engine(engine_name: str, device: str = "cuda", turbo: bool = False) -> T
     """Get a TTS engine instance by name.
 
     Args:
-        engine_name: Engine identifier (e.g., 'moss', 'omni', 'vox', 'vibevoice', 'echo-tts')
+        engine_name: Engine identifier (e.g., 'moss', 'omni', 'vox', 'echo-tts', 'dramabox')
         device: CUDA device string (e.g., 'cuda:0')
         turbo: Whether to use turbo variant (engine-specific)
 

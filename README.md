@@ -43,7 +43,7 @@ uv run python audiobook_generator.py <epub_file> [OPTIONS]
 # --verbose, -v        Print verbose output
 # --api-key KEY        LLM API key
 # --port PORT          LLM port
-# --tts-engine ENGINE  TTS engine: kugelaudio (default) or vibevoice
+# --tts-engine ENGINE  TTS engine: omni (default), vox, or dramabox
 # --device DEVICE      CUDA device (default: cuda)
 # --num-llm-attempts N Number of LLM attempts (default: 2)
 # --whisper-cpu        Run Whisper validation on CPU
@@ -226,7 +226,7 @@ Without `--voice-only`, each combination runs the full pipeline: voice generatio
 |--------|-------------|
 | `--voice-only` | Only benchmark voice engines, skip TTS |
 | `--voice-engines` | Voice engines to test: `omni`, `vox`, `dramabox` |
-| `--tts-engines` | TTS engines to test: `kugelaudio`, `vibevoice`, `echo_tts` |
+| `--tts-engines` | TTS engines to test: `omni`, `vox`, `dramabox` |
 | `--gpus` | GPU devices (e.g., `--gpus cuda:0 cuda:1`) |
 | `--concurrency` | TTS concurrency level |
 | `--resume` | Skip already-completed combinations |

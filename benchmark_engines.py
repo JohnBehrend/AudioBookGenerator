@@ -42,7 +42,7 @@ from audiobook_generator.pipeline import MIN_RATIO_THRESHOLD
 VOICE_ENGINES = ["omni", "vox", "dramabox"]
 
 # TTS engines that can generate line audio
-TTS_ENGINES = ["omni", "vox", "vibevoice", "dramabox"]
+TTS_ENGINES = ["omni", "vox", "dramabox"]
 
 # Test EPUB
 TEST_EPUB = Path(__file__).parent / "voice_test" / "test_pride_and_prejudice.epub"

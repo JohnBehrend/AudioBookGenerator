@@ -438,6 +438,7 @@ def generate_audiobook_from_chapters(
     gpus: Optional[List[str]] = None,
     whisper_concurrency: int = 1,
     whisper_fast: bool = False,
+    progress_log: Optional[str] = None,
 ) -> Tuple[str, int]:
     """Generate audiobook from parsed chapters.
 
@@ -781,6 +782,9 @@ def generate_audiobook_from_chapters(
                                 with completed_lock:
                                     completed_count += 1
                                 print(f"[LINE_PROGRESS] Chapter {item['chapter_idx']}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(state['max_ratio'] * 100)}")
+                                if progress_log:
+                                    with open(progress_log, 'a') as f:
+                                        f.write(f"[LINE_PROGRESS] Chapter {item['chapter_idx']}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(state['max_ratio'] * 100)}\n")
                                 progress_handler.update(
                                     completed_count / total_items,
                                     desc=f"Processing Chapter {item['chapter_idx']} Line {item['line_idx']} Ratio {int(state['max_ratio'] * 100)}"
@@ -843,6 +847,9 @@ def generate_audiobook_from_chapters(
                     )
                     if verbose:
                         print(f"[LINE_PROGRESS] Chapter {i}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(ratio * 100)}")
+                    if progress_log:
+                        with open(progress_log, 'a') as f:
+                            f.write(f"[LINE_PROGRESS] Chapter {i}, Line {item['line_idx']}, Voice: {item['voice_name']}, Ratio: {int(ratio * 100)}\n")
 
             # Assemble chapter MP3 from WAV files
             progress_handler.update(1, desc=f"Assembling Chapters")

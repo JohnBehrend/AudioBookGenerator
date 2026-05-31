@@ -474,33 +474,25 @@ def run_single_combination(
 
         t1 = time.time()
 
-        # Redirect stdout to a temp file to capture [LINE_PROGRESS] without
-        # breaking multiprocessing pipes. Use os.dup2 instead of redirect_stdout.
+        # Write LINE_PROGRESS to a file directly (avoid stdout redirection)
         progress_log = os.path.join(combo_dir, ".progress.log")
-        orig_stdout_fd = os.dup(1)
-        log_fd = os.open(progress_log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
-        os.dup2(log_fd, 1)
-        os.close(log_fd)
 
-        try:
-            status_msg, chapters_processed = generate_audiobook_from_chapters(
-                chapters=chapters,
-                chapter_maps=chapter_maps,
-                voices_map=voices_map,
-                output_dir=combo_dir,
-                device=device,
-                tts_engine=tts_engine,
-                max_chapters=1,
-                verbose=verbose,
-                whisper_cpu=whisper_cpu,
-                concurrency=concurrency,
-                gpus=gpus,
-                whisper_concurrency=1,
-                whisper_fast=True,
-            )
-        finally:
-            os.dup2(orig_stdout_fd, 1)
-            os.close(orig_stdout_fd)
+        status_msg, chapters_processed = generate_audiobook_from_chapters(
+            chapters=chapters,
+            chapter_maps=chapter_maps,
+            voices_map=voices_map,
+            output_dir=combo_dir,
+            device=device,
+            tts_engine=tts_engine,
+            max_chapters=1,
+            verbose=verbose,
+            whisper_cpu=whisper_cpu,
+            concurrency=concurrency,
+            gpus=gpus,
+            whisper_concurrency=1,
+            whisper_fast=True,
+            progress_log=progress_log,
+        )
 
         result["tts_gen_time"] = time.time() - t1
 

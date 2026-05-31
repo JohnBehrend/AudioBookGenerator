@@ -231,6 +231,7 @@ Without `--voice-only`, each combination runs the full pipeline: voice generatio
 | `--concurrency` | TTS concurrency level |
 | `--resume` | Skip already-completed combinations |
 | `--verbose` | Detailed per-sample output |
+| `--quick` | Quick check: 1 voice, 1 line only (no stats) |
 
 Results are saved to `benchmark_results/` with per-combination CSV and audio samples.
 

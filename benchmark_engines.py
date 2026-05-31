@@ -177,6 +177,7 @@ def run_single_combination(
     whisper_cpu: bool,
     voice_only: bool = False,
     verbose: bool = False,
+    quick: bool = False,
 ) -> Dict:
     """Run a single voice_engine + tts_engine combination and return metrics.
 
@@ -210,12 +211,20 @@ def run_single_combination(
         # Step 1: Generate voice samples using voice_engine (same as UI Stage 4)
         # Skip in voice_only mode — we generate per-character samples below for stats
         if not voice_only:
-            if verbose:
-                print(f"\n  [Voice Samples] voice_engine={voice_engine}, device={device}")
+            if quick:
+                # Only generate voice for first character
+                char_list = list(character_descriptions.items())[:1]
+                descriptions_for_voice = {k: v for k, v in char_list}
+                if verbose:
+                    print(f"\n  [Voice Samples] voice_engine={voice_engine}, device={device} (QUICK: 1 character)")
+            else:
+                descriptions_for_voice = character_descriptions
+                if verbose:
+                    print(f"\n  [Voice Samples] voice_engine={voice_engine}, device={device}")
 
             t0 = time.time()
             status_msg, generated_voices = gen_voice_samples(
-                descriptions=character_descriptions,
+                descriptions=descriptions_for_voice,
                 output_dir=combo_dir,
                 device=device,
                 voice_engine=voice_engine,
@@ -245,9 +254,17 @@ def run_single_combination(
 
         # Step 2: Generate TTS audio using tts_engine (same as UI Stage 5)
         if voice_only:
-            # Generate 5 samples per character, validate all with ChunkFormer,
-            # keep the best, and report pass rate for statistical significance
-            num_samples = 5
+            # Quick mode: single sample, single character only
+            if quick:
+                num_samples = 1
+                benchmark_chars = dict(list(character_descriptions.items())[:1])
+                if verbose:
+                    print(f"\n  [QUICK MODE] 1 sample for 1 character only")
+            else:
+                # Generate 5 samples per character, validate all with ChunkFormer,
+                # keep the best, and report pass rate for statistical significance
+                num_samples = 5
+                benchmark_chars = character_descriptions
             cf_model = None
             generated_voices = {}
 
@@ -277,8 +294,11 @@ def run_single_combination(
             vram_tracker = VRAMTracker(device=device, interval=0.5)
             vram_tracker.start()
 
-            # Characters to benchmark (include narrator)
-            benchmark_chars = character_descriptions
+            # Characters to benchmark (use quick mode filter if enabled)
+            if quick and voice_only:
+                benchmark_chars = dict(list(character_descriptions.items())[:1])
+            else:
+                benchmark_chars = character_descriptions
             char_results = {}  # char_name -> {pass_rate, best_details, qualities}
 
             for char_idx, (char_name, char_desc) in enumerate(benchmark_chars.items()):
@@ -474,11 +494,19 @@ def run_single_combination(
 
         t1 = time.time()
 
+        # Quick mode: only process 1 line (first line of chapter 0)
+        if quick:
+            chapters_for_tts = [chapters[0][:1]]
+            if verbose:
+                print(f"  [QUICK MODE] 1 line only")
+        else:
+            chapters_for_tts = chapters
+
         # Write LINE_PROGRESS to a file directly (avoid stdout redirection)
         progress_log = os.path.join(combo_dir, ".progress.log")
 
         status_msg, chapters_processed = generate_audiobook_from_chapters(
-            chapters=chapters,
+            chapters=chapters_for_tts,
             chapter_maps=chapter_maps,
             voices_map=voices_map,
             output_dir=combo_dir,
@@ -511,8 +539,11 @@ def run_single_combination(
             ratio_pct = int(match.group(1))
             ratios.append(ratio_pct / 100.0)
 
-        # Count total lines from chapter
-        result["total_lines"] = len(chapters[0]) if chapters else 0
+        # Count total lines from chapter (respect quick mode)
+        if quick and not voice_only:
+            result["total_lines"] = len(chapters_for_tts[0]) if chapters_for_tts else 0
+        else:
+            result["total_lines"] = len(chapters[0]) if chapters else 0
 
         if ratios:
             result["successful_lines"] = sum(1 for r in ratios if r >= MIN_RATIO_THRESHOLD)
@@ -549,6 +580,7 @@ def main():
     parser.add_argument("--voice-only", action="store_true", help="Only benchmark voice generation, skip TTS")
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
     parser.add_argument("--resume", action="store_true", help="Resume from existing results, skipping done combinations")
+    parser.add_argument("--quick", action="store_true", help="Quick check: 1 voice, 1 line only (no stats)")
     args = parser.parse_args()
 
     voice_engines = args.voice_engines or VOICE_ENGINES
@@ -736,6 +768,7 @@ def main():
                 whisper_cpu=args.whisper_cpu,
                 voice_only=args.voice_only,
                 verbose=args.verbose,
+                quick=args.quick,
             )
             results.append(result)
 

@@ -618,9 +618,17 @@ def generate_audiobook_from_chapters(
                             voice_path = voice_mapper.get_voice_path(canonical_voice)
                     else:
                         voice_path = voice_mapper.get_voice_path(canonical_voice)
-                    if voice_path is None:
-                        print(f"  [WARN] Skipping line for '{voice}' — no voice file available")
-                        continue
+                    if voice_path is None or not os.path.exists(voice_path):
+                        if canonical_voice == "narrator":
+                            print(f"[ERROR] Narrator voice file missing — cannot generate audiobook")
+                            continue
+                        print(f"  [WARN] No voice for '{voice}' — using narrator as fallback")
+                        narrator_path = voice_mapper.get_voice_path("narrator")
+                        if narrator_path and os.path.exists(narrator_path):
+                            voice_path = narrator_path
+                        else:
+                            print(f"[ERROR] Narrator voice file missing — cannot generate audiobook")
+                            continue
 
                     work_items.append({
                         "chapter_idx": i,
@@ -1342,27 +1350,45 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         state.load_chapter_maps()
         # Note: characters already loaded in resume block at start of function
     else:
-        with ProgressHandler(progress=None, use_tqdm=True, total=num_chapters, desc="Labeling speakers") as handler:
-            for i, chapter_file in enumerate(chapter_files):
-                # Skip if already labeled (for resume after partial completion)
-                map_file = state.chapters_dir / f"chapter_{i:02d}.map.json"
-                if resume and map_file.exists():
-                    if verbose:
-                        print(f"[STAGE 2] Skipping chapter {i} - already labeled")
-                    handler.update((i + 1) / num_chapters, desc=f"Labeling chapter {i + 1}/{num_chapters}")
-                    continue
-
-                handler.update((i + 1) / num_chapters, desc=f"Labeling chapter {i + 1}/{num_chapters}")
-
-                result_msg, char_map, line_map = label_speakers(
-                    txt_file=str(chapter_file),
-                    num_attempts=num_llm_attempts,
-                    verbose=verbose,
-                    seed_characters=seed_characters
-                )
-
+        # Build list of chapters to label (skip already-labeled if resuming)
+        chapters_to_label = []
+        for i, chapter_file in enumerate(chapter_files):
+            map_file = state.chapters_dir / f"chapter_{i:02d}.map.json"
+            if resume and map_file.exists():
                 if verbose:
-                    print(f"  {result_msg}")
+                    print(f"[STAGE 2] Skipping chapter {i} - already labeled")
+            else:
+                chapters_to_label.append((i, chapter_file))
+
+        # Label all chapters concurrently (each chapter is independent, LLM handles concurrent requests)
+        max_workers = min(8, max(4, num_chapters // 4))
+        if verbose:
+            print(f"[STAGE 2] Labeling {len(chapters_to_label)} chapters with {max_workers} concurrent workers...")
+
+        with ProgressHandler(progress=None, use_tqdm=True, total=num_chapters, desc="Labeling speakers") as handler:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {}
+                for i, chapter_file in chapters_to_label:
+                    map_file = state.chapters_dir / f"chapter_{i:02d}.map.json"
+                    handler.update((i + 1) / num_chapters, desc=f"Labeling chapter {i + 1}/{num_chapters}")
+                    future = executor.submit(
+                        label_speakers,
+                        txt_file=str(chapter_file),
+                        num_attempts=num_llm_attempts,
+                        verbose=verbose,
+                        seed_characters=seed_characters
+                    )
+                    futures[future] = i
+
+                for future in as_completed(futures):
+                    i = futures[future]
+                    try:
+                        result_msg, char_map, line_map = future.result()
+                        if verbose:
+                            print(f"  {result_msg}")
+                    except Exception as e:
+                        if verbose:
+                            print(f"  Error labeling chapter {i}: {e}")
 
         state.load_chapter_maps()
         state.get_characters()
@@ -1401,6 +1427,10 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             print(f"[STAGE 3] Describing {len(state.characters)} characters...")
 
         num_chars = len(state.characters)
+        max_concurrent = min(8, max(4, num_chars // 4))
+        if verbose:
+            print(f"[STAGE 3] Describing {num_chars} characters with {max_concurrent} concurrent workers...")
+
         with ProgressHandler(progress=None, use_tqdm=True, total=num_chars, desc="Describing characters") as handler:
             result_msg, character_descriptions = describe_characters(
                 output_dir=str(state.output_dir),
@@ -1408,7 +1438,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 verbose=verbose,
                 seed_characters=seed_characters,
                 progress_callback=handler.update,
-                voice_engine=voice_engine
+                voice_engine=voice_engine,
+                max_concurrent=max_concurrent
             )
 
             if verbose:
@@ -1459,11 +1490,26 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 seed_clone_fallback_engines=_fallback_engines,
             )
 
+            if "Error" in result_msg or "failed" in result_msg.lower():
+                print(f"[ERROR] Voice generation failed: {result_msg}")
+                sys.exit(1)
+
             if verbose:
                 print(f"  {result_msg}")
 
             handler.update(num_characters, desc="Voice samples complete")
             state.load_voice_map()
+
+            # Verify ALL characters have voices before proceeding
+            wav_stems = {os.path.basename(f).rsplit('.', 1)[0] for f in state.chapters_dir.glob("*.wav")}
+            char_stems = {c for c in state.character_descriptions}
+            missing = char_stems - wav_stems
+            if missing:
+                print(f"[ERROR] {len(missing)} characters missing voices: {', '.join(sorted(missing)[:10])}{'...' if len(missing) > 10 else ''}")
+                print(f"Cannot proceed to TTS with missing voices. Exiting.")
+                sys.exit(1)
+            if verbose:
+                print(f"[OK] All {len(wav_stems)} characters have voices")
 
     # Stage 5: Generate Audiobook with progress
     if verbose:

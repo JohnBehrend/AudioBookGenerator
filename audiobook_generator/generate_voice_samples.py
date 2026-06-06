@@ -513,16 +513,18 @@ def generate_voice_samples(
                     if voice_found:
                         continue
 
-                # Generate up to 10 samples, pick the best match
+                # Generate up to 10 samples concurrently, pick the best match
                 import random
-                candidates = []
-                all_attempts = []
-                attempt = 0
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+
                 max_attempts = 10
-                while len(candidates) == 0 and attempt < max_attempts:
-                    attempt += 1
-                    random.seed(42 + attempt)
-                    _tmp_name = f"{char_name}.sample{attempt}"
+                attempt_counts = list(range(1, max_attempts + 1))
+                random.seed(42)
+                random.shuffle(attempt_counts)
+
+                # Phase 1: Generate all samples concurrently
+                def _gen_one(sample_num):
+                    _tmp_name = f"{char_name}.sample{sample_num}"
                     success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
                         character_name=_tmp_name,
                         description=char_desc,
@@ -533,6 +535,24 @@ def generate_voice_samples(
                         validate=False,
                         validation_client=None
                     )
+                    return (sample_num, success, output_file, duration, validation_msg)
+
+                with ThreadPoolExecutor(max_workers=max_attempts) as pool:
+                    futures = {pool.submit(_gen_one, num): num for num in attempt_counts}
+                    generation_results = {}
+                    for future in as_completed(futures):
+                        num = futures[future]
+                        try:
+                            generation_results[num] = future.result()
+                        except Exception as e:
+                            if verbose:
+                                print(f"    Sample {num}: generation failed ({e})")
+
+                # Phase 2: Whisper + ChunkFormer validation (sequentially to share GPU/CPU)
+                candidates = []
+                all_attempts = []
+                for sample_num in sorted(generation_results.keys()):
+                    sample_num, success, output_file, duration, validation_msg = generation_results[sample_num]
                     if not success or not output_file:
                         continue
                     try:
@@ -541,14 +561,14 @@ def generate_voice_samples(
                         matches = _word_match_count(ref_words, transcribed.lower())
                         if matches < len(ref_words) * 0.8:
                             if verbose:
-                                print(f"    Sample {attempt}: {matches}/{len(ref_words)} words (too few): {transcribed[:80]}...")
+                                print(f"    Sample {sample_num}: {matches}/{len(ref_words)} words (too few): {transcribed[:80]}...")
                             continue
                         cropped_path = output_file + ".cropped.wav"
                         if crop_to_ref_text(output_file, cropped_path, ref_words, transcribed_words, starts, ends, verbose=False):
                             use_path = cropped_path
                         else:
                             use_path = output_file
-                        all_attempts.append((matches, use_path, attempt, duration))
+                        all_attempts.append((matches, use_path, sample_num, duration))
                         # Validate against description with ChunkFormer if available
                         if chunkformer_model:
                             if verbose:
@@ -559,17 +579,17 @@ def generate_voice_samples(
                             )
                             if not cf_ok:
                                 if verbose:
-                                    print(f"    Sample {attempt}: ChunkFormer FAIL")
+                                    print(f"    Sample {sample_num}: ChunkFormer FAIL")
                                 continue
                             else:
                                 if verbose:
-                                    print(f"    Sample {attempt}: ChunkFormer PASS")
+                                    print(f"    Sample {sample_num}: ChunkFormer PASS")
                         if verbose:
-                            print(f"    Sample {attempt}: {matches}/{len(ref_words)} words ({duration:.1f}s): {transcribed[:80]}...")
-                        candidates.append((matches, use_path, attempt, duration))
+                            print(f"    Sample {sample_num}: {matches}/{len(ref_words)} words ({duration:.1f}s): {transcribed[:80]}...")
+                        candidates.append((matches, use_path, sample_num, duration))
                     except Exception as e:
                         if verbose:
-                            print(f"    Sample {attempt}: processing failed ({e})")
+                            print(f"    Sample {sample_num}: processing failed ({e})")
                 if candidates:
                     candidates.sort(key=lambda x: x[0], reverse=True)
                     best_score, best_file, best_att, best_dur = candidates[0]
@@ -581,9 +601,9 @@ def generate_voice_samples(
                 else:
                     failed.append(char_name)
                     if verbose:
-                        print(f"    All {attempt} samples failed for '{char_name}'")
+                        print(f"    All {max_attempts} samples failed for '{char_name}'")
                 # Always clean up all temp files
-                for _fa in range(1, attempt + 1):
+                for _fa in range(1, max_attempts + 1):
                     _fp = os.path.join(output_dir, f"{char_name}.sample{_fa}.wav")
                     try:
                         os.remove(_fp)
@@ -603,8 +623,80 @@ def generate_voice_samples(
 
         if verbose:
             print("\n" + "=" * 60)
-            print(f"Summary: {len(generated)} generated, {len(failed)} failed")
+            print(f"Primary engine ({gen_engine or voice_engine}): {len(generated)} generated, {len(failed)} failed")
             print("=" * 60)
+
+        if failed and seed_clone_fallback_engines:
+            # Retry failed characters with fallback engines
+            for fallback_engine_name in seed_clone_fallback_engines:
+                if verbose:
+                    print(f"\n[RETRY] Retrying {len(failed)} failed characters with {fallback_engine_name}...")
+                failed_count = 0
+                still_failed = []
+                for char_name in failed:
+                    if char_name not in descriptions:
+                        continue
+                    char_desc = descriptions[char_name]
+                    voice_path = os.path.join(output_dir, f"{char_name}.wav")
+                    if os.path.exists(voice_path):
+                        generated[char_name] = voice_path
+                        continue
+                    failed_count += 1
+                    try:
+                        if verbose:
+                            print(f"  [{failed_count}/{len(failed)}] {char_name}")
+                        _fallback_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=fallback_engine_name)
+                        _success, _out_file, _duration = _fallback_mapper.generate_voice_sample(
+                            character_name=char_name,
+                            description=char_desc,
+                            output_dir=output_dir,
+                            max_new_tokens=max_tokens,
+                            verbose=False
+                        )
+                        _fallback_mapper.cleanup_tts_models()
+                        if _success and os.path.exists(voice_path):
+                            generated[char_name] = voice_path
+                            if verbose:
+                                print(f"    Generated via {fallback_engine_name}")
+                        else:
+                            still_failed.append(char_name)
+                    except Exception as e:
+                        if verbose:
+                            print(f"    Error: {e}")
+                        still_failed.append(char_name)
+                failed = still_failed
+                if not failed:
+                    if verbose:
+                        print(f"[SUCCESS] All characters have voices after trying {fallback_engine_name}")
+                    break
+
+        # Fallback remaining failed characters to narrator (except narrator itself)
+        narrator_path = os.path.join(output_dir, "narrator.wav")
+        narrator_exists = os.path.exists(narrator_path) and "narrator" in generated
+        fallback_failed = []
+        for char_name in failed:
+            voice_path = os.path.join(output_dir, f"{char_name}.wav")
+            if char_name == "narrator":
+                fallback_failed.append(char_name)
+            elif narrator_exists:
+                try:
+                    shutil.copy2(narrator_path, voice_path)
+                    generated[char_name] = voice_path
+                    if verbose:
+                        print(f"[FALLBACK] {char_name} -> narrator.wav")
+                except Exception:
+                    fallback_failed.append(char_name)
+            else:
+                fallback_failed.append(char_name)
+
+        if fallback_failed:
+            if "narrator" in fallback_failed:
+                error_msg = f"Voice generation failed for narrator (critical): cannot proceed"
+                if verbose:
+                    print(f"\n[ERROR] {error_msg}")
+                return error_msg, generated
+            if verbose:
+                print(f"\n[WARN] Could not generate voices for {len(fallback_failed)} characters, narrator used as fallback: {', '.join(fallback_failed[:10])}{'...' if len(fallback_failed) > 10 else ''}")
 
         # VoiceMapper automatically saves voices_map.json when voice paths are added
         if verbose:

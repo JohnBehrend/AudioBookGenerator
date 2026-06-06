@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from openai import OpenAI
@@ -566,7 +567,8 @@ def describe_characters_shared(
     wiki_url_template: str = "",
     verbose: bool = False,
     progress_callback: Optional[callable] = None,
-    voice_engine: Optional[str] = None
+    voice_engine: Optional[str] = None,
+    max_concurrent: int = 1
 ) -> Dict[str, str]:
     """Shared logic for describing characters.
 
@@ -581,6 +583,7 @@ def describe_characters_shared(
         verbose: Print verbose output
         progress_callback: Optional callback for progress updates
         voice_engine: TTS engine for voice generation ('omni', 'vox', etc.)
+        max_concurrent: Maximum number of concurrent LLM calls (default 1, set higher to parallelize)
 
     Returns:
         Dict of character descriptions
@@ -603,48 +606,90 @@ def describe_characters_shared(
     if verbose:
         print(f"Canonical characters to describe: {canonical_characters}")
 
-    # Step 2: Loop over canonical characters
+    # Step 2: Loop over canonical characters (parallel if max_concurrent > 1)
     descriptions = {}
     total_chars = len(canonical_characters)
 
-    for idx, character in enumerate(canonical_characters, 1):
+    if max_concurrent > 1 and total_chars > 1:
         if verbose:
-            print(f"[{idx}/{total_chars}] Describing character: {character}")
+            print(f"Describing {total_chars} characters with {max_concurrent} concurrent workers...")
 
-        # Build context for this character using chapters_dir for dialogue extraction
-        # Returns tuple of (context_string, chapter_messages_list)
-        context_result = build_character_context(
-            [character], chapter_texts, chapter_files,
-            chapters_dir=Path(output_dir), wiki_url_template=wiki_url_template
-        )
-        context = context_result[0]
-        chapter_messages = context_result[1] if len(context_result) > 1 else []
+        def _describe_one(character: str, idx: int) -> Tuple[str, str, str]:
+            if verbose:
+                print(f"[{idx}/{total_chars}] Describing character: {character}")
 
-        description = describe_character(client, model, character, context, chapter_messages, voice_engine=voice_engine)
-        descriptions[character] = description
+            context_result = build_character_context(
+                [character], chapter_texts, chapter_files,
+                chapters_dir=Path(output_dir), wiki_url_template=wiki_url_template
+            )
+            context = context_result[0]
+            chapter_messages = context_result[1] if len(context_result) > 1 else []
 
-        # Save debug output for this character
-        debug_output = {
-            "model": model,
-            "character": character,
-            "system_prompt": _get_description_prompt(voice_engine),
-            "context": context,
-            "description": description,
-        }
-        debug_file = os.path.join(
-            output_dir, f"llm_character_debug_{character.replace(' ', '_')}.json"
-        )
-        with open(debug_file, "w", encoding="utf-8") as f:
-            json.dump(debug_output, f, indent=2, ensure_ascii=False)
-        if verbose:
-            print(f"  Saved debug output to: {debug_file}")
+            description = describe_character(client, model, character, context, chapter_messages, voice_engine=voice_engine)
 
-        # Update progress
-        progress = idx / total_chars if total_chars > 0 else 1.0
-        if progress_callback:
-            progress_callback(progress, f"Describing: {character}")
-        if verbose:
-            print(f"  Completed: {character}")
+            debug_output = {
+                "model": model,
+                "character": character,
+                "system_prompt": _get_description_prompt(voice_engine),
+                "context": context,
+                "description": description,
+            }
+            debug_file = os.path.join(
+                output_dir, f"llm_character_debug_{character.replace(' ', '_')}.json"
+            )
+            with open(debug_file, "w", encoding="utf-8") as f:
+                json.dump(debug_output, f, indent=2, ensure_ascii=False)
+            if verbose:
+                print(f"  Saved debug output to: {debug_file}")
+
+            return (character, description, f"  Completed: {character}")
+
+        with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+            futures = {executor.submit(_describe_one, char, i + 1): i + 1 for i, char in enumerate(canonical_characters)}
+            completed = 0
+            for future in as_completed(futures):
+                completed += 1
+                character, desc, msg = future.result()
+                descriptions[character] = desc
+                if verbose:
+                    print(msg)
+                if progress_callback:
+                    progress_callback(completed / total_chars, f"Describing: {character}")
+    else:
+        for idx, character in enumerate(canonical_characters, 1):
+            if verbose:
+                print(f"[{idx}/{total_chars}] Describing character: {character}")
+
+            context_result = build_character_context(
+                [character], chapter_texts, chapter_files,
+                chapters_dir=Path(output_dir), wiki_url_template=wiki_url_template
+            )
+            context = context_result[0]
+            chapter_messages = context_result[1] if len(context_result) > 1 else []
+
+            description = describe_character(client, model, character, context, chapter_messages, voice_engine=voice_engine)
+            descriptions[character] = description
+
+            debug_output = {
+                "model": model,
+                "character": character,
+                "system_prompt": _get_description_prompt(voice_engine),
+                "context": context,
+                "description": description,
+            }
+            debug_file = os.path.join(
+                output_dir, f"llm_character_debug_{character.replace(' ', '_')}.json"
+            )
+            with open(debug_file, "w", encoding="utf-8") as f:
+                json.dump(debug_output, f, indent=2, ensure_ascii=False)
+            if verbose:
+                print(f"  Saved debug output to: {debug_file}")
+
+            progress = idx / total_chars if total_chars > 0 else 1.0
+            if progress_callback:
+                progress_callback(progress, f"Describing: {character}")
+            if verbose:
+                print(f"  Completed: {character}")
 
     deduped_descriptions = descriptions
 
@@ -700,7 +745,8 @@ def describe_characters(
     seed_characters: Dict[str, str] = None,
     progress_callback: callable = None,
     voice_engine: str = None,
-    client: "OpenAI" = None
+    client: "OpenAI" = None,
+    max_concurrent: int = 1
 ) -> Tuple[str, Dict[str, str]]:
     """Describe characters from an audiobook using an LLM.
 
@@ -793,7 +839,8 @@ def describe_characters(
         wiki_url_template=wiki_url_template,
         verbose=verbose,
         progress_callback=progress_callback,
-        voice_engine=voice_engine
+        voice_engine=voice_engine,
+        max_concurrent=max_concurrent
     )
 
     result_msg = f"Successfully described {len(descriptions)} characters."

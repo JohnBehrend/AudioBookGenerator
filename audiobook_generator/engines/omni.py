@@ -29,6 +29,7 @@ class OmniEngine(TTSEngine):
         import soundfile as sf
 
         model = None
+        _voice_clone_prompts: dict[str, Any] = {}
 
         def load_model(device: str) -> None:
             nonlocal model
@@ -44,6 +45,14 @@ class OmniEngine(TTSEngine):
                 model.load_asr_model()
             except Exception as e:
                 print(f"  Warning: Could not pre-load ASR model: {e}")
+
+        def _get_voice_clone_prompt(voice_path: str) -> Any:
+            if voice_path not in _voice_clone_prompts:
+                _voice_clone_prompts[voice_path] = model.create_voice_clone_prompt(
+                    ref_audio=voice_path,
+                    preprocess_prompt=True,
+                )
+            return _voice_clone_prompts[voice_path]
 
         response_queue.put({"type": "ready"})
 
@@ -150,23 +159,12 @@ class OmniEngine(TTSEngine):
                     text = kwargs["text"]
                     voice_path = kwargs["voice_path"]
                     output_path = kwargs["output_path"]
-                    ref_text = kwargs.get("ref_text", DEFAULTS["static_voice_text"])
 
-                    ref_audio_np, ref_sr = sf.read(voice_path)
-                    if len(ref_audio_np.shape) > 1:
-                        ref_audio_np = ref_audio_np.mean(axis=1)
-                    ref_audio_np = ref_audio_np.astype(np.float32)
-                    ref_audio = torch.from_numpy(ref_audio_np)
-
-                    if ref_audio.numel() == 0:
-                        response_queue.put({"id": req_id, "success": False})
-                        continue
+                    voice_clone_prompt = _get_voice_clone_prompt(voice_path)
 
                     audio = model.generate(
                         text=text,
-                        ref_audio=(ref_audio, ref_sr),
-                        ref_text=ref_text,
-                        preprocess_prompt=False,
+                        voice_clone_prompt=voice_clone_prompt,
                     )
                     if audio is None or len(audio) == 0:
                         response_queue.put({"id": req_id, "success": False})
@@ -216,39 +214,15 @@ class OmniEngine(TTSEngine):
         verbose: bool = False,
         ref_text: Optional[str] = None,
     ) -> bool:
-        # Pre-compute ref_text in main process (WhisperModel not serializable)
-        if ref_text is None:
-            ref_text = self._get_ref_text(voice_path, validation_model, verbose)
-
+        # ref_text and _get_ref_text are deprecated — worker now uses voice_clone_prompt (cached)
         resp = self._worker_request(
             "generate_line",
             text=text,
             voice_path=voice_path,
             output_path=output_path,
-            ref_text=ref_text,
         )
         self._clear_cuda_cache()
         return resp.get("success", False)
-
-    def _get_ref_text(self, voice_path: str, validation_model: Optional[Any], verbose: bool) -> str:
-        if validation_model is None:
-            if verbose:
-                print(f"  [OmniVoice ref_text] No validation model, using static_voice_text")
-            return DEFAULTS["static_voice_text"]
-
-        try:
-            from ..utils import transcribe_audio_for_ref_text
-            ref_text = transcribe_audio_for_ref_text(validation_model, voice_path, verbose)
-            if ref_text:
-                return ref_text
-            else:
-                if verbose:
-                    print(f"  [OmniVoice ref_text] Transcription returned empty, using static_voice_text")
-                return DEFAULTS["static_voice_text"]
-        except Exception as e:
-            if verbose:
-                print(f"  [OmniVoice ref_text] Transcription failed: {e}, using static_voice_text")
-            return DEFAULTS["static_voice_text"]
 
 
 def _convert_description_to_instruct(description: str) -> str:

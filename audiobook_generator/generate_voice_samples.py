@@ -118,7 +118,7 @@ def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_mo
 
 
 def generate_voice_sample(character_name: str, description: str, voice_mapper: VoiceMapper,
-                          output_dir: str, max_new_tokens: Optional[int] = None, verbose: bool = False,
+                          output_dir: str, verbose: bool = False,
                           validate: bool = False, validation_client: Optional[OpenAI] = None) -> Tuple[bool, Optional[str], float, bool, str]:
     """Generate a short voice sample for a character using VoiceDesign model via VoiceMapper.
 
@@ -130,7 +130,6 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
         description: Voice description from LLM
         voice_mapper: Shared VoiceMapper instance (prevents repeated model loading)
         output_dir: Directory to save voice samples
-        max_new_tokens: Max tokens for generation
         verbose: Print verbose output
         validate: If True, validate the generated voice with LLM
         validation_client: OpenAI client for validation (created if None)
@@ -139,15 +138,11 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
         Tuple of (success, output_file_path, duration_seconds, is_valid, validation_msg)
         When validate=True, is_valid indicates if the voice passed validation.
     """
-    if max_new_tokens is None:
-        max_new_tokens = DEFAULTS["max_new_tokens"]
-
     try:
         success, output_file, duration = voice_mapper.generate_voice_sample(
             character_name=character_name,
             description=description,
             output_dir=output_dir,
-            max_new_tokens=max_new_tokens,
             verbose=verbose
         )
 
@@ -187,7 +182,6 @@ def generate_voice_samples(
     descriptions: Dict[str, str],
     output_dir: str,
     device: str = "cuda:0",
-    max_tokens: int = DEFAULTS["max_new_tokens"],
     single_character: Optional[str] = None,
     verbose: bool = False,
     progress=None,
@@ -617,7 +611,7 @@ def generate_voice_samples(
             # Clean up TTS models after all characters are processed
             # Skip cleanup if engine was injected (caller manages lifecycle)
             if voice_mapper._injected_engine is None:
-                voice_mapper.cleanup_tts_models()
+                voice_mapper.cleanup_engines()
         except Exception as e:
             return f"Error generating voices: {str(e)}\n{traceback.format_exc()}", {}
 
@@ -653,7 +647,7 @@ def generate_voice_samples(
                             max_new_tokens=max_tokens,
                             verbose=False
                         )
-                        _fallback_mapper.cleanup_tts_models()
+                        _fallback_mapper.cleanup_engines()
                         if _success and os.path.exists(voice_path):
                             generated[char_name] = voice_path
                             if verbose:

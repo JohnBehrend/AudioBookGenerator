@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import threading
 from typing import Any, List, Optional
+from pathlib import Path
+
+from .worker import EngineWorker
 
 
 class WhisperPool:
@@ -61,9 +64,8 @@ class WorkerPool:
     as a single TTSEngine for drop-in replacement.
     """
 
-    def __init__(self, engine_name: str, engine_class: str, devices: List[str]):
-        self.engine_name = engine_name
-        self.engine_class = engine_class
+    def __init__(self, engine_dir: Path, devices: List[str]):
+        self.engine_dir = engine_dir
         self.devices = devices
         self._workers: List["_WorkerDevice"] = []
         self._index = 0
@@ -71,10 +73,8 @@ class WorkerPool:
 
     def start(self) -> None:
         """Start all worker subprocesses."""
-        from .worker import EngineWorker
-
         for device in self.devices:
-            worker = EngineWorker(self.engine_name, self.engine_class)
+            worker = EngineWorker(self.engine_dir, device)
             worker.start()
             self._workers.append(_WorkerDevice(worker, device))
 
@@ -90,18 +90,10 @@ class WorkerPool:
         text: str,
         voice_path: Optional[str],
         output_path: str,
-        device: str,
-        validation_model: Optional[Any] = None,
-        cfg_scale: float = 1.3,
-        max_new_tokens: int = 19200,
         verbose: bool = False,
+        ref_text: Optional[str] = None,
     ) -> bool:
-        """Generate audio for a single line, routing to next worker.
-
-        Note: validation_model is accepted for API compatibility but NOT
-        sent to the subprocess (it can't be pickled). Whisper validation
-        runs in the main process after the audio file is written.
-        """
+        """Generate audio for a single line, routing to next worker."""
         w = self._next_worker()
         resp = w.worker.request(
             "generate_line",
@@ -109,9 +101,6 @@ class WorkerPool:
             voice_path=voice_path,
             output_path=output_path,
             device=w.device,
-            cfg_scale=cfg_scale,
-            max_new_tokens=max_new_tokens,
-            verbose=verbose,
         )
         if resp.get("error"):
             raise RuntimeError(resp["error"])
@@ -136,6 +125,6 @@ class _WorkerDevice:
 
     __slots__ = ("worker", "device")
 
-    def __init__(self, worker: Any, device: str):
+    def __init__(self, worker: EngineWorker, device: str):
         self.worker = worker
         self.device = device

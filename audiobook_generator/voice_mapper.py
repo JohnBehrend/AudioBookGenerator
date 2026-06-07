@@ -4,8 +4,7 @@ VoiceMapper Module for Audiobook TTS Pipeline.
 
 This module provides a centralized, stateful VoiceMapper class that:
 - Manages voice path lookup and caching
-- Handles TTS engine setup and model caching
-- Generates voice samples for characters
+- Generates voice samples for characters (via tts/ submodule)
 - Persists and loads voice maps (voices_map.json)
 """
 
@@ -17,10 +16,10 @@ from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
 from openai import OpenAI
 
-from .config import DEFAULTS, AUDIO_SETTINGS, VOICE_VALIDATION, TTS_MODEL_PATHS
+from .config import DEFAULTS, AUDIO_SETTINGS, VOICE_VALIDATION
 
-# Import engine registry
-from .engines import get_engine
+# Import TTS submodule
+from tts import TTSEngine, get_engine_dir, list_engines
 
 # Import utilities for validation client
 from .utils import get_validation_client
@@ -64,9 +63,7 @@ class VoiceMapper:
         self.duplicate_replacement_map = duplicate_replacement_map or {}
 
         # State containers
-        self.tts_models: Dict[str, Any] = {}  # Cached TTS models
         self.voice_paths: Dict[str, str] = {}  # Cached voice file paths
-        self.voice_clone_prompts: Dict[str, Any] = {}  # Pre-built prompts for voice cloning
         self._cached_engine: Optional[Any] = None  # Cached TTS engine instance
 
         # Engine injection - allows mocking in tests
@@ -184,48 +181,11 @@ class VoiceMapper:
     # TTS ENGINE SETUP
     # =========================================================================
 
-    def setup_tts_engine(self, turbo: bool = False) -> Tuple[Any, Optional[Any], str, Optional[Any]]:
-        """Initialize and return the TTS model(s) for the configured engine.
-
-        Models are cached after first load to avoid reloading.
-
-        Args:
-            turbo: Reserved for future use
-
-        Returns:
-            Tuple of (model, processor, model_path, None) for backward compatibility.
-        """
-        engine_key = f"{self.tts_engine}_turbo_{turbo}"
-
-        if engine_key in self.tts_models:
-            return self.tts_models[engine_key]
-
-        engine = get_engine(self.tts_engine, device=self.device, turbo=turbo)
-        model, processor = engine.setup(self.device, turbo=turbo)
-        model_path = self._get_model_path()
-        result = (model, processor, model_path, None)
-        self.tts_models[engine_key] = result
-        return result
-
-    def _get_model_path(self) -> str:
-        """Get the HuggingFace model path for the current engine."""
-        engine_paths = TTS_MODEL_PATHS[self.tts_engine]
-        if isinstance(engine_paths, dict):
-            return engine_paths.get("base", list(engine_paths.values())[0])
-        return engine_paths
-
-    def cleanup_tts_models(self) -> None:
-        """Clean up all cached TTS models from GPU memory."""
-        self.tts_models.clear()
-        gc.collect()
-        import torch
-        torch.cuda.empty_cache()
-
     def get_engine(self):
         """Get or create a cached TTS engine instance.
 
         If an engine was injected via __init__, returns that engine.
-        Otherwise creates and caches an engine using get_engine().
+        Otherwise creates and caches an engine using tts.get_engine().
 
         Returns:
             TTSEngine instance.
@@ -245,10 +205,10 @@ class VoiceMapper:
         Returns:
             WorkerPool instance ready to distribute requests across GPUs.
         """
-        from .engines.pool import WorkerPool
+        from tts import WorkerPool
 
-        engine_cls = self.get_engine().__class__.__name__
-        return WorkerPool(self.tts_engine, engine_cls, devices)
+        engine_dir = get_engine_dir(self.tts_engine)
+        return WorkerPool(engine_dir, devices)
 
     def set_engine(self, engine: Any) -> None:
         """Set a TTS engine instance (for testing/mocking).
@@ -261,7 +221,7 @@ class VoiceMapper:
     def cleanup_engines(self) -> None:
         """Release cached engine instance and shutdown worker."""
         if self._cached_engine is not None:
-            self._cached_engine.shutdown_worker()
+            self._cached_engine.shutdown()
             self._cached_engine = None
 
     @staticmethod
@@ -475,23 +435,14 @@ class VoiceMapper:
         Args:
             engine_name: Name of the TTS engine to unload
         """
-        keys_to_remove = [k for k in self.tts_models if k.startswith(f"{engine_name}_")]
-        for key in keys_to_remove:
-            del self.tts_models[key]
-        if keys_to_remove:
-            gc.collect()
-            import torch
-            torch.cuda.empty_cache()
+        pass
 
     def reset(self) -> None:
         """Reset all internal state (for testing).
 
-        This clears all cached models, voice paths, and prompts to allow
-        fresh state in tests.
+        This clears all cached voice paths to allow fresh state in tests.
         """
-        self.cleanup_tts_models()
         self.voice_paths.clear()
-        self.voice_clone_prompts.clear()
         self._voice_map.clear()
 
     # =========================================================================
@@ -503,18 +454,16 @@ class VoiceMapper:
         character_name: str,
         description: str,
         output_dir: Optional[str] = None,
-        max_new_tokens: Optional[int] = None,
         verbose: bool = False
     ) -> Tuple[bool, Optional[str], float]:
         """Generate a voice sample for a character using the configured TTS engine.
 
-        Delegates to the registered engine for generation logic.
+        Delegates to tts.voice_sample.generate_voice_sample().
 
         Args:
             character_name: Name of the character
             description: Voice description from LLM
             output_dir: Output directory (defaults to self.output_dir)
-            max_new_tokens: Max tokens for generation (engine-specific)
             verbose: Print verbose output
 
         Returns:
@@ -522,15 +471,17 @@ class VoiceMapper:
         """
         if output_dir is None:
             output_dir = self.output_dir
-        if max_new_tokens is None:
-            max_new_tokens = DEFAULTS["max_new_tokens"]
 
-        engine = self.get_engine()
-        success, output_file, duration = engine.generate_voice_sample(
+        from tts import get_engine_dir
+        from tts.voice_sample import generate_voice_sample
+
+        engine_dir = get_engine_dir(self.tts_engine)
+        success, output_file, duration = generate_voice_sample(
+            engine_dir=engine_dir,
+            device=self.device,
             character_name=character_name,
             description=description,
             output_dir=Path(output_dir),
-            device=self.device,
             verbose=verbose,
         )
 
@@ -539,132 +490,6 @@ class VoiceMapper:
 
         return success, output_file, duration
 
-    def build_voice_clone_prompt(
-        self,
-        voice_path: str,
-        ref_text: Optional[str] = None,
-        validation_model: Optional[Any] = None,
-        auto_transcribe: bool = False,
-        verbose: bool = False
-    ) -> Any:
-        """Build a voice_clone_prompt for voice cloning.
-
-        Prompts are cached to avoid rebuilding for each line.
-
-        Args:
-            voice_path: Path to the voice sample file
-            ref_text: Reference text for voice cloning
-            validation_model: Optional WhisperModel for auto-transcription
-            auto_transcribe: If True, transcribe the audio to get ref_text
-            verbose: Print verbose output
-
-        Returns:
-            A voice_clone_prompt that can be reused for generate_voice_clone calls
-        """
-        if ref_text is None:
-            ref_text = ""
-
-        # Auto-transcribe if requested and validation_model is available
-        if auto_transcribe and validation_model is not None:
-            try:
-                from ..utils import transcribe_audio_with_whisper
-                actual_ref_text, _, _ = transcribe_audio_with_whisper(validation_model, voice_path)
-                if verbose:
-                    print(f"  Transcribed ref_text: {actual_ref_text}")
-                ref_text = actual_ref_text
-            except Exception as e:
-                if verbose:
-                    print(f"  Warning: auto_transcribe failed: {e}")
-
-        import soundfile as sf
-        import torch
-
-        voice_audio, sr = sf.read(voice_path)
-        # Convert numpy array to torch tensor (OmniVoice expects tensor, not numpy array)
-        voice_audio = torch.from_numpy(voice_audio)
-
-        # Get Base model (needed to build the prompt)
-        _, _, _, base_model = self.setup_tts_engine()
-
-        voice_clone_prompt = base_model.create_voice_clone_prompt(
-            ref_audio=(voice_audio, sr),
-            ref_text=ref_text,
-        )
-
-        return voice_clone_prompt
-
     # =========================================================================
     # AUDIOBOOK GENERATION HELPERS
     # =========================================================================
-
-    def get_voice_clone_prompt(
-        self,
-        character_name: str,
-        ref_text: Optional[str] = None,
-        validation_model: Optional[Any] = None,
-        auto_transcribe: bool = False,
-        verbose: bool = False
-    ) -> Optional[Any]:
-        """Get or build a cached voice_clone_prompt for a character.
-
-        Args:
-            character_name: Name of the character
-            ref_text: Reference text for voice cloning
-            validation_model: Optional WhisperModel for auto-transcription
-            auto_transcribe: If True, transcribe the audio to get ref_text
-            verbose: Print verbose output
-
-        Returns:
-            Cached or newly built voice_clone_prompt, or None if voice not found
-        """
-        # Check if we already have the prompt cached
-        if character_name in self.voice_clone_prompts:
-            return self.voice_clone_prompts[character_name]
-
-        # Get the voice path
-        voice_path = self.get_voice_path(character_name)
-        if voice_path is None:
-            if verbose:
-                print(f"  Warning: No voice path found for '{character_name}'")
-            return None
-
-        # Build the prompt
-        prompt = self.build_voice_clone_prompt(
-            voice_path=voice_path,
-            ref_text=ref_text,
-            validation_model=validation_model,
-            auto_transcribe=auto_transcribe,
-            verbose=verbose
-        )
-
-        # Cache it
-        self.voice_clone_prompts[character_name] = prompt
-        return prompt
-
-    def get_all_clone_prompts(
-        self,
-        validation_model: Optional[Any] = None,
-        auto_transcribe: bool = False,
-        verbose: bool = False
-    ) -> Dict[str, Any]:
-        """Build and cache voice_clone_prompts for all voices.
-
-        Args:
-            validation_model: Optional WhisperModel for auto-transcription
-            auto_transcribe: If True, transcribe the audio to get ref_text
-            verbose: Print verbose output
-
-        Returns:
-            Dict mapping character names to voice_clone_prompts
-        """
-        prompts = {}
-        for character_name in self.voice_paths.keys():
-            prompt = self.get_voice_clone_prompt(
-                character_name,
-                validation_model=validation_model,
-                auto_transcribe=auto_transcribe,
-                verbose=verbose
-            )
-            if prompt is not None:
-                prompts[character_name] = prompt
-        return prompts

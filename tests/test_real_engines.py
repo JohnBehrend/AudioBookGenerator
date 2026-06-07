@@ -17,21 +17,38 @@ Requirements:
 """
 
 import os
+import sys
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 import soundfile as sf
 import torch
+import torchaudio
 
 from audiobook_generator.engines import get_engine, list_engines
+
+
+def dbg(msg: str) -> None:
+    """Print debug output that survives pytest capture."""
+    print(f"  [DEBUG] {msg}", flush=True)
 
 
 def load_audio(path: str) -> tuple[int, np.ndarray]:
     """Load audio file and return (sample_rate, waveform_array)."""
     data, sr = sf.read(path)
     return sr, data
+
+
+def generate_test_voice(output_path: Path, sample_rate: int = 24000, duration_s: float = 2.0) -> Path:
+    """Generate a simple sine wave audio file for clone-only engine testing."""
+    t = np.linspace(0, duration_s, int(sample_rate * duration_s), dtype=np.float32)
+    # Mix of two tones to create something that looks like voice data
+    waveform = 0.3 * np.sin(2 * np.pi * 200 * t) + 0.2 * np.sin(2 * np.pi * 300 * t)
+    sf.write(str(output_path), waveform, sample_rate)
+    return output_path
 
 
 # Test fixtures (Dramabox-style verbose descriptions for best voice diversity)
@@ -43,7 +60,10 @@ TEST_DESCRIPTIONS = {
 TEST_TEXT = "Hello, world."
 
 # Engines that require special setup or large models
-OPTIONAL_ENGINES = {"echo-tts"}
+OPTIONAL_ENGINES = set()
+
+# Engines that are clone-only (no voice sample generation from description)
+CLONE_ONLY_ENGINES = {"echo-tts", "miso-tts"}
 
 # Persistent output directory for generated test voices
 _TEST_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "voice_test" / "test_voices"
@@ -65,12 +85,34 @@ def device():
 
 
 @pytest.fixture(scope="session")
-def available_engines(device: str):
-    """Load each engine once per session, skip on failure."""
+def available_engines(device: str, pytestconfig):
+    """Load each engine once per session, skip on failure.
+
+    When a -k filter is used, only loads engines matching that filter
+    to avoid wasting time loading unrelated engines.
+    """
+    keyword = str(pytestconfig.getoption("keyword", default=""))
     engines = {}
     for engine_name in list_engines():
         if engine_name in OPTIONAL_ENGINES:
             continue
+        if keyword and keyword not in engine_name:
+            continue
+        dbg(f"Loading engine: {engine_name}")
+        t0 = time.monotonic()
+        try:
+            engines[engine_name] = get_engine(engine_name, device=device)
+            dbg(f"Engine {engine_name} ready in {time.monotonic()-t0:.1f}s")
+        except Exception as e:
+            dbg(f"Engine {engine_name} failed: {e}")
+    return engines
+
+
+@pytest.fixture(scope="session")
+def all_engines(device: str):
+    """Load every engine once per session, including optional ones."""
+    engines = {}
+    for engine_name in list_engines():
         try:
             engines[engine_name] = get_engine(engine_name, device=device)
         except Exception:
@@ -84,15 +126,22 @@ def voice_refs(available_engines: dict, output_dir: Path, device: str):
     refs = {}
     for engine_name, engine in available_engines.items():
         try:
-            success, ref_path, _ = engine.generate_voice_sample(
-                character_name="narrator",
-                description=TEST_DESCRIPTIONS["narrator"],
-                output_dir=output_dir / engine_name,
-                device=device,
-                verbose=False,
-            )
-            if success:
-                refs[engine_name] = ref_path
+            if engine_name in CLONE_ONLY_ENGINES:
+                # Generate a synthetic voice reference for clone-only engines
+                ref_path = output_dir / engine_name / "test_voice.wav"
+                ref_path.parent.mkdir(parents=True, exist_ok=True)
+                generate_test_voice(ref_path)
+                refs[engine_name] = str(ref_path)
+            else:
+                success, ref_path, _ = engine.generate_voice_sample(
+                    character_name="narrator",
+                    description=TEST_DESCRIPTIONS["narrator"],
+                    output_dir=output_dir / engine_name,
+                    device=device,
+                    verbose=False,
+                )
+                if success:
+                    refs[engine_name] = ref_path
         except Exception:
             pass
     return refs
@@ -129,6 +178,8 @@ class TestRealGeneration:
         """Generate a voice sample and verify valid audio output."""
         if engine_name in OPTIONAL_ENGINES:
             pytest.skip(f"Optional engine {engine_name} requires special setup")
+        if engine_name in CLONE_ONLY_ENGINES:
+            pytest.skip(f"Clone-only engine {engine_name} does not support voice sample generation")
         if engine_name not in available_engines:
             pytest.skip(f"Failed to initialize {engine_name}")
 
@@ -166,7 +217,12 @@ class TestRealGeneration:
         engine = available_engines[engine_name]
         ref_path = voice_refs[engine_name]
 
+        dbg(f"[{engine_name}] voice_ref = {ref_path}")
+        dbg(f"[{engine_name}] GPU mem before = {torch.cuda.memory_allocated(device) // 1024**2} MiB")
+
         output_path = str(output_dir / engine_name / "line_test.wav")
+        t0 = time.monotonic()
+        dbg(f"[{engine_name}] calling generate_line...")
         success = engine.generate_line(
             text=TEST_TEXT,
             voice_path=ref_path,
@@ -175,6 +231,8 @@ class TestRealGeneration:
             validation_model=None,
             verbose=False,
         )
+        dbg(f"[{engine_name}] generate_line returned in {time.monotonic()-t0:.1f}s, success={success}")
+        dbg(f"[{engine_name}] GPU mem after = {torch.cuda.memory_allocated(device) // 1024**2} MiB")
 
         assert success, f"{engine_name} failed to generate line audio"
         assert Path(output_path).exists(), f"{engine_name} line output not found"

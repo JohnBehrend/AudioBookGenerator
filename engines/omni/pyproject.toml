@@ -1,12 +1,13 @@
 [project]
-name = "omni-env"
+name = "omni-engine"
 version = "0.1.0"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "torch>=2.9.1",
     "torchaudio>=2.9.1",
     "transformers>=5.0.0",
-    "omnivoice",
+    "omnivoice @ git+https://github.com/k2-fsa/OmniVoice.git",
+    "soundfile",
 ]
 
 [tool.uv.sources]

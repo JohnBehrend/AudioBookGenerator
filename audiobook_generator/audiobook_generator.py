@@ -98,7 +98,6 @@ class TTSConfig:
     """Configuration for TTS generation."""
     device: str = "cuda"
     tts_engine: str = "omni"
-    cfg_scale: float = 1.3
     output_dir: str = ""
     short_text_postfix: Optional[str] = DEFAULTS["short_text_postfix"]
     validation_model: Optional[Any] = None
@@ -219,7 +218,6 @@ def _tts_generate_only(
             output_path=output_path,
             device=tts_config.device,
             validation_model=tts_config.validation_model,
-            cfg_scale=tts_config.cfg_scale,
             verbose=tts_config.verbose,
         )
     except Exception as e:
@@ -420,7 +418,6 @@ def generate_audiobook_from_chapters(
     output_dir: str,
     device: str = AUDIO_SETTINGS["default_device"],
     tts_engine: str = AUDIO_SETTINGS["default_tts_engine"],
-    cfg_scale: float = DEFAULTS["cfg_scale"],
     max_chapters: Optional[int] = None,
     verbose: bool = False,
     turbo: bool = False,
@@ -502,7 +499,7 @@ def generate_audiobook_from_chapters(
         whisper_lock = None
         whisper_pool = None
         if whisper_concurrency > 1:
-            from .engines.pool import WhisperPool
+            from tts import WhisperPool
             # Distribute Whisper models across available devices
             if not whisper_cpu and gpus and len(gpus) > 1:
                 whisper_devices = gpus
@@ -524,9 +521,10 @@ def generate_audiobook_from_chapters(
         if gpus and len(gpus) > 1:
             if verbose:
                 print(f"[MULTI-GPU] Creating worker pool with {len(gpus)} GPUs: {gpus}")
-            engine_cls = voice_mapper.get_engine().__class__.__name__
-            from .engines.pool import WorkerPool
-            worker_pool = WorkerPool(tts_engine, engine_cls, gpus)
+            from tts import WorkerPool
+            from tts import get_engine_dir
+            engine_dir = get_engine_dir(tts_engine)
+            worker_pool = WorkerPool(engine_dir, gpus)
             worker_pool.start()
         elif gpus and len(gpus) == 1:
             if verbose:
@@ -643,7 +641,6 @@ def generate_audiobook_from_chapters(
             tts_config = TTSConfig(
                 device=device,
                 tts_engine=tts_engine,
-                cfg_scale=cfg_scale,
                 output_dir=output_dir,
                 short_text_postfix=(short_text_postfix if (validation_model is not None) else None),
                 validation_model=validation_model,
@@ -719,7 +716,6 @@ def generate_audiobook_from_chapters(
                                 output_path=output_path,
                                 device=tts_config.device,
                                 validation_model=tts_config.validation_model,
-                                cfg_scale=tts_config.cfg_scale,
                                 verbose=tts_config.verbose,
                             )
                         except Exception as e:
@@ -1983,7 +1979,6 @@ def main():
                 output_dir=str(output_dir),
                 device=device,
                 tts_engine=args.tts_engine,
-                cfg_scale=DEFAULTS["cfg_scale"],
                 max_chapters=args.max_chapters,
                 verbose=args.verbose,
                 concurrency=args.concurrency,

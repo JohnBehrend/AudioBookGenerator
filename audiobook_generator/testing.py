@@ -181,8 +181,6 @@ class MockTTSEngine:
         output_path: str,
         device: str,
         validation_model: Any,
-        cfg_scale: float = 1.3,
-        max_new_tokens: int = 19200,
         verbose: bool = False,
     ) -> bool:
         """Mock line generation - writes silence audio.
@@ -193,8 +191,6 @@ class MockTTSEngine:
             output_path: Where to write the output audio
             device: Device string (ignored)
             validation_model: Validation model (ignored)
-            cfg_scale: CFG scale (ignored)
-            max_new_tokens: Max tokens (ignored)
             verbose: Print verbose output
 
         Returns:

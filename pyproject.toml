@@ -42,8 +42,6 @@ dependencies = [
     "numba>=0.57.0",
     "ffmpeg-python==0.2.0",
     "psola>=0.0.1",
-    "omnivoice>=0.1.0",
-    "chunkformer>=1.2.2",
 ]
 
 [project.scripts]

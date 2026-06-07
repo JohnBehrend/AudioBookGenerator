@@ -82,15 +82,6 @@ VOICE_GENDER_CORRECTION = {
     "plot_histogram": False,  # Generate pitch distribution histograms (disable during normal generation)
 }
 
-# TTS Model paths for each engine
-TTS_MODEL_PATHS = {
-    "moss": "OpenMOSS-Team/MOSS-TTS-Local-Transformer",
-    "echo-tts": "jordand/echo-tts-base",
-    "omni": "drbaph/OmniVoice-bf16",
-    "vox": "openbmb/VoxCPM2",
-    "dramabox": "ResembleAI/Dramabox",
-}
-
 # Voice samples directory
 VOICE_SAMPLES_DIR = Path("character_voice_samples")
 
@@ -138,11 +129,9 @@ if os.environ.get("VALIDATION_THRESHOLD"):
 DEFAULTS = {
     "num_llm_attempts": 1,
     "max_chapters": 1,
-    "max_new_tokens": 19200,  # 384 * 50
     "sample_text_length": 150,
     "description_length": 400,
     # Audio generation defaults
-    "cfg_scale": 1.30,
     "short_text_postfix": "and also with you?",
     "short_text_prefix_pause_ms": 500,
     # Static text for voice generation - ~20 seconds, phonetic diversity for cloning
@@ -156,17 +145,6 @@ DEFAULTS = {
     # Speed optimization switches (defaults preserve current behavior)
     "max_retries": 1,
     "enable_postfix": True,
-    # Reference text for TTS voice cloning
-    # MOSS-VoiceGenerator hyperparameters (per model card recommendations) for Stage 1 voice design
-    "moss_voicegen_temperature": 1.75,
-    "moss_voicegen_top_p": 0.6,
-    "moss_voicegen_top_k": 50,
-    "moss_voicegen_repetition_penalty": 1.1,
-    # MOSS-TTS hyperparameters (per model card recommendations) for Stage 2 cloning
-    "moss_audio_temperature": 1.0,
-    "moss_audio_top_p": 0.95,
-    "moss_audio_top_k": 50,
-    "moss_audio_repetition_penalty": 1.1,
 }
 
 
@@ -218,7 +196,12 @@ def validate() -> list[str]:
         warnings.append(f"Voice samples directory not found: {VOICE_SAMPLES_DIR}")
 
     # Check TTS engine is valid
-    valid_engines = list(TTS_MODEL_PATHS.keys())
+    try:
+        from tts import list_engines
+        valid_engines = list_engines()
+    except ImportError:
+        valid_engines = ["omni", "moss", "vox", "echo-tts", "dramabox", "miso-tts"]
+
     if AUDIO_SETTINGS["default_tts_engine"] not in valid_engines:
         warnings.append(
             f"Unknown TTS engine: {AUDIO_SETTINGS['default_tts_engine']}. "

@@ -27,7 +27,7 @@ def _run_cmd(cmd: list[str], cwd: str, env: dict[str, str], label: str, engine_n
         raise RuntimeError(f"Failed to {label} for {engine_name}: {result.stderr}")
 
 
-def _ensure_env(engine_name: str) -> str:
+def _ensure_env(engine_name: str, engine_dir: Path) -> str:
     """Ensure the per-engine uv environment exists. Returns the python executable path."""
     env_dir = _ENVIRONMENTS_DIR / engine_name
     venv_dir = env_dir / ".venv"
@@ -41,18 +41,19 @@ def _ensure_env(engine_name: str) -> str:
         if result.returncode == 0:
             return python
 
-    project_root = Path(__file__).resolve().parent.parent.parent
+    project_root = Path(__file__).resolve().parent.parent
     env = os.environ.copy()
     env["VIRTUAL_ENV"] = str(venv_dir)
 
     print(f"  Setting up {engine_name} environment...")
+    env_dir.mkdir(parents=True, exist_ok=True)
     if not venv_dir.exists():
         _run_cmd(["uv", "venv", str(venv_dir)], str(env_dir), env,
                   "create venv", engine_name)
 
-    _run_cmd(["uv", "pip", "install", "-e", "."], str(env_dir), env,
+    _run_cmd(["uv", "pip", "install", "-e", "."], str(engine_dir), env,
               "install deps", engine_name)
-    _run_cmd(["uv", "pip", "install", "-e", str(project_root), "--no-deps"], str(env_dir), env,
+    _run_cmd(["uv", "pip", "install", "-e", str(project_root), "--no-deps"], str(engine_dir), env,
               "install main package", engine_name)
 
     print(f"  {engine_name} environment ready.")
@@ -122,7 +123,7 @@ class EngineWorker:
         if self._process is not None and self._process.poll() is None:
             return
 
-        self._python = _ensure_env(str(self.engine_dir))
+        self._python = _ensure_env(self.engine_dir.name, self.engine_dir)
 
         self._process = subprocess.Popen(
             [self._python, str(self.engine_dir / "main.py"), "--device", self.device],

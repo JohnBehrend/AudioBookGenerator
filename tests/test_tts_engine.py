@@ -25,14 +25,15 @@ class TestTTSEngine:
         assert engine.engine_dir == engine_dir
         assert engine.device == "cuda:0"
 
-    def test_cannot_instantiate_abstract(self):
-        """Test that TTSEngine cannot be instantiated directly."""
+    def test_can_instantiate_directly(self):
+        """Test that TTSEngine can be instantiated directly (it delegates to worker subprocess)."""
         from tts.engine import TTSEngine
-        
+
         engine_dir = Path("/tmp/test-engine")
-        
-        with pytest.raises(TypeError):
-            TTSEngine(engine_dir)
+        engine = TTSEngine(engine_dir)
+
+        assert engine.engine_dir == engine_dir
+        assert engine._worker is None
 
     def test_concrete_class(self):
         """Test that a concrete class can be created."""

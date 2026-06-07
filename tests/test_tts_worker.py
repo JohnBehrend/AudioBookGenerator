@@ -99,12 +99,12 @@ class TestEnsureEnv:
     def test_existing_env(self, mock_run):
         """Test using existing environment."""
         from tts.worker import _ensure_env
-        
+
         # Mock that venv exists and has audiobook_generator installed
         mock_run.return_value = MagicMock(returncode=0)
-        
+
         with patch("tts.worker.Path.exists", return_value=True):
-            result = _ensure_env("omni")
+            result = _ensure_env("omni", Path("/tmp/test-engine"))
             assert isinstance(result, str)
 
 

@@ -48,7 +48,7 @@ class TestGenerateTTSForLineEmptyText:
             text="",
             voice_name="narrator",
             voice_mapper=mock_voice_mapper,
-            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir="/tmp/test_output"),
+            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir="/tmp/test_output"),
         )
         assert result == (True, 1.0)
 
@@ -62,7 +62,7 @@ class TestGenerateTTSForLineEmptyText:
             text="   ",
             voice_name="narrator",
             voice_mapper=mock_voice_mapper,
-            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir="/tmp/test_output"),
+            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir="/tmp/test_output"),
         )
         assert result == (True, 1.0)
 
@@ -76,7 +76,7 @@ class TestGenerateTTSForLineEmptyText:
             text=None,
             voice_name="narrator",
             voice_mapper=mock_voice_mapper,
-            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir="/tmp/test_output"),
+            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir="/tmp/test_output"),
         )
         assert result == (True, 1.0)
 
@@ -99,7 +99,7 @@ class TestGenerateTTSForLineVoicePath:
                 text="Hello world",
                 voice_name="narrator",
                 voice_mapper=mapper,
-                tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir=str(temp_dir)),
+                tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir)),
             )
 
     def test_voice_path_from_mapper(self, temp_dir):
@@ -120,7 +120,7 @@ class TestGenerateTTSForLineVoicePath:
                             text="Hello world",
                             voice_name="narrator",
                             voice_mapper=mapper,
-                            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
+                            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                         )
 
         assert result[0] is False or result[0] is True
@@ -145,7 +145,7 @@ class TestGenerateTTSForLineVoicePath:
                             text="Hello world",
                             voice_name="narrator",
                             voice_mapper=mapper,
-                            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
+                            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                             voice_path="/explicit/path.wav",
                         )
 
@@ -175,7 +175,7 @@ class TestGenerateTTSForLineEngineCall:
                             text="Hello world",
                             voice_name="narrator",
                             voice_mapper=mapper,
-                            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
+                            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                             voice_path="/tmp/test_voice.wav",
                         )
 
@@ -184,7 +184,7 @@ class TestGenerateTTSForLineEngineCall:
         assert engine.last_generate_line_args["device"] == "cpu"
 
     def test_engine_generate_line_with_cfg_scale(self, temp_dir):
-        """Engine.generate_line should receive cfg_scale."""
+        """Engine.generate_line should be called with correct parameters."""
         from audiobook_generator.audiobook_generator import generate_tts_for_line
 
         engine = MockTTSEngine()
@@ -202,7 +202,7 @@ class TestGenerateTTSForLineEngineCall:
                             text="Hello world",
                             voice_name="narrator",
                             voice_mapper=mapper,
-                            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=2.0, output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
+                            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                             voice_path="/tmp/test_voice.wav",
                         )
 
@@ -232,7 +232,7 @@ class TestGenerateTTSForLineValidation:
                             text="Hello world",
                             voice_name="narrator",
                             voice_mapper=mapper,
-                            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
+                            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                             voice_path="/tmp/test_voice.wav",
                         )
 
@@ -263,7 +263,7 @@ class TestGenerateTTSForLineRetryLoop:
                         text="Hello world",
                         voice_name="narrator",
                         voice_mapper=mapper,
-                        tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
+                        tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                         voice_path="/tmp/test_voice.wav",
                     )
 
@@ -272,7 +272,7 @@ class TestGenerateTTSForLineRetryLoop:
         assert success is False
 
     def test_engine_failure_returns_zero_ratio(self, temp_dir):
-        """When engine fails, max_ratio stays at -inf."""
+        """When engine fails, max_ratio stays at 0.0."""
         from audiobook_generator.audiobook_generator import generate_tts_for_line
 
         engine = MagicMock()
@@ -290,11 +290,11 @@ class TestGenerateTTSForLineRetryLoop:
                         text="Hello world",
                         voice_name="narrator",
                         voice_mapper=mapper,
-                        tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
+                        tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                         voice_path="/tmp/test_voice.wav",
                     )
 
-        assert ratio == float('-inf')
+        assert ratio == 0.0
 
 
 class TestGenerateTTSForLineTextPreparation:
@@ -319,7 +319,7 @@ class TestGenerateTTSForLineTextPreparation:
                             text="hello world",
                             voice_name="narrator",
                             voice_mapper=mapper,
-                            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
+                            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                             voice_path="/tmp/test_voice.wav",
                         )
 
@@ -349,7 +349,7 @@ class TestGenerateTTSForLineReturnValues:
                             text="Hello world",
                             voice_name="narrator",
                             voice_mapper=mapper,
-                            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
+                            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                             voice_path="/tmp/test_voice.wav",
                         )
 
@@ -377,7 +377,7 @@ class TestGenerateTTSForLineReturnValues:
                             text="Hello world",
                             voice_name="narrator",
                             voice_mapper=mapper,
-                            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
+                            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                             voice_path="/tmp/test_voice.wav",
                         )
 
@@ -406,7 +406,7 @@ class TestGenerateTTSForLineOutputPath:
                             text="Hello world",
                             voice_name="narrator",
                             voice_mapper=mapper,
-                            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
+                            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                             voice_path="/tmp/test_voice.wav",
                         )
 
@@ -438,7 +438,7 @@ class TestGenerateTTSForLineCleanup:
                             text="Hello world",
                             voice_name="narrator",
                             voice_mapper=mapper,
-                            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
+                            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                             voice_path="/tmp/test_voice.wav",
                         )
 
@@ -459,7 +459,7 @@ class TestGenerateTTSForLineVerbose:
             text="",
             voice_name="narrator",
             voice_mapper=mock_voice_mapper,
-            tts_config=TTSConfig(device="cpu", tts_engine="moss", cfg_scale=1.3, output_dir="/tmp/test_output", verbose=True),
+            tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir="/tmp/test_output", verbose=True),
         )
 
         captured = capsys.readouterr()

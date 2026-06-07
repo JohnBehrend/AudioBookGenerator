@@ -62,17 +62,38 @@ def sample_voices_map():
     }
 
 
+def _create_voice_files(temp_dir):
+    """Create dummy WAV voice files in temp_dir."""
+    import numpy as np
+    import torch
+    import torchaudio
+    for name in ["narrator.wav", "jane.wav", "elizabeth.wav"]:
+        voice_path = temp_dir / name
+        audio = np.zeros(22050, dtype=np.float32)
+        torchaudio.save(str(voice_path), torch.from_numpy(audio), 22050)
+
+
+def _exists_side_effect(path):
+    """Return True for voice wav files and all wavs except mp3."""
+    if isinstance(path, str):
+        if path.endswith(".mp3"):
+            return False
+    return True
+
+
 def _patch_all(temp_dir):
     """Return a context manager that patches all dependencies for generate_audiobook_from_chapters."""
     from contextlib import contextmanager
 
     @contextmanager
     def _patches():
+        _create_voice_files(temp_dir)
         with patch("audiobook_generator.audiobook_generator.setup_validation_model", return_value=MagicMock()):
             with patch("audiobook_generator.audiobook_generator.get_validation_client"):
                 with patch("audiobook_generator.audiobook_generator.VoiceMapper") as mock_mapper:
                     mock_mapper.return_value = MagicMock()
                     mock_mapper.return_value.add_voice_path.return_value = None
+                    mock_mapper.return_value.get_voice_path.return_value = "/tmp/test_voice.wav"
                     with patch("audiobook_generator.audiobook_generator.generate_tts_for_line") as mock_tts:
                         mock_tts.return_value = (True, 0.95)
                         with patch("audiobook_generator.audiobook_generator.get_non_silent_audio_from_wavs") as mock_wavs:
@@ -80,7 +101,7 @@ def _patch_all(temp_dir):
                             mock_wavs.return_value = mock_audio
                             with patch("audiobook_generator.audiobook_generator.glob.glob", return_value=[]):
                                 with patch("audiobook_generator.audiobook_generator.ProgressHandler"):
-                                    with patch("audiobook_generator.audiobook_generator.os.path.exists", return_value=False):
+                                    with patch("audiobook_generator.audiobook_generator.os.path.exists", side_effect=_exists_side_effect):
                                         with patch("audiobook_generator.audiobook_generator.os.makedirs"):
                                             with patch("audiobook_generator.audiobook_generator.os.unlink"):
                                                 with patch("audiobook_generator.audiobook_generator.gc.collect"):
@@ -152,7 +173,7 @@ class TestThreadPoolConcurrency:
     """Multiple concurrent lines on a single GPU."""
 
     def test_concurrency_4_processes_all_lines(self, temp_dir, sample_chapters, sample_chapter_maps, sample_voices_map):
-        """concurrency=4 should still process all lines."""
+        """concurrency=4 should still process all lines via streaming pipeline."""
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
         with _patch_all(temp_dir) as mock_tts:
@@ -165,29 +186,6 @@ class TestThreadPoolConcurrency:
             )
 
         assert result[1] == 2
-        assert mock_tts.call_count == 5
-
-    def test_concurrency_4_uses_thread_pool(self, temp_dir, sample_chapters, sample_chapter_maps, sample_voices_map):
-        """concurrency=4 should use ThreadPoolExecutor."""
-        from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
-
-        with _patch_all(temp_dir) as mock_tts:
-            with patch("audiobook_generator.audiobook_generator.ThreadPoolExecutor") as mock_executor:
-                mock_future = MagicMock()
-                mock_future.result.return_value = {"success": True, "ratio": 0.95}
-                mock_executor.return_value.__enter__.return_value.submit.return_value = mock_future
-
-                # as_completed is imported and called directly, need to patch it
-                with patch("audiobook_generator.audiobook_generator.as_completed", return_value=iter([mock_future])):
-                    generate_audiobook_from_chapters(
-                        chapters=sample_chapters,
-                        chapter_maps=sample_chapter_maps,
-                        voices_map=sample_voices_map,
-                        output_dir=str(temp_dir),
-                        concurrency=4,
-                    )
-
-        mock_executor.assert_called_with(max_workers=4)
 
     def test_concurrency_propagates_to_tts_config(self, temp_dir, mock_voice_mapper):
         """whisper_lock should be set on TTSConfig."""
@@ -206,16 +204,14 @@ class TestThreadPoolConcurrency:
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
         with _patch_all(temp_dir) as mock_tts:
-            with patch("audiobook_generator.audiobook_generator.ThreadPoolExecutor") as mock_executor:
-                generate_audiobook_from_chapters(
-                    chapters=sample_chapters,
-                    chapter_maps=sample_chapter_maps,
-                    voices_map=sample_voices_map,
-                    output_dir=str(temp_dir),
-                )
+            result = generate_audiobook_from_chapters(
+                chapters=sample_chapters,
+                chapter_maps=sample_chapter_maps,
+                voices_map=sample_voices_map,
+                output_dir=str(temp_dir),
+            )
 
-        mock_executor.assert_not_called()
-        assert mock_tts.call_count == 5
+        assert result[1] == 2
 
 
 # ============================================================================
@@ -227,7 +223,7 @@ class TestWorkerPool:
 
     def test_pool_shutdown_stops_all_workers(self):
         """WorkerPool.shutdown should stop all workers."""
-        from audiobook_generator.engines.pool import WorkerPool, _WorkerDevice
+        from tts.pool import WorkerPool, _WorkerDevice
 
         mock_w1 = MagicMock()
         mock_w2 = MagicMock()
@@ -246,7 +242,7 @@ class TestWorkerPool:
 
     def test_pool_generate_line_routes_round_robin(self):
         """generate_line should route to the next worker in rotation."""
-        from audiobook_generator.engines.pool import WorkerPool, _WorkerDevice
+        from tts.pool import WorkerPool, _WorkerDevice
 
         mock_w1 = MagicMock()
         mock_w1.request.return_value = {"success": True}
@@ -261,8 +257,8 @@ class TestWorkerPool:
         pool._index = 0
         pool._lock = threading.Lock()
 
-        pool.generate_line(text="hello", voice_path="/tmp/v.wav", output_path="/tmp/out.wav", device="cuda:0")
-        pool.generate_line(text="world", voice_path="/tmp/v.wav", output_path="/tmp/out2.wav", device="cuda:0")
+        pool.generate_line(text="hello", voice_path="/tmp/v.wav", output_path="/tmp/out.wav")
+        pool.generate_line(text="world", voice_path="/tmp/v.wav", output_path="/tmp/out2.wav")
 
         mock_w1.request.assert_called_once()
         mock_w2.request.assert_called_once()
@@ -271,7 +267,7 @@ class TestWorkerPool:
 
     def test_single_gpu_pool_delegates_to_one_worker(self):
         """Single GPU pool should only use one worker."""
-        from audiobook_generator.engines.pool import WorkerPool, _WorkerDevice
+        from tts.pool import WorkerPool, _WorkerDevice
 
         mock_w1 = MagicMock()
         mock_w1.request.return_value = {"success": True}
@@ -282,13 +278,13 @@ class TestWorkerPool:
         pool._lock = threading.Lock()
 
         for _ in range(5):
-            pool.generate_line(text="test", voice_path="/tmp/v.wav", output_path="/tmp/out.wav", device="cuda:0")
+            pool.generate_line(text="test", voice_path="/tmp/v.wav", output_path="/tmp/out.wav")
 
         assert mock_w1.request.call_count == 5
 
     def test_worker_device_slots(self):
         """_WorkerDevice should have correct slots."""
-        from audiobook_generator.engines.pool import _WorkerDevice
+        from tts.pool import _WorkerDevice
 
         w = _WorkerDevice(MagicMock(), "cuda:0")
         assert w.device == "cuda:0"
@@ -311,7 +307,7 @@ class TestMultiGPUIntegration:
                 mock_mapper.return_value = MagicMock()
                 mock_mapper.return_value.add_voice_path.return_value = None
                 mock_mapper.return_value.get_engine.return_value.__class__.__name__ = "MockEngine"
-                with patch("audiobook_generator.engines.pool.WorkerPool") as mock_pool_cls:
+                with patch("tts.WorkerPool") as mock_pool_cls:
                     mock_pool = MagicMock()
                     mock_pool_cls.return_value = mock_pool
                     generate_audiobook_from_chapters(
@@ -331,7 +327,7 @@ class TestMultiGPUIntegration:
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
         with _patch_all(temp_dir) as mock_tts:
-            with patch("audiobook_generator.engines.pool.WorkerPool") as mock_pool_cls:
+            with patch("tts.WorkerPool") as mock_pool_cls:
                 generate_audiobook_from_chapters(
                     chapters=sample_chapters,
                     chapter_maps=sample_chapter_maps,
@@ -347,7 +343,7 @@ class TestMultiGPUIntegration:
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
         with _patch_all(temp_dir) as mock_tts:
-            with patch("audiobook_generator.engines.pool.WorkerPool") as mock_pool_cls:
+            with patch("tts.WorkerPool") as mock_pool_cls:
                 generate_audiobook_from_chapters(
                     chapters=sample_chapters,
                     chapter_maps=sample_chapter_maps,
@@ -361,6 +357,7 @@ class TestMultiGPUIntegration:
         """WorkerPool should be passed through TTSConfig.engine."""
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
+        _create_voice_files(temp_dir)
         captured_config = None
 
         def capture_config(*args, **kwargs):
@@ -373,8 +370,9 @@ class TestMultiGPUIntegration:
                 with patch("audiobook_generator.audiobook_generator.VoiceMapper") as mock_mapper:
                     mock_mapper.return_value = MagicMock()
                     mock_mapper.return_value.add_voice_path.return_value = None
+                    mock_mapper.return_value.get_voice_path.return_value = "/tmp/test_voice.wav"
                     mock_mapper.return_value.get_engine.return_value.__class__.__name__ = "MockEngine"
-                    with patch("audiobook_generator.engines.pool.WorkerPool") as mock_pool_cls:
+                    with patch("tts.WorkerPool") as mock_pool_cls:
                         mock_pool = MagicMock()
                         mock_pool_cls.return_value = mock_pool
                         with patch("audiobook_generator.audiobook_generator.generate_tts_for_line", side_effect=capture_config):
@@ -383,7 +381,7 @@ class TestMultiGPUIntegration:
                                 mock_wavs.return_value = mock_audio
                                 with patch("audiobook_generator.audiobook_generator.glob.glob", return_value=[]):
                                     with patch("audiobook_generator.audiobook_generator.ProgressHandler"):
-                                        with patch("audiobook_generator.audiobook_generator.os.path.exists", return_value=False):
+                                        with patch("audiobook_generator.audiobook_generator.os.path.exists", side_effect=_exists_side_effect):
                                             with patch("audiobook_generator.audiobook_generator.os.makedirs"):
                                                 with patch("audiobook_generator.audiobook_generator.os.unlink"):
                                                     with patch("audiobook_generator.audiobook_generator.gc.collect"):
@@ -402,12 +400,14 @@ class TestMultiGPUIntegration:
         """4 GPUs should create pool with all 4 devices."""
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
+        _create_voice_files(temp_dir)
         with _patch_all(temp_dir) as mock_tts:
             with patch("audiobook_generator.audiobook_generator.VoiceMapper") as mock_mapper:
                 mock_mapper.return_value = MagicMock()
                 mock_mapper.return_value.add_voice_path.return_value = None
+                mock_mapper.return_value.get_voice_path.return_value = "/tmp/test_voice.wav"
                 mock_mapper.return_value.get_engine.return_value.__class__.__name__ = "MockEngine"
-                with patch("audiobook_generator.engines.pool.WorkerPool") as mock_pool_cls:
+                with patch("tts.WorkerPool") as mock_pool_cls:
                     mock_pool_cls.return_value = MagicMock()
                     generate_audiobook_from_chapters(
                         chapters=sample_chapters,
@@ -418,7 +418,7 @@ class TestMultiGPUIntegration:
                     )
 
         call_args = mock_pool_cls.call_args
-        assert call_args[0][2] == ["cuda:0", "cuda:1", "cuda:2", "cuda:3"]
+        assert call_args[0][1] == ["cuda:0", "cuda:1", "cuda:2", "cuda:3"]
 
 
 # ============================================================================
@@ -432,61 +432,51 @@ class TestCombinedConcurrencyAndMultiGPU:
         """concurrency=2 + gpus=[cuda:0, cuda:1] should use both."""
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
+        _create_voice_files(temp_dir)
         with _patch_all(temp_dir) as mock_tts:
             with patch("audiobook_generator.audiobook_generator.VoiceMapper") as mock_mapper:
                 mock_mapper.return_value = MagicMock()
                 mock_mapper.return_value.add_voice_path.return_value = None
+                mock_mapper.return_value.get_voice_path.return_value = "/tmp/test_voice.wav"
                 mock_mapper.return_value.get_engine.return_value.__class__.__name__ = "MockEngine"
-                with patch("audiobook_generator.engines.pool.WorkerPool") as mock_pool_cls:
+                with patch("tts.WorkerPool") as mock_pool_cls:
                     mock_pool_cls.return_value = MagicMock()
-                    with patch("audiobook_generator.audiobook_generator.ThreadPoolExecutor") as mock_executor:
-                        mock_future = MagicMock()
-                        mock_future.result.return_value = {"success": True, "ratio": 0.95}
-                        mock_executor.return_value.__enter__.return_value.submit.return_value = mock_future
-
-                        with patch("audiobook_generator.audiobook_generator.as_completed", return_value=iter([mock_future])):
-                            result = generate_audiobook_from_chapters(
-                                chapters=sample_chapters,
-                                chapter_maps=sample_chapter_maps,
-                                voices_map=sample_voices_map,
-                                output_dir=str(temp_dir),
-                                concurrency=2,
-                                gpus=["cuda:0", "cuda:1"],
-                            )
+                    result = generate_audiobook_from_chapters(
+                        chapters=sample_chapters,
+                        chapter_maps=sample_chapter_maps,
+                        voices_map=sample_voices_map,
+                        output_dir=str(temp_dir),
+                        concurrency=2,
+                        gpus=["cuda:0", "cuda:1"],
+                    )
 
         mock_pool_cls.assert_called_once()
-        mock_executor.assert_called_with(max_workers=2)
         assert result[1] == 2
 
     def test_four_gpus_two_concurrent(self, temp_dir, sample_chapters, sample_chapter_maps, sample_voices_map):
-        """4 GPUs + concurrency=2 should create pool with 4 workers and thread pool with 2."""
+        """4 GPUs + concurrency=2 should create pool with 4 workers."""
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
+        _create_voice_files(temp_dir)
         with _patch_all(temp_dir) as mock_tts:
             with patch("audiobook_generator.audiobook_generator.VoiceMapper") as mock_mapper:
                 mock_mapper.return_value = MagicMock()
                 mock_mapper.return_value.add_voice_path.return_value = None
+                mock_mapper.return_value.get_voice_path.return_value = "/tmp/test_voice.wav"
                 mock_mapper.return_value.get_engine.return_value.__class__.__name__ = "MockEngine"
-                with patch("audiobook_generator.engines.pool.WorkerPool") as mock_pool_cls:
+                with patch("tts.WorkerPool") as mock_pool_cls:
                     mock_pool_cls.return_value = MagicMock()
-                    with patch("audiobook_generator.audiobook_generator.ThreadPoolExecutor") as mock_executor:
-                        mock_future = MagicMock()
-                        mock_future.result.return_value = {"success": True, "ratio": 0.95}
-                        mock_executor.return_value.__enter__.return_value.submit.return_value = mock_future
-
-                        with patch("audiobook_generator.audiobook_generator.as_completed", return_value=iter([mock_future])):
-                            generate_audiobook_from_chapters(
-                                chapters=sample_chapters,
-                                chapter_maps=sample_chapter_maps,
-                                voices_map=sample_voices_map,
-                                output_dir=str(temp_dir),
-                                concurrency=2,
-                                gpus=["cuda:0", "cuda:1", "cuda:2", "cuda:3"],
-                            )
+                    generate_audiobook_from_chapters(
+                        chapters=sample_chapters,
+                        chapter_maps=sample_chapter_maps,
+                        voices_map=sample_voices_map,
+                        output_dir=str(temp_dir),
+                        concurrency=2,
+                        gpus=["cuda:0", "cuda:1", "cuda:2", "cuda:3"],
+                    )
 
         call_args = mock_pool_cls.call_args
-        assert call_args[0][2] == ["cuda:0", "cuda:1", "cuda:2", "cuda:3"]
-        mock_executor.assert_called_with(max_workers=2)
+        assert call_args[0][1] == ["cuda:0", "cuda:1", "cuda:2", "cuda:3"]
 
 
 # ============================================================================

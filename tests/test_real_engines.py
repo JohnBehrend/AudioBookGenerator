@@ -28,7 +28,7 @@ import soundfile as sf
 import torch
 import torchaudio
 
-from audiobook_generator.engines import get_engine, list_engines
+from tts import get_engine, list_engines
 
 
 def dbg(msg: str) -> None:

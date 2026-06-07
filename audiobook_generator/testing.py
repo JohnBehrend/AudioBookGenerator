@@ -255,6 +255,10 @@ class MockTTSEngine:
 
         return self.generate_voice_success, str(output_path), self.duration
 
+    def shutdown(self) -> None:
+        """Mock shutdown - no-op."""
+        pass
+
     def shutdown_worker(self) -> None:
         """Mock shutdown - no-op."""
         pass

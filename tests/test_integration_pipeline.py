@@ -62,6 +62,17 @@ def mock_tts_engine():
     return MockTTSEngine()
 
 
+def _create_voice_files(temp_dir):
+    """Create dummy WAV voice files in temp_dir."""
+    import numpy as np
+    import torch
+    import torchaudio
+    for name in ["narrator.wav", "jane.wav", "elizabeth.wav"]:
+        voice_path = temp_dir / name
+        audio = np.zeros(22050, dtype=np.float32)
+        torchaudio.save(str(voice_path), torch.from_numpy(audio), 22050)
+
+
 # ============================================================================
 # TESTS
 # ============================================================================
@@ -73,20 +84,28 @@ class TestPipelineIntegration:
         """Test full pipeline from chapters to audiobook generation."""
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
+        _create_voice_files(temp_dir)
+
+        def exists_side_effect(path):
+            if isinstance(path, str) and path.endswith(".mp3"):
+                return False
+            return True
+
         with patch("audiobook_generator.audiobook_generator.setup_validation_model") as mock_validation:
             mock_validation.return_value = MagicMock()
             with patch("audiobook_generator.audiobook_generator.get_validation_client"):
                 with patch("audiobook_generator.audiobook_generator.VoiceMapper") as mock_mapper:
                     mock_mapper.return_value = MagicMock()
                     mock_mapper.return_value.add_voice_path.return_value = None
+                    mock_mapper.return_value.get_voice_path.return_value = "/tmp/test_voice.wav"
                     with patch("audiobook_generator.audiobook_generator.generate_tts_for_line") as mock_tts:
                         mock_tts.return_value = (True, 0.95)
                         with patch("audiobook_generator.audiobook_generator.get_non_silent_audio_from_wavs") as mock_wavs:
                             mock_audio = MagicMock()
                             mock_wavs.return_value = mock_audio
-                            with patch("audiobook_generator.audiobook_generator.os.path.exists", return_value=False):
-                                with patch("audiobook_generator.audiobook_generator.glob.glob", return_value=["/tmp/chapter_00.0002.wav"]):
-                                    with patch("audiobook_generator.audiobook_generator.ProgressHandler"):
+                            with patch("audiobook_generator.audiobook_generator.glob.glob", return_value=["/tmp/chapter_00.0002.wav"]):
+                                with patch("audiobook_generator.audiobook_generator.ProgressHandler"):
+                                    with patch("audiobook_generator.audiobook_generator.os.path.exists", side_effect=exists_side_effect):
                                         with patch("audiobook_generator.audiobook_generator.os.makedirs"):
                                             with patch("audiobook_generator.audiobook_generator.os.unlink"):
                                                 with patch("audiobook_generator.audiobook_generator.os.path.join", side_effect=os.path.join):
@@ -236,7 +255,8 @@ class TestPipelineStageIntegration:
         """Test that VoiceMapper correctly maps characters to voices."""
         from audiobook_generator.voice_mapper import VoiceMapper
 
-        with patch("audiobook_generator.voice_mapper.get_engine"):
+        _create_voice_files(temp_dir)
+        with patch("tts.get_engine"):
             mapper = VoiceMapper(output_dir=str(temp_dir), device="cpu")
             mapper.add_voice_path("narrator", "/tmp/narrator.wav")
             mapper.add_voice_path("jane", "/tmp/jane.wav")

@@ -88,24 +88,27 @@ def _patch_all(temp_dir):
     @contextmanager
     def _patches():
         _create_voice_files(temp_dir)
+        mock_mapper = MagicMock()
+        mock_mapper.add_voice_path.return_value = None
+        mock_mapper.get_voice_path.return_value = "/tmp/test_voice.wav"
+        mock_mapper.get_engine.return_value = MagicMock()
         with patch("audiobook_generator.audiobook_generator.setup_validation_model", return_value=MagicMock()):
             with patch("audiobook_generator.audiobook_generator.get_validation_client"):
-                with patch("audiobook_generator.audiobook_generator.VoiceMapper") as mock_mapper:
-                    mock_mapper.return_value = MagicMock()
-                    mock_mapper.return_value.add_voice_path.return_value = None
-                    mock_mapper.return_value.get_voice_path.return_value = "/tmp/test_voice.wav"
+                with patch("audiobook_generator.audiobook_generator.VoiceMapper", return_value=mock_mapper):
                     with patch("audiobook_generator.audiobook_generator.generate_tts_for_line") as mock_tts:
                         mock_tts.return_value = (True, 0.95)
-                        with patch("audiobook_generator.audiobook_generator.get_non_silent_audio_from_wavs") as mock_wavs:
-                            mock_audio = MagicMock()
-                            mock_wavs.return_value = mock_audio
-                            with patch("audiobook_generator.audiobook_generator.glob.glob", return_value=[]):
-                                with patch("audiobook_generator.audiobook_generator.ProgressHandler"):
-                                    with patch("audiobook_generator.audiobook_generator.os.path.exists", side_effect=_exists_side_effect):
-                                        with patch("audiobook_generator.audiobook_generator.os.makedirs"):
-                                            with patch("audiobook_generator.audiobook_generator.os.unlink"):
-                                                with patch("audiobook_generator.audiobook_generator.gc.collect"):
-                                                    yield mock_tts
+                        with patch("audiobook_generator.audiobook_generator._validate_and_clip_audio", return_value=(0.95, None)):
+                            with patch("audiobook_generator.audiobook_generator.get_non_silent_audio_from_wavs") as mock_wavs:
+                                mock_audio = MagicMock()
+                                mock_wavs.return_value = mock_audio
+                                with patch("audiobook_generator.audiobook_generator.glob.glob", return_value=[]):
+                                    with patch("audiobook_generator.audiobook_generator.ProgressHandler"):
+                                        with patch("audiobook_generator.audiobook_generator.os.path.exists", side_effect=_exists_side_effect):
+                                            with patch("audiobook_generator.audiobook_generator.os.makedirs"):
+                                                with patch("audiobook_generator.audiobook_generator.os.unlink"):
+                                                    with patch("audiobook_generator.audiobook_generator.os.rename"):
+                                                        with patch("audiobook_generator.audiobook_generator.gc.collect"):
+                                                            yield mock_tts
     return _patches()
 
 

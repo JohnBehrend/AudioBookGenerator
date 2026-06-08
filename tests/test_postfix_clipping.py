@@ -320,3 +320,70 @@ class TestEngineInterfaceContract:
             # Verify validation_model was NOT passed
             call_kwargs = engine.generate_line.call_args.kwargs
             assert "validation_model" not in call_kwargs
+
+
+class TestRealVoiceGeneration:
+    """Integration tests that actually generate voice samples with real engines."""
+
+    @pytest.mark.skipif(
+        not any(Path(__file__).resolve().parent.parent / "engines" / eng / "main.py"
+                 for eng in ["omni", "dramabox"]),
+        reason="No voice generation engines available"
+    )
+    def test_omni_generates_valid_wav(self, tmp_path):
+        """Omni engine should produce a valid WAV file from a voice description."""
+        from audiobook_generator.voice_mapper import VoiceMapper
+
+        output_dir = tmp_path / "voices"
+        output_dir.mkdir()
+
+        vm = VoiceMapper(output_dir=str(output_dir), device="cuda:0", tts_engine="omni")
+        success, output_file, duration = vm.generate_voice_sample(
+            character_name="test_narrator",
+            description="male, middle-aged, moderate pitch",
+            output_dir=str(output_dir),
+            verbose=True,
+        )
+        vm.cleanup_engines()
+
+        assert success, "Voice generation should succeed"
+        assert output_file is not None, "Should return output file path"
+        assert Path(output_file).exists(), f"Output file should exist: {output_file}"
+        assert duration > 0, f"Duration should be positive, got {duration}"
+
+        # Verify WAV file properties
+        import soundfile as sf
+        info = sf.info(output_file)
+        assert info.samplerate == 24000, f"Expected 24kHz sample rate, got {info.samplerate}"
+        assert info.frames > 0, "WAV should have audio frames"
+
+    @pytest.mark.skipif(
+        not Path(__file__).resolve().parent.parent / "engines" / "dramabox" / "main.py",
+        reason="Dramabox engine not available"
+    )
+    def test_dramabox_generates_valid_wav(self, tmp_path):
+        """Dramabox engine should produce a valid WAV file from a voice description."""
+        from audiobook_generator.voice_mapper import VoiceMapper
+
+        output_dir = tmp_path / "voices"
+        output_dir.mkdir()
+
+        vm = VoiceMapper(output_dir=str(output_dir), device="cuda:0", tts_engine="dramabox")
+        success, output_file, duration = vm.generate_voice_sample(
+            character_name="test_narrator",
+            description="male, middle-aged, moderate pitch",
+            output_dir=str(output_dir),
+            verbose=True,
+        )
+        vm.cleanup_engines()
+
+        assert success, "Voice generation should succeed"
+        assert output_file is not None, "Should return output file path"
+        assert Path(output_file).exists(), f"Output file should exist: {output_file}"
+        assert duration > 0, f"Duration should be positive, got {duration}"
+
+        # Verify WAV file properties
+        import soundfile as sf
+        info = sf.info(output_file)
+        assert info.samplerate == 24000, f"Expected 24kHz sample rate, got {info.samplerate}"
+        assert info.frames > 0, "WAV should have audio frames"

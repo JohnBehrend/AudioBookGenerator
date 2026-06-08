@@ -119,7 +119,8 @@ def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_mo
 
 def generate_voice_sample(character_name: str, description: str, voice_mapper: VoiceMapper,
                           output_dir: str, verbose: bool = False,
-                          validate: bool = False, validation_client: Optional[OpenAI] = None) -> Tuple[bool, Optional[str], float, bool, str]:
+                          validate: bool = False, validation_client: Optional[OpenAI] = None,
+                          max_new_tokens: int = None) -> Tuple[bool, Optional[str], float, bool, str]:
     """Generate a short voice sample for a character using VoiceDesign model via VoiceMapper.
 
     Uses voice design with an instruct prompt to generate speech
@@ -133,6 +134,7 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
         verbose: Print verbose output
         validate: If True, validate the generated voice with LLM
         validation_client: OpenAI client for validation (created if None)
+        max_new_tokens: Max tokens for generation (unused, kept for compatibility)
 
     Returns:
         Tuple of (success, output_file_path, duration_seconds, is_valid, validation_msg)
@@ -227,8 +229,28 @@ def generate_voice_samples(
                 print(f"Found {len(descriptions)} characters")
 
         # Ensure narrator voice is included (it's always needed as fallback)
-        if "narrator" not in descriptions:
-            descriptions["narrator"] = "A neutral, clear narrator voice suitable for audiobook narration"
+        # Only skip if a valid narrator voice file already exists
+        narrator_has_existing_voice = False
+        # Check seed_voice_map
+        if seed_characters and "narrator" in seed_characters:
+            narrator_path = seed_characters["narrator"]
+            if os.path.exists(narrator_path):
+                narrator_has_existing_voice = True
+                if verbose:
+                    print("Skipping narrator voice generation (seed voice exists)")
+        # Check for existing narrator.wav in output_dir
+        if not narrator_has_existing_voice:
+            for ext in [".wav", ".mp3", ".flac"]:
+                existing = os.path.join(output_dir, f"narrator{ext}")
+                if os.path.exists(existing):
+                    narrator_has_existing_voice = True
+                    if verbose:
+                        print(f"Skipping narrator voice generation (existing file: {existing})")
+                    break
+
+        if not narrator_has_existing_voice:
+            if "narrator" not in descriptions:
+                descriptions["narrator"] = "A neutral, clear narrator voice suitable for audiobook narration"
             if verbose:
                 print("Added narrator voice to generation list (fallback voice)")
 
@@ -476,6 +498,7 @@ def generate_voice_samples(
         # Use tts_engine for voice generation (voice cloning), not voice_engine
         gen_engine = tts_engine or voice_engine
         voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=gen_engine, engine=engine)
+        max_tokens = 2048
 
         try:
             for i, (char_name, char_desc) in enumerate(descriptions.items()):
@@ -507,40 +530,28 @@ def generate_voice_samples(
                     if voice_found:
                         continue
 
-                # Generate up to 10 samples concurrently, pick the best match
-                import random
-                from concurrent.futures import ThreadPoolExecutor, as_completed
+                # Generate samples sequentially until one passes validation
+                max_attempts = 3
 
-                max_attempts = 10
-                attempt_counts = list(range(1, max_attempts + 1))
-                random.seed(42)
-                random.shuffle(attempt_counts)
-
-                # Phase 1: Generate all samples concurrently
-                def _gen_one(sample_num):
+                # Phase 1: Generate samples sequentially
+                generation_results = {}
+                for sample_num in range(1, max_attempts + 1):
                     _tmp_name = f"{char_name}.sample{sample_num}"
-                    success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
-                        character_name=_tmp_name,
-                        description=char_desc,
-                        voice_mapper=voice_mapper,
-                        output_dir=output_dir,
-                        max_new_tokens=max_tokens,
-                        verbose=False,
-                        validate=False,
-                        validation_client=None
-                    )
-                    return (sample_num, success, output_file, duration, validation_msg)
-
-                with ThreadPoolExecutor(max_workers=max_attempts) as pool:
-                    futures = {pool.submit(_gen_one, num): num for num in attempt_counts}
-                    generation_results = {}
-                    for future in as_completed(futures):
-                        num = futures[future]
-                        try:
-                            generation_results[num] = future.result()
-                        except Exception as e:
-                            if verbose:
-                                print(f"    Sample {num}: generation failed ({e})")
+                    try:
+                        success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
+                            character_name=_tmp_name,
+                            description=char_desc,
+                            voice_mapper=voice_mapper,
+                            output_dir=output_dir,
+                            max_new_tokens=max_tokens,
+                            verbose=False,
+                            validate=False,
+                            validation_client=None
+                        )
+                        generation_results[sample_num] = (sample_num, success, output_file, duration, validation_msg)
+                    except Exception as e:
+                        if verbose:
+                            print(f"    Sample {sample_num}: generation failed ({e})")
 
                 # Phase 2: Whisper + ChunkFormer validation (sequentially to share GPU/CPU)
                 candidates = []

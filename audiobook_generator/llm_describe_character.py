@@ -791,12 +791,12 @@ def describe_characters(
         else:
             if verbose:
                 print(f"Characters file not found: {characters_file}", file=sys.stderr)
-            return {}
+            return "No characters found.", {}
 
     if not characters:
         if verbose:
             print("No characters found.", file=sys.stderr)
-        return {}
+        return "No characters found.", {}
 
     # Note: We do NOT filter out seed characters here. Seed characters will still be
     # described by the LLM (using their actual character names from the book), but
@@ -808,7 +808,7 @@ def describe_characters(
         if single_character not in characters:
             if verbose:
                 print(f"Character '{single_character}' not found.", file=sys.stderr)
-            return {}
+            return f"Character '{single_character}' not found.", {}
         characters = [single_character]
 
     # Load chapter texts for context (with caching)

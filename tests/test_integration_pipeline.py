@@ -279,3 +279,74 @@ class TestPipelineStageIntegration:
 
         assert success is True
         assert os.path.exists(output_path)
+
+
+class TestPipelineFailurePaths:
+    """Tests for pipeline failure paths."""
+
+    def test_label_speakers_all_failures_handled(self, temp_dir, sample_chapter_objs):
+        """Test that when all LLM labeling attempts fail, pipeline continues gracefully."""
+        from audiobook_generator.llm_label_speakers import label_speakers
+        from audiobook_generator.parse_chapter import write_chapters_to_txt
+        from audiobook_generator.testing import MockLLMClient
+
+        chapters = [sample_chapter_objs]
+        write_chapters_to_txt(chapters, str(temp_dir))
+
+        chapter_file = temp_dir / "chapter_0.txt"
+
+        mock_client = MockLLMClient()
+        mock_client.set_exception(Exception("Error code: 401, Message: Authentication failed"))
+
+        status, char_map, line_map = label_speakers(
+            txt_file=str(chapter_file),
+            api_key="bad-key",
+            port="1234",
+            num_attempts=1,
+            client=mock_client
+        )
+
+        assert isinstance(status, str)
+        assert isinstance(char_map, dict)
+        assert isinstance(line_map, dict)
+
+    def test_describe_characters_no_characters_returns_tuple(self, temp_dir):
+        """Test that describe_characters returns tuple when no characters found."""
+        from audiobook_generator.llm_describe_character import describe_characters
+
+        result = describe_characters(
+            output_dir=str(temp_dir),
+            characters_file=str(temp_dir / "nonexistent.json"),
+            chapters_dir=str(temp_dir),
+        )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        msg, descriptions = result
+        assert isinstance(msg, str)
+        assert isinstance(descriptions, dict)
+
+    def test_pipeline_aborts_when_no_characters_after_labeling(self, temp_dir, sample_chapter_objs):
+        """Test that pipeline aborts gracefully when all LLM labeling fails."""
+        from audiobook_generator.parse_chapter import write_chapters_to_txt
+        from audiobook_generator.llm_label_speakers import label_speakers
+        from audiobook_generator.testing import MockLLMClient
+
+        chapters = [sample_chapter_objs]
+        write_chapters_to_txt(chapters, str(temp_dir))
+
+        chapter_file = temp_dir / "chapter_0.txt"
+
+        mock_client = MockLLMClient()
+        mock_client.set_exception(Exception("Error code: 401, Message: Authentication failed"))
+
+        status, char_map, line_map = label_speakers(
+            txt_file=str(chapter_file),
+            api_key="bad-key",
+            port="1234",
+            num_attempts=1,
+            client=mock_client
+        )
+
+        assert len(char_map) == 0
+        assert len(line_map) == 0

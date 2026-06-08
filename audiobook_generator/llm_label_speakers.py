@@ -839,15 +839,30 @@ def label_speakers(
                 f.write("".join(lines))
             print(f"[VERBOSE] Saved prompt to {prompt_file}")
 
-        for a, attempt in enumerate(range(num_attempts)):
-            # Send the chat completion request
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _run_attempt(a):
             if verbose:
                 print(f"Processing attempt {a}")
-            response = client.chat.completions.create(
-                model=model or LLM_SETTINGS["default_model"],
-                messages=messages,
-                temperature=0.7,
-            ).choices[0].message
+            try:
+                response = client.chat.completions.create(
+                    model=model or LLM_SETTINGS["default_model"],
+                    messages=messages,
+                    temperature=0.7,
+                ).choices[0].message
+            except Exception as e:
+                error_msg = str(e)
+                print(f"Error calling LLM on attempt {a}: {error_msg}", file=sys.stderr)
+                if "401" in error_msg or "AuthenticationError" in error_msg:
+                    print("Authentication failed. Check your API key and LLM server.", file=sys.stderr)
+                elif "429" in error_msg or "RateLimitError" in error_msg:
+                    print("Rate limit exceeded. Consider reducing num_attempts or waiting.", file=sys.stderr)
+                elif "timeout" in error_msg.lower():
+                    print("Request timed out. Check your LLM server connection.", file=sys.stderr)
+                else:
+                    print(f"Unexpected error: {error_msg}", file=sys.stderr)
+                return a, None, None
+
             try:
                 if "</think>" in response.content:
                     thought_process, result = response.content.split("</think>")
@@ -857,13 +872,19 @@ def label_speakers(
             except:
                 result = response.content
                 thought_process = None
-            # Save think files
-            if thought_process is not None:
-                with open(chapter_file_base + f".think.{a}.txt", "w", encoding='utf-8') as f:
-                    f.write(thought_process)
-            # Save result files
-            with open(chapter_file_base + f".result.{a}.txt", "w", encoding='utf-8') as f:
-                f.write(result)
+            return a, thought_process, result
+
+        with ThreadPoolExecutor(max_workers=num_attempts) as executor:
+            futures = {executor.submit(_run_attempt, a): a for a in range(num_attempts)}
+            for future in as_completed(futures):
+                a, thought_process, result = future.result()
+                if result is None:
+                    continue
+                if thought_process is not None:
+                    with open(chapter_file_base + f".think.{a}.txt", "w", encoding='utf-8') as f:
+                        f.write(thought_process)
+                with open(chapter_file_base + f".result.{a}.txt", "w", encoding='utf-8') as f:
+                    f.write(result)
 
     line_maps = []
     merged_character_map = {}

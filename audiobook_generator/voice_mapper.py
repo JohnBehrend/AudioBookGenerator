@@ -454,17 +454,19 @@ class VoiceMapper:
         character_name: str,
         description: str,
         output_dir: Optional[str] = None,
-        verbose: bool = False
+        verbose: bool = False,
+        **kwargs
     ) -> Tuple[bool, Optional[str], float]:
         """Generate a voice sample for a character using the configured TTS engine.
 
-        Delegates to tts.voice_sample.generate_voice_sample().
+        Uses the cached engine instance to avoid reloading the model for each call.
 
         Args:
             character_name: Name of the character
             description: Voice description from LLM
             output_dir: Output directory (defaults to self.output_dir)
             verbose: Print verbose output
+            **kwargs: Additional arguments passed to the engine
 
         Returns:
             Tuple of (success, output_file_path, duration_seconds)
@@ -472,17 +474,14 @@ class VoiceMapper:
         if output_dir is None:
             output_dir = self.output_dir
 
-        from tts import get_engine_dir
-        from tts.voice_sample import generate_voice_sample
-
-        engine_dir = get_engine_dir(self.tts_engine)
-        success, output_file, duration = generate_voice_sample(
-            engine_dir=engine_dir,
-            device=self.device,
+        engine = self.get_engine()
+        success, output_file, duration = engine.generate_voice_sample(
             character_name=character_name,
             description=description,
             output_dir=Path(output_dir),
+            device=self.device,
             verbose=verbose,
+            **kwargs
         )
 
         if success:

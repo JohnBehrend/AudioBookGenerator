@@ -415,3 +415,57 @@ class TestDescribeCharacters:
         characters = get_characters_from_map_files(chapters_dir)
         assert "narrator" in characters
         assert "jane" in characters
+
+
+class TestDescribeCharactersFailurePaths:
+    """Tests for describe_characters failure paths."""
+
+    def test_missing_characters_file_returns_tuple(self, temp_dir):
+        """Test that missing characters file returns proper tuple, not bare dict."""
+        result = describe_characters(
+            output_dir=str(temp_dir),
+            characters_file=str(temp_dir / "nonexistent.json"),
+            chapters_dir=str(temp_dir),
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        msg, descriptions = result
+        assert isinstance(msg, str)
+        assert isinstance(descriptions, dict)
+        assert len(descriptions) == 0
+
+    def test_no_characters_found_returns_tuple(self, temp_dir):
+        """Test that no characters extracted from map files returns proper tuple."""
+        chapters_dir = temp_dir / "chapters"
+        chapters_dir.mkdir(parents=True, exist_ok=True)
+
+        result = describe_characters(
+            output_dir=str(temp_dir),
+            characters_file=str(temp_dir / "characters.json"),
+            chapters_dir=str(chapters_dir),
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        msg, descriptions = result
+        assert isinstance(msg, str)
+        assert isinstance(descriptions, dict)
+
+    def test_single_character_not_found_returns_tuple(self, temp_dir):
+        """Test that requesting a nonexistent character returns proper tuple."""
+        characters_data = {"characters": ["narrator", "jane"]}
+        chars_file = temp_dir / "characters.json"
+        with open(chars_file, "w", encoding="utf-8") as f:
+            json.dump(characters_data, f)
+
+        result = describe_characters(
+            output_dir=str(temp_dir),
+            characters_file=str(chars_file),
+            chapters_dir=str(temp_dir),
+            single_character="nonexistent",
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        msg, descriptions = result
+        assert isinstance(msg, str)
+        assert "nonexistent" in msg
+        assert len(descriptions) == 0

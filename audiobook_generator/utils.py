@@ -669,7 +669,7 @@ def get_character_wav_file(character_name: str, chapters_dir: Path) -> Optional[
     from pathlib import Path
     script_dir = Path(__file__).resolve().parent
 
-    for base_dir in [chapters_dir, script_dir]:
+    for base_dir in [Path(chapters_dir), script_dir]:
         wav_path = base_dir / f"{character_name}.wav"
         if wav_path.exists():
             return str(wav_path)

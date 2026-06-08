@@ -57,7 +57,7 @@ package = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["audiobook_generator*"]
+include = ["audiobook_generator*", "tts*"]
 
 [dependency-groups]
 dev = [

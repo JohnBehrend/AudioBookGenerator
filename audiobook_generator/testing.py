@@ -55,6 +55,14 @@ class MockLLMClient:
         self._responses = responses
         self._response_index = 0
 
+    def set_exception(self, exception: Exception) -> None:
+        """Set an exception to raise on the next chat.completions.create() call.
+
+        Args:
+            exception: Exception instance to raise
+        """
+        self._next_exception = exception
+
     def get_next_response(self) -> dict:
         """Get the next response from the queue."""
         if hasattr(self, "_responses") and self._responses:
@@ -76,13 +84,19 @@ class _ChatCompletionsMock:
     def create(self, model: str, messages: list, **kwargs):
         """Mock chat.completions.create().
 
-        Captures the request and returns a mock response.
+        Captures the request and returns a mock response, or raises
+        a configured exception if set via set_exception().
         """
         self._client.last_request = {
             "model": model,
             "messages": messages,
             "kwargs": kwargs,
         }
+
+        if hasattr(self._client, "_next_exception"):
+            exc = self._client._next_exception
+            del self._client._next_exception
+            raise exc
 
         response_content = self._client.get_next_response()
 

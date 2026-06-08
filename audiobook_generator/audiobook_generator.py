@@ -1070,11 +1070,13 @@ def assemble_audiobook_m4b(output_dir: str, verbose: bool = False,
 class PipelineState:
     """Manages state for the audiobook pipeline."""
 
-    def __init__(self, output_dir: str, voice_engine: str = None):
+    def __init__(self, output_dir: str, temp_dir: str = None, voice_engine: str = None):
         self.output_dir = Path(output_dir)
-        # Use output_dir directly as chapters_dir (not nested)
-        # This ensures consistent behavior between CLI and Gradio
-        self.chapters_dir = self.output_dir
+        # Use temp_dir for intermediates if provided, otherwise use output_dir
+        if temp_dir:
+            self.chapters_dir = Path(temp_dir)
+        else:
+            self.chapters_dir = self.output_dir
         self.chapters_dir.mkdir(parents=True, exist_ok=True)
         self.pipeline_state = None
         self.chapters = None
@@ -1216,8 +1218,16 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     if llm_model:
         LLM_SETTINGS["default_model"] = llm_model
 
-    # Initialize state
-    state = PipelineState(output_dir)
+    # Use temp directory only when output_dir is the default; otherwise use output_dir directly
+    import tempfile
+    use_temp = output_dir == "chapters"
+    if use_temp:
+        temp_dir = tempfile.mkdtemp(prefix="audiobook_")
+        if verbose:
+            print(f"[TEMP] Using temp directory: {temp_dir}")
+        state = PipelineState(output_dir, temp_dir=temp_dir)
+    else:
+        state = PipelineState(output_dir)
 
     if resume:
         # Detect current state and load existing data
@@ -1570,6 +1580,20 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         if verbose:
             print(error_msg)
         return error_msg
+    finally:
+        if use_temp:
+            # Copy final outputs to user's output_dir and clean up temp
+            if verbose:
+                print(f"[CLEANUP] Copying final outputs to {output_dir}")
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            for pattern in ["chapter_*.mp3", "*.m4b"]:
+                for f in glob.glob(os.path.join(temp_dir, pattern)):
+                    shutil.copy2(f, Path(output_dir))
+                    if verbose:
+                        print(f"[CLEANUP] Copied {os.path.basename(f)} to {output_dir}")
+            if verbose:
+                print(f"[CLEANUP] Removing temp directory: {temp_dir}")
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 # ============================================================================
@@ -1893,102 +1917,137 @@ def main():
             )
             print(result)
         else:
-            # Stage 1: Parse EPUB
-            print(f"=== Stage 1: Parsing EPUB {args.epub_file} ===")
-            chapters = parse_epub_to_chapters(args.epub_file, max_chapters=args.max_chapters)
-            if not chapters:
-                print("Error: No chapters found in EPUB file.")
-                sys.exit(1)
+            # Use temp directory only when output_dir is the default
+            import tempfile
+            use_temp = str(output_dir) == "chapters"
+            if use_temp:
+                temp_dir = tempfile.mkdtemp(prefix="audiobook_")
+                if args.verbose:
+                    print(f"[TEMP] Using temp directory: {temp_dir}")
+                work_dir = Path(temp_dir)
+            else:
+                work_dir = output_dir
 
-            for i, chapter in enumerate(chapters):
-                output_file = output_dir / f"chapter_{i}.txt"
-                with open(output_file, "w", encoding="utf-8") as f:
-                    for cobj in chapter:
-                        f.write(f"Line {cobj.line_num}: ")
-                        if cobj.has_quotes:
-                            f.write('"')
-                        f.write(cobj.text)
-                        if cobj.has_quotes:
-                            f.write('"')
-                        f.write("\n")
-            print(f"Parsed {len(chapters)} chapters")
+            try:
+                # Stage 1: Parse EPUB
+                print(f"=== Stage 1: Parsing EPUB {args.epub_file} ===")
+                chapters = parse_epub_to_chapters(args.epub_file, max_chapters=args.max_chapters)
+                if not chapters:
+                    print("Error: No chapters found in EPUB file.")
+                    sys.exit(1)
 
-            # Stage 2: Label speakers
-            print("=== Stage 2: Labeling speakers ===")
-            all_characters = set()
-            for i in range(len(chapters)):
-                chapter_file = output_dir / f"chapter_{i}.txt"
-                result_msg, char_map, line_map = label_speakers(
-                    txt_file=chapter_file,
-                    num_attempts=args.num_attempts,
+                for i, chapter in enumerate(chapters):
+                    output_file = work_dir / f"chapter_{i}.txt"
+                    with open(output_file, "w", encoding="utf-8") as f:
+                        for cobj in chapter:
+                            f.write(f"Line {cobj.line_num}: ")
+                            if cobj.has_quotes:
+                                f.write('"')
+                            f.write(cobj.text)
+                            if cobj.has_quotes:
+                                f.write('"')
+                            f.write("\n")
+                print(f"Parsed {len(chapters)} chapters")
+
+                # Stage 2: Label speakers
+                print("=== Stage 2: Labeling speakers ===")
+                all_characters = set()
+                for i in range(len(chapters)):
+                    chapter_file = work_dir / f"chapter_{i}.txt"
+                    result_msg, char_map, line_map = label_speakers(
+                        txt_file=chapter_file,
+                        num_attempts=args.num_attempts,
+                        verbose=args.verbose,
+                        seed_characters=load_seed_characters(args.seed_voice_map),
+                    )
+                    if char_map:
+                        all_characters.update(char_map.values())
+
+                if not all_characters or all_characters == {"narrator"}:
+                    print("No characters found after labeling. All LLM attempts may have failed.", file=sys.stderr)
+                    print("Aborting pipeline - cannot proceed without character data.", file=sys.stderr)
+                    return
+
+                # Stage 3: Describe characters
+                print("=== Stage 3: Describing characters ===")
+                result_msg, descriptions = describe_chars(
+                    output_dir=str(work_dir),
+                    chapters_dir=str(work_dir),
                     verbose=args.verbose,
                     seed_characters=load_seed_characters(args.seed_voice_map),
+                    progress_callback=None,
+                    voice_engine=args.voice_engine,
                 )
-                if char_map:
-                    all_characters.update(char_map.values())
+                print(result_msg)
 
-            # Stage 3: Describe characters
-            print("=== Stage 3: Describing characters ===")
-            result_msg, descriptions = describe_chars(
-                output_dir=str(output_dir),
-                chapters_dir=str(output_dir),
-                verbose=args.verbose,
-                seed_characters=load_seed_characters(args.seed_voice_map),
-                progress_callback=None,
-                voice_engine=args.voice_engine,
-            )
-            print(result_msg)
+                if not descriptions:
+                    print("No character descriptions generated. Aborting pipeline.", file=sys.stderr)
+                    return
 
-            # Stage 4: Generate voice samples
-            print("=== Stage 4: Generating voice samples ===")
-            _all_engines = ["omni", "vox", "moss", "echo-tts", "dramabox"]
-            _fallback_engines = [e for e in _all_engines if e != args.tts_engine]
+                # Stage 4: Generate voice samples
+                print("=== Stage 4: Generating voice samples ===")
+                _all_engines = ["omni", "vox", "moss", "echo-tts", "dramabox"]
+                _fallback_engines = [e for e in _all_engines if e != args.tts_engine]
 
-            result_msg, generated = gen_voice_samples(
-                descriptions=descriptions,
-                output_dir=str(output_dir),
-                verbose=args.verbose,
-                progress=None,
-                seed_characters=load_seed_characters(args.seed_voice_map),
-                voice_engine=args.tts_engine,
-                validate=False,
-                use_chunkformer=args.use_chunkformer,
-                seed_clone_fallback_engines=_fallback_engines,
-            )
-            print(result_msg)
+                result_msg, generated = gen_voice_samples(
+                    descriptions=descriptions,
+                    output_dir=str(work_dir),
+                    verbose=args.verbose,
+                    progress=None,
+                    seed_characters=load_seed_characters(args.seed_voice_map),
+                    voice_engine=args.tts_engine,
+                    validate=False,
+                    use_chunkformer=args.use_chunkformer,
+                    seed_clone_fallback_engines=_fallback_engines,
+                )
+                print(result_msg)
 
-            # Stage 5: Generate audiobook
-            print("=== Stage 5: Generating audiobook ===")
-            chapter_maps = {}
-            for i in range(len(chapters)):
-                map_file = output_dir / f"chapter_{i}.map.json"
-                if map_file.exists():
-                    with open(map_file) as f:
-                        chapter_maps[i] = json.load(f)
+                # Stage 5: Generate audiobook
+                print("=== Stage 5: Generating audiobook ===")
+                chapter_maps = {}
+                for i in range(len(chapters)):
+                    map_file = work_dir / f"chapter_{i}.map.json"
+                    if map_file.exists():
+                        with open(map_file) as f:
+                            chapter_maps[i] = json.load(f)
 
-            voices_map = {}
-            for char in descriptions:
-                wav_path = get_character_wav_file(char, output_dir)
-                if wav_path and Path(wav_path).exists():
-                    voices_map[char] = Path(wav_path).name
+                voices_map = {}
+                for char in descriptions:
+                    wav_path = get_character_wav_file(char, str(work_dir))
+                    if wav_path and Path(wav_path).exists():
+                        voices_map[char] = Path(wav_path).name
 
-            status, processed = generate_audiobook_from_chapters(
-                chapters=chapters,
-                chapter_maps=chapter_maps,
-                voices_map=voices_map,
-                output_dir=str(output_dir),
-                device=device,
-                tts_engine=args.tts_engine,
-                max_chapters=args.max_chapters,
-                verbose=args.verbose,
-                concurrency=args.concurrency,
-                whisper_cpu=args.whisper_cpu,
-                whisper_concurrency=args.whisper_concurrency,
-                whisper_fast=args.whisper_fast,
-                gpus=args.gpus,
-            )
-            print(status)
-            print(f"Done! Generated {processed} chapters.")
+                status, processed = generate_audiobook_from_chapters(
+                    chapters=chapters,
+                    chapter_maps=chapter_maps,
+                    voices_map=voices_map,
+                    output_dir=str(work_dir),
+                    device=device,
+                    tts_engine=args.tts_engine,
+                    max_chapters=args.max_chapters,
+                    verbose=args.verbose,
+                    concurrency=args.concurrency,
+                    whisper_cpu=args.whisper_cpu,
+                    whisper_concurrency=args.whisper_concurrency,
+                    whisper_fast=args.whisper_fast,
+                    gpus=args.gpus,
+                )
+                print(status)
+                print(f"Done! Generated {processed} chapters.")
+
+            finally:
+                if use_temp:
+                    if args.verbose:
+                        print(f"[CLEANUP] Copying final outputs to {output_dir}")
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    for pattern in ["chapter_*.mp3", "*.m4b"]:
+                        for f in glob.glob(os.path.join(temp_dir, pattern)):
+                            shutil.copy2(f, output_dir)
+                            if args.verbose:
+                                print(f"[CLEANUP] Copied {os.path.basename(f)} to {output_dir}")
+                    if args.verbose:
+                        print(f"[CLEANUP] Removing temp directory: {temp_dir}")
+                    shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

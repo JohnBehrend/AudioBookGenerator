@@ -74,8 +74,8 @@ class TestCalculateClipPoints:
         result = calculate_clip_points(segments, start_times, end_times, "and", "world")
         assert result is not None
         start_clip, end_clip = result
-        # Should clip at end of last word before postfix: "world" ends at 0.9s = 900ms
-        assert end_clip == 900.0
+        # Should clip at end of last word before postfix minus 50ms safety buffer: 0.9s - 0.05s = 850ms
+        assert end_clip == 850.0
 
     def test_last_valid_token_fallback(self):
         """Test fallback to last valid token when postfix not found."""

@@ -135,8 +135,20 @@ def setup_validation_model(device: str, cpu: bool = False, fast: bool = False) -
         return WhisperModel(model_name, device=whisper_device, compute_type="float16")
 
 
-def get_non_silent_audio_from_wavs(wav_filepath_list: List[str], min_silence_len: int = 1250, silence_thresh: int = -60) -> Any:
-    """Remove silent audio from list of wave filepaths of wavs together. Return AudioSegment."""
+def get_non_silent_audio_from_wavs(
+    wav_filepath_list: List[str],
+    min_silence_len: int = 1250,
+    silence_thresh: int = -60,
+    inter_line_pause_ms: int = 600,
+) -> Any:
+    """Remove silent audio from list of wave filepaths of wavs together. Return AudioSegment.
+
+    Args:
+        wav_filepath_list: List of WAV file paths to concatenate
+        min_silence_len: Minimum silence duration in ms to detect
+        silence_thresh: Silence threshold in dB
+        inter_line_pause_ms: Pause to insert between lines in ms (0 for no pause)
+    """
     import pydub
 
     all_audio_segments = None
@@ -148,7 +160,8 @@ def get_non_silent_audio_from_wavs(wav_filepath_list: List[str], min_silence_len
         if all_audio_segments is None:
             all_audio_segments = this_audio_segment
         else:
-            all_audio_segments = all_audio_segments + this_audio_segment
+            pause = pydub.AudioSegment.silent(duration=inter_line_pause_ms)
+            all_audio_segments = all_audio_segments + pause + this_audio_segment
     return all_audio_segments
 
 
@@ -858,7 +871,10 @@ def generate_audiobook_from_chapters(
             progress_handler.update(1, desc=f"Assembling Chapters")
             wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")), key=natural_sort_key)
             if wav_files:
-                audio = get_non_silent_audio_from_wavs(wav_files)
+                audio = get_non_silent_audio_from_wavs(
+                    wav_files,
+                    inter_line_pause_ms=DEFAULTS["inter_line_pause_ms"],
+                )
                 mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
                 audio.export(str(mp3_path), format="mp3")
 

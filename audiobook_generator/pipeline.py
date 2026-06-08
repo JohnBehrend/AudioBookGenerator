@@ -308,9 +308,10 @@ def calculate_clip_points(
                 # No content before postfix, clip to 0 so guard catches it
                 clip_end_s = 0.0
             else:
-                # Clip at the end of the last word before the postfix
-                clip_end_s = end_times[postfix_start_index - 1]
-            clip_end_ms = clip_end_s * 1000
+                # Clip at the end of the last word before the postfix,
+                # minus a safety buffer because Whisper timestamps are ~50-100ms off
+                clip_end_s = end_times[postfix_start_index - 1] - 0.05
+            clip_end_ms = max(0, clip_end_s * 1000)
 
             if verbose:
                 print(f"POSTFIX DETECTED CLIPPING at {clip_end_s}s ({clip_end_ms}ms)")

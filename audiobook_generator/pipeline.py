@@ -303,15 +303,13 @@ def calculate_clip_points(
             # Find last occurrence of postfix token
             postfix_start_index = len(segments) - 1 - segments[::-1].index(postfix_detect_token)
 
-            # Clip before the postfix starts with a small buffer
-            # Use midpoint between postfix start and next word's end for safety
+            # Clip before the postfix starts
             if postfix_start_index == 0:
                 # No content before postfix, clip to 0 so guard catches it
                 clip_end_s = 0.0
-            elif postfix_start_index + 1 < len(segments):
-                clip_end_s = (start_times[postfix_start_index] + end_times[postfix_start_index + 1]) / 2
             else:
-                clip_end_s = start_times[postfix_start_index]
+                # Clip at the end of the last word before the postfix
+                clip_end_s = end_times[postfix_start_index - 1]
             clip_end_ms = clip_end_s * 1000
 
             if verbose:

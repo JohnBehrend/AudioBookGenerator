@@ -188,7 +188,7 @@ def _get_ref_text_for_voice(voice_path: str, validation_model: Any, voice_name: 
 def _tts_generate_only(
     chapter_idx: int,
     line_idx: int,
-    text: str,
+    full_script: str,
     voice_name: str,
     voice_mapper: VoiceMapper,
     tts_config: TTSConfig,
@@ -196,12 +196,13 @@ def _tts_generate_only(
 ) -> Optional[str]:
     """Generate TTS audio for a single line (no validation).
 
+    Args:
+        full_script: Pre-prepared script text (postfix already appended by caller).
+
     Returns output_path on success, None on failure.
     """
-    if not text or not text.strip():
+    if not full_script or not full_script.strip():
         return None
-
-    full_script, _ = prepare_script_for_tts(text, tts_config.short_text_postfix)
 
     output_path = generate_output_filename(tts_config.output_dir, chapter_idx, line_idx, is_final=False)
 
@@ -229,7 +230,7 @@ def _tts_generate_only(
 
 
 def _validate_and_clip_audio(
-    text: str,
+    full_script: str,
     output_path: str,
     tts_config: TTSConfig,
 ) -> Tuple[float, Optional[str]]:
@@ -243,7 +244,7 @@ def _validate_and_clip_audio(
     4. Audio clipping based on detected postfix or last valid token
 
     Args:
-        text: Text to validate against
+        full_script: Pre-prepared script text (postfix already appended by caller)
         output_path: Path to the audio file (may be modified in-place by clipping)
         tts_config: TTS configuration
 
@@ -254,7 +255,7 @@ def _validate_and_clip_audio(
     Raises:
         Exception: If Whisper transcription fails (callers should handle)
     """
-    full_script, postfix_detect_token = prepare_script_for_tts(text, tts_config.short_text_postfix)
+    postfix_detect_token = tts_config.short_text_postfix.strip().split(" ")[0] if tts_config.short_text_postfix else None
     input_string = distill_string(full_script)
 
     segments = []
@@ -714,7 +715,6 @@ def generate_audiobook_from_chapters(
                                 voice_path=item["voice_path"],
                                 output_path=output_path,
                                 device=tts_config.device,
-                                validation_model=tts_config.validation_model,
                                 verbose=tts_config.verbose,
                             )
                         except Exception as e:
@@ -726,14 +726,14 @@ def generate_audiobook_from_chapters(
                             work_queue.task_done()
                             continue
 
-                        validation_queue.put((item, output_path, key))
+                        validation_queue.put((item, full_script, output_path, key))
                         work_queue.task_done()
 
                 def validator_worker():
                     nonlocal completed_count
                     while not shutdown_val.is_set():
                         try:
-                            item, output_path, key = validation_queue.get(timeout=0.5)
+                            item, full_script, output_path, key = validation_queue.get(timeout=0.5)
                         except queue.Empty:
                             continue
 
@@ -747,7 +747,7 @@ def generate_audiobook_from_chapters(
 
                         # Validate and clip audio using shared logic
                         try:
-                            ratio, last_valid_token = _validate_and_clip_audio(item["text"], output_path, tts_config)
+                            ratio, last_valid_token = _validate_and_clip_audio(full_script, output_path, tts_config)
                         except Exception as e:
                             print(f"    Whisper validation failed: {e}")
                             if tts_config.verbose:

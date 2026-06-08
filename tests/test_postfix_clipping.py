@@ -1,6 +1,7 @@
 """Tests for postfix handling, clipping accuracy, and engine integration."""
 
 import pytest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from audiobook_generator.pipeline import (

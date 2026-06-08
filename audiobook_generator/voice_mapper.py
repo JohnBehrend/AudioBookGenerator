@@ -19,7 +19,7 @@ from openai import OpenAI
 from .config import DEFAULTS, AUDIO_SETTINGS, VOICE_VALIDATION
 
 # Import TTS submodule
-from tts import TTSEngine, get_engine_dir, list_engines
+from tts import TTSEngine, get_engine_dir, list_engines, get_engine
 
 # Import utilities for validation client
 from .utils import get_validation_client
@@ -221,7 +221,7 @@ class VoiceMapper:
     def cleanup_engines(self) -> None:
         """Release cached engine instance and shutdown worker."""
         if self._cached_engine is not None:
-            self._cached_engine.shutdown()
+            self._cached_engine.shutdown_worker()
             self._cached_engine = None
 
     @staticmethod
@@ -475,6 +475,9 @@ class VoiceMapper:
             output_dir = self.output_dir
 
         engine = self.get_engine()
+        # Inject static_voice_text from config if not already in kwargs
+        if "static_voice_text" not in kwargs:
+            kwargs["static_voice_text"] = DEFAULTS.get("static_voice_text", "")
         success, output_file, duration = engine.generate_voice_sample(
             character_name=character_name,
             description=description,

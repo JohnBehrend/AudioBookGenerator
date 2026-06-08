@@ -217,7 +217,6 @@ def _tts_generate_only(
             voice_path=voice_path,
             output_path=output_path,
             device=tts_config.device,
-            validation_model=tts_config.validation_model,
             verbose=tts_config.verbose,
         )
     except Exception as e:

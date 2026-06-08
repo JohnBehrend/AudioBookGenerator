@@ -495,9 +495,8 @@ def generate_voice_samples(
             print("=" * 60 + "\n")
 
         # Create VoiceMapper once to cache the TTS model across all characters
-        # Use tts_engine for voice generation (voice cloning), not voice_engine
-        gen_engine = tts_engine or voice_engine
-        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=gen_engine, engine=engine)
+        # voice_engine controls voice sample generation, tts_engine controls line TTS
+        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=voice_engine, engine=engine)
         max_tokens = 2048
 
         try:
@@ -628,7 +627,7 @@ def generate_voice_samples(
 
         if verbose:
             print("\n" + "=" * 60)
-            print(f"Primary engine ({gen_engine or voice_engine}): {len(generated)} generated, {len(failed)} failed")
+            print(f"Primary engine ({voice_engine}): {len(generated)} generated, {len(failed)} failed")
             print("=" * 60)
 
         if failed and seed_clone_fallback_engines:

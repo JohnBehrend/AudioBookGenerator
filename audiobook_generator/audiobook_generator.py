@@ -1359,6 +1359,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     chapter_files = sorted([f for f in state.chapters_dir.glob("chapter_*.txt")
                            if re.match(r"^chapter_\d+\.txt$", f.name)],
                           key=natural_sort_key)
+    if max_chapters is not None:
+        chapter_files = chapter_files[:max_chapters]
     num_chapters = len(chapter_files)
 
     # Check if speakers are already labeled (for resume mode)

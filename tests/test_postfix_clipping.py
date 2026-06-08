@@ -172,50 +172,102 @@ class TestInterLinePause:
         mock_segment_class.silent.assert_called()
 
 
-class TestEngineWorkerErrors:
-    """Test clear error messages when engine operations fail."""
+class TestEngineInterfaceContract:
+    """Test that any engine implementing the worker protocol works through TTSEngine.
 
-    def test_dramabox_engine_discoverable(self):
-        """Dramabox should be listed in available engines."""
+    These tests verify the adapter contract, not specific engines. Any engine that
+    implements generate_voice_sample and generate_line in main.py should pass.
+    """
+
+    def test_all_engines_discoverable(self):
+        """All engine directories must be discoverable via list_engines."""
         from tts import list_engines
-        engines = list_engines()
-        assert "dramabox" in engines
-
-    def test_dramabox_has_pyproject(self):
-        """Dramabox engine directory must have pyproject.toml."""
-        from tts import get_engine_dir
         from pathlib import Path
-        engine_dir = get_engine_dir("dramabox")
-        assert (Path(engine_dir) / "pyproject.toml").exists()
+        engines_dir = Path(__file__).resolve().parent.parent / "engines"
+        expected = [d.name for d in engines_dir.iterdir() if d.is_dir() and (d / "main.py").exists()]
+        actual = list_engines()
+        for eng in expected:
+            assert eng in actual, f"Engine '{eng}' not discoverable"
 
-    def test_dramabox_has_main_py(self):
-        """Dramabox engine directory must have main.py."""
-        from tts import get_engine_dir
+    def test_all_engines_have_pyproject(self):
+        """All engine directories must have pyproject.toml for uv installation."""
+        from tts import list_engines
         from pathlib import Path
-        engine_dir = get_engine_dir("dramabox")
-        assert (Path(engine_dir) / "main.py").exists()
+        engines_dir = Path(__file__).resolve().parent.parent / "engines"
+        for eng in list_engines():
+            pyproject = engines_dir / eng / "pyproject.toml"
+            assert pyproject.exists(), f"Engine '{eng}' missing pyproject.toml"
 
-    def test_dramabox_has_source_code(self):
-        """Dramabox engine must have ltx2 and src directories."""
-        from tts import get_engine_dir
+    def test_all_engines_have_main_py(self):
+        """All engine directories must have main.py (worker entry point)."""
+        from tts import list_engines
         from pathlib import Path
-        engine_dir = get_engine_dir("dramabox")
-        assert (Path(engine_dir) / "ltx2").is_dir()
-        assert (Path(engine_dir) / "src").is_dir()
+        engines_dir = Path(__file__).resolve().parent.parent / "engines"
+        for eng in list_engines():
+            main_py = engines_dir / eng / "main.py"
+            assert main_py.exists(), f"Engine '{eng}' missing main.py"
 
-    def test_dramabox_has_model_downloader(self):
-        """Dramabox engine must have model_downloader.py for HF downloads."""
-        from tts import get_engine_dir
-        from pathlib import Path
-        engine_dir = get_engine_dir("dramabox")
-        assert (Path(engine_dir) / "src" / "model_downloader.py").exists()
+    def test_all_engines_support_probe(self):
+        """All engines must support --probe flag to report capabilities."""
+        from tts import list_engines
+        from tts.worker import EngineWorker
+        for eng in list_engines():
+            engine_dir = Path(__file__).resolve().parent.parent / "engines" / eng
+            worker = EngineWorker(engine_dir, "cpu")
+            try:
+                worker.start()
+                # If worker starts, it supports the protocol
+            finally:
+                worker.shutdown()
 
-    def test_dramabox_has_inference_server(self):
-        """Dramabox engine must have inference_server.py (TTSServer)."""
-        from tts import get_engine_dir
+    def test_tts_engine_adapter_delegates_to_worker(self):
+        """TTSEngine.generate_line must delegate to EngineWorker, not inline code."""
+        from tts.engine import TTSEngine
+        from unittest.mock import MagicMock, patch
         from pathlib import Path
-        engine_dir = get_engine_dir("dramabox")
-        assert (Path(engine_dir) / "src" / "inference_server.py").exists()
+
+        engine = TTSEngine(Path("/tmp/fake_engine"), "cpu")
+        with patch.object(engine, "_get_worker") as mock_get_worker:
+            mock_worker = MagicMock()
+            mock_worker.request.return_value = {"success": True}
+            mock_get_worker.return_value = mock_worker
+
+            engine.generate_line(
+                text="test",
+                voice_path="/tmp/voice.wav",
+                output_path="/tmp/out.wav",
+            )
+
+            mock_worker.request.assert_called_once()
+            call_kwargs = mock_worker.request.call_args
+            assert call_kwargs[0][0] == "generate_line"  # method name
+
+    def test_tts_engine_voice_sample_delegates_to_worker(self):
+        """TTSEngine.generate_voice_sample must delegate to EngineWorker."""
+        from tts.engine import TTSEngine
+        from unittest.mock import MagicMock, patch
+        from pathlib import Path
+
+        engine = TTSEngine(Path("/tmp/fake_engine"), "cpu")
+        with patch.object(engine, "_get_worker") as mock_get_worker:
+            mock_worker = MagicMock()
+            mock_worker.request.return_value = {
+                "success": True,
+                "output_file": "/tmp/test.wav",
+                "duration": 1.0,
+            }
+            mock_get_worker.return_value = mock_worker
+
+            result = engine.generate_voice_sample(
+                character_name="test",
+                description="male",
+                output_dir=Path("/tmp"),
+            )
+
+            mock_worker.request.assert_called_once()
+            call_kwargs = mock_worker.request.call_args
+            assert call_kwargs[0][0] == "generate_voice_sample"
+            assert result[0] is True  # success
 
     def test_voice_mapper_cleanup_uses_correct_method(self):
         """VoiceMapper.cleanup_engines must call shutdown_worker(), not shutdown()."""

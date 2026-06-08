@@ -1495,8 +1495,9 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
         num_characters = len(state.character_descriptions)
         with ProgressHandler(progress=None, use_tqdm=True, total=num_characters, desc="Generating voice samples") as handler:
-            # Build fallback chain: try all cloning-capable engines if primary fails
-            _all_engines = ["omni", "vox", "moss", "echo-tts", "dramabox"]
+            # Build fallback chain: discover all engines with voice generation capability
+            from tts import list_engines
+            _all_engines = list_engines()
             _fallback_engines = [e for e in _all_engines if e != voice_engine]
 
             result_msg, generated_voices = gen_voice_samples(

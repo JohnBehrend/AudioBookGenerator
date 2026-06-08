@@ -142,7 +142,7 @@ DEFAULTS = {
     "validation_model_name_fast": "medium",
     "min_silence_len": 1250,
     "silence_thresh": -60,
-    "inter_line_pause_ms": 600,
+    "inter_line_pause_ms": 300,
     # Speed optimization switches (defaults preserve current behavior)
     "max_retries": 1,
     "enable_postfix": True,

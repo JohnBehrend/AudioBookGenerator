@@ -632,8 +632,6 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                max_tokens=4096,
-                timeout=120,
             )
             raw = response.choices[0].message.content
             # Validate universal JSON format

@@ -1510,7 +1510,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 voice_engine=voice_engine,
                 validate=validate,
                 tts_engine=tts_engine,
-                use_chunkformer=use_chunkformer,
+                use_chunkformer=True,
                 seed_clone_fallback_engines=_fallback_engines,
             )
 

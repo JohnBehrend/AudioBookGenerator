@@ -99,25 +99,23 @@ BAD Examples (do NOT use):
 """
 
 # Universal JSON format prompt - structured output that any engine can parse
-CHARACTER_DESCRIPTION_PROMPT_UNIVERSAL = """You are an expert voice actor. Create voice profiles as JSON for TTS synthesis.
+CHARACTER_DESCRIPTION_PROMPT_UNIVERSAL = """You MUST output ONLY a JSON object. No prose, no explanation, no markdown formatting.
 
-CRITICAL: Output MUST be a single JSON object with these exact keys:
+CRITICAL: Your entire response must be a single JSON object starting with { and ending with }.
+
+Required keys:
 - "gender": "male" or "female"
 - "age": "child", "teenager", "young adult", "middle-aged", or "elderly"
 - "pitch": "very low", "low", "moderate", "high", or "very high"
-- "accent": (optional) "american", "british", "australian", "canadian", "indian", "chinese", "korean", "japanese", "portuguese", "russian", or omit if not applicable
-- "style": (optional) distinctive traits like "raspy", "gravelly", "smooth", "breathy", "nasal", "booming", "whispery", "hoarse", "metallic", "guttural", "warm", "cold", "aristocratic", "streetwise", "scholarly", "rural", etc.
-- "description": A detailed natural language paragraph (2-4 sentences) describing how this character speaks. Include their personality, emotional state, social class, relationship to other characters, and any distinctive speech patterns. This is used directly in voice generation prompts, so be specific and vivid. Example: "A warm middle-aged man with a gentle, measured cadence. He speaks with quiet authority and a hint of weariness, his tone suggesting years of experience and patience."
+- "accent": (optional) "american", "british", "australian", "canadian", "indian", "chinese", "korean", "japanese", "portuguese", "russian", or omit
+- "style": (optional) 1-3 traits: "raspy", "gravelly", "smooth", "breathy", "nasal", "booming", "whispery", "hoarse", "metallic", "guttural", "warm", "cold", "aristocratic", "streetwise", "scholarly", "rural"
+- "description": 2-4 sentence paragraph describing how this character speaks. Include personality, social class, speech patterns. Be vivid and specific.
 
 RULES:
-- Output ONLY the JSON object, nothing else
-- ONE gender only (male OR female)
-- ONE age only
-- ONE pitch only
-- ONE accent only (or omit)
-- 1-3 style traits max
-- "description" MUST be a natural language phrase, not a list of attributes
-- MAKE SIMILAR CHARACTERS DISTINCT: If multiple characters share the same gender and age, give them DIFFERENT pitch and style traits so their voices sound unique
+- ONE gender, ONE age, ONE pitch, ONE accent (or omit), 1-3 style traits
+- "description" MUST be natural language, not a list
+- MAKE SIMILAR CHARACTERS DISTINCT: Different pitch and style for characters with same gender/age
+- Output ONLY the JSON, nothing else
 
 Examples:
 {{"gender": "male", "age": "middle-aged", "pitch": "moderate", "style": "smooth, aristocratic", "description": "A smooth middle-aged aristocrat with a calm, measured cadence. He carries himself with quiet authority and speaks with the polished ease of someone accustomed to high society. His tone is warm but restrained."}}
@@ -382,13 +380,14 @@ def build_character_context(characters: List[str], chapter_texts: List[str], cha
     if chapters_dir and chapters_dir.is_dir():
         for char in characters:
             if char == "narrator":
-                # Narrator has no dialogue - use chapter text excerpts for context
+                # Narrator has no dialogue - use brief chapter text excerpts for context
                 context += f"\n--- {char} ---\n(The narrator provides the narration for this book)\n"
-                chapter_messages.append("The narrator provides the narration for this book. Here are some narration excerpts from the chapters:\n")
-                for f in sorted(chapters_dir.glob("chapter_*.txt"))[:3]:
+                chapter_messages.append("The narrator provides the narration for this book. Here are a few narration excerpts:\n")
+                for f in sorted(chapters_dir.glob("chapter_*.txt"))[:2]:
                     lines = f.read_text().split("\n")
                     narration = [l for l in lines if not l.strip().startswith('"')]
-                    chapter_messages.append(f"From {f.name}:\n" + "\n".join(narration[:5]))
+                    # Only take first 3 lines per chapter to keep context small
+                    chapter_messages.append(f"From {f.name}:\n" + "\n".join(narration[:3]))
                 continue
             dialogue_examples = extract_character_dialogue(chapters_dir, char, max_examples=None)
             if dialogue_examples:

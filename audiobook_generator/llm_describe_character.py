@@ -425,6 +425,7 @@ def _parse_universal_description(raw: str) -> Optional[Dict[str, str]]:
     """Parse and validate a universal JSON description.
 
     Handles JSON embedded in prose, markdown code blocks, or plain JSON.
+    Falls back to extracting values from prose if no JSON found.
     Returns dict with keys 'gender', 'age', 'pitch', 'accent', 'style' or None if invalid.
     """
     try:
@@ -443,7 +444,11 @@ def _parse_universal_description(raw: str) -> Optional[Dict[str, str]]:
             end = text.rfind("}") + 1
             if start >= 0 and end > start:
                 text = text[start:end]
-            obj = json.loads(text)
+            try:
+                obj = json.loads(text)
+            except json.JSONDecodeError:
+                # Fallback: extract values from prose
+                return _extract_from_prose(raw)
         gender = obj.get("gender", "").lower()
         age = obj.get("age", "").lower()
         pitch = obj.get("pitch", "moderate").lower()
@@ -456,6 +461,104 @@ def _parse_universal_description(raw: str) -> Optional[Dict[str, str]]:
         return {"gender": gender, "age": age, "pitch": pitch, "accent": accent, "style": style}
     except (json.JSONDecodeError, AttributeError):
         return None
+
+
+def _extract_from_prose(text: str) -> Optional[Dict[str, str]]:
+    """Extract gender, age, pitch from prose output as fallback."""
+    import re
+    text_lower = text.lower()
+
+    # Extract gender
+    gender = None
+    if "male" in text_lower or "man" in text_lower or "boy" in text_lower:
+        gender = "male"
+    elif "female" in text_lower or "woman" in text_lower or "girl" in text_lower:
+        gender = "female"
+    if not gender:
+        return None
+
+    # Extract age
+    age = None
+    age_patterns = [
+        (r"\byoung\b", "young adult"),
+        (r"\bchild\b", "child"),
+        (r"\bteen\b", "teenager"),
+        (r"\bteenager\b", "teenager"),
+        (r"\bmiddle-aged\b", "middle-aged"),
+        (r"\bmiddle aged\b", "middle-aged"),
+        (r"\bold\b", "elderly"),
+        (r"\belderly\b", "elderly"),
+        (r"\bsenior\b", "elderly"),
+    ]
+    for pattern, val in age_patterns:
+        if re.search(pattern, text_lower):
+            age = val
+            break
+    if not age:
+        age = "middle-aged"  # default
+
+    # Extract pitch
+    pitch = None
+    pitch_patterns = [
+        (r"\bvery low\b", "very low"),
+        (r"\blow pitch\b", "low"),
+        (r"\blow\b", "low"),
+        (r"\bmoderate\b", "moderate"),
+        (r"\bmedium\b", "moderate"),
+        (r"\bhigh pitch\b", "high"),
+        (r"\bhigh\b", "high"),
+        (r"\bvery high\b", "very high"),
+    ]
+    for pattern, val in pitch_patterns:
+        if re.search(pattern, text_lower):
+            pitch = val
+            break
+    if not pitch:
+        pitch = "moderate"  # default
+
+    # Extract accent
+    accent = None
+    accent_patterns = [
+        (r"\bamerican\b", "american"),
+        (r"\bbritish\b", "british"),
+        (r"\benglish\b", "british"),
+        (r"\baustralian\b", "australian"),
+        (r"\bcanadian\b", "canadian"),
+        (r"\bindian\b", "indian"),
+    ]
+    for pattern, val in accent_patterns:
+        if re.search(pattern, text_lower):
+            accent = val
+            break
+
+    # Extract style traits
+    style_words = []
+    style_candidates = [
+        "raspy", "gravelly", "smooth", "breathy", "nasal", "booming",
+        "whispery", "hoarse", "metallic", "guttural", "warm", "cold",
+        "aristocratic", "streetwise", "scholarly", "rural", "deep",
+        "soft", "gentle", "sharp", "rough", "clear", "mellow",
+        "authoritative", "nervous", "anxious", "calm", "cheerful",
+        "dark", "light", "bright", "dark", "warm", "cold",
+    ]
+    for word in style_candidates:
+        if word in text_lower:
+            style_words.append(word)
+    style = ", ".join(style_words[:3]) if style_words else ""
+
+    # Build description from the prose itself (use first 4 sentences)
+    sentences = re.split(r'[.!?]+', text.replace('\n', ' '))
+    sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
+    description = ". ".join(sentences[:4]) if sentences else text[:200]
+
+    return {
+        "gender": gender,
+        "age": age,
+        "pitch": pitch,
+        "accent": accent or "",
+        "style": style,
+        "description": description,
+    }
 
 
 def _universal_description_to_omni(parsed: Dict[str, str]) -> str:
@@ -535,6 +638,10 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
             # Validate universal JSON format
             parsed = _parse_universal_description(raw)
             if parsed:
+                # If we got prose, convert parsed result to JSON for storage
+                if "description" in parsed:
+                    # Prose fallback — return as JSON
+                    return json.dumps(parsed)
                 return raw  # Return raw JSON for storage
             # Retry with feedback
             messages.append({"role": "assistant", "content": raw})

@@ -122,8 +122,19 @@ def run_worker(device: str) -> None:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 output_file = str(out_dir / f"{character_name}.wav")
 
+                # Estimate duration from spoken text only (not description)
+                import sys as _sys
+                _sys.path.insert(0, str(APP_DIR / "src"))
+                from duration_estimator import estimate_speech_duration as _est_dur
+                # Only estimate for the quoted text, not the full prompt
+                text_prompt = f'"{static_voice_text}"'
+                spoken_dur = _est_dur(text_prompt)
+                # Add 10% headroom, minimum 3s
+                gen_duration = max(3.0, round(spoken_dur * 1.1, 1))
+
                 waveform, sr = model.generate(
                     prompt=prompt,
+                    gen_duration=gen_duration,
                 )
 
                 if waveform is None or (hasattr(waveform, 'numel') and waveform.numel() == 0):
@@ -137,8 +148,11 @@ def run_worker(device: str) -> None:
                     resampler = T.Resample(orig_freq=sr, new_freq=SAMPLE_RATE)
                     wav_cpu = resampler(wav_cpu)
                     sr = SAMPLE_RATE
-                sf.write(output_file, wav_cpu.numpy().flatten(), sr)
-                duration = wav_cpu.shape[-1] / sr
+                # Ensure mono: if (C, T), take first channel; if (T,), keep as-is
+                if wav_cpu.dim() == 2:
+                    wav_cpu = wav_cpu[0]
+                sf.write(output_file, wav_cpu.numpy(), sr)
+                duration = len(wav_cpu) / sr
                 print(json.dumps({
                     "id": req_id,
                     "success": True,
@@ -173,7 +187,10 @@ def run_worker(device: str) -> None:
                     resampler = T.Resample(orig_freq=sr, new_freq=SAMPLE_RATE)
                     wav_cpu = resampler(wav_cpu)
                     sr = SAMPLE_RATE
-                sf.write(output_path, wav_cpu.numpy().flatten(), sr)
+                # Ensure mono: if (C, T), take first channel; if (T,), keep as-is
+                if wav_cpu.dim() == 2:
+                    wav_cpu = wav_cpu[0]
+                sf.write(output_path, wav_cpu.numpy(), sr)
                 print(json.dumps({"id": req_id, "success": True}), flush=True)
 
             else:

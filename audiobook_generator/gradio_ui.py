@@ -105,10 +105,13 @@ def get_duplicate_replacement_map_file() -> Optional[Path]:
 
 
 def get_description_metadata_file() -> Optional[Path]:
-    """Get the path to description_metadata.json in the temp directory."""
-    chapters_dir = get_chapters_dir()
-    if not chapters_dir:
-        return None
+    """Get the path to description_metadata.json in the temp directory.
+
+    Deprecated: metadata file is no longer written with universal descriptions.
+    Kept for backwards compatibility when loading old output directories.
+    """
+    from audiobook_generator.config import DEFAULTS
+    chapters_dir = Path(DEFAULTS.get("output_dir", "chapters"))
     return chapters_dir / "description_metadata.json"
 
 
@@ -362,22 +365,11 @@ def describe_characters_ui(
             with open(descriptions_file, "r", encoding="utf-8") as f:
                 existing_descriptions = json.load(f)
             if existing_descriptions:
-                # Check if voice engine changed - if so, force regeneration
-                metadata_file = get_description_metadata_file()
-                old_voice_engine = "dramabox"
-                if metadata_file and metadata_file.exists():
-                    with open(metadata_file, "r", encoding="utf-8") as mf:
-                        metadata = json.load(mf)
-                        old_voice_engine = metadata.get("voice_engine", "dramabox")
-
-                if old_voice_engine != voice_engine:
-                    log_output += f"\nVoice engine changed from '{old_voice_engine}' to '{voice_engine}' - regenerating descriptions with new prompt format..."
-                else:
-                    log_output += f"\nFound existing character descriptions ({len(existing_descriptions)} characters) - preserving (resume mode)"
-                    pipeline_state.character_descriptions = existing_descriptions
-                    pipeline_state.pipeline_state = "characters_described"
-                    log_output += f" State: {pipeline_state.pipeline_state}"
-                    return log_output, pipeline_state
+                log_output += f"\nFound existing character descriptions ({len(existing_descriptions)} characters) - preserving (resume mode)"
+                pipeline_state.character_descriptions = existing_descriptions
+                pipeline_state.pipeline_state = "characters_described"
+                log_output += f" State: {pipeline_state.pipeline_state}"
+                return log_output, pipeline_state
 
         # Get characters from existing state
         characters = pipeline_state.get_characters()
@@ -403,11 +395,6 @@ def describe_characters_ui(
         progress(1.0, desc="Character description generation complete.")
 
         # Save metadata to track which voice engine was used
-        metadata_file = get_description_metadata_file()
-        if metadata_file:
-            with open(metadata_file, "w", encoding="utf-8") as mf:
-                json.dump({"voice_engine": voice_engine}, mf)
-
         # Load and store character descriptions in state
         pipeline_state.load_character_descriptions()
         pipeline_state.pipeline_state = "characters_described"

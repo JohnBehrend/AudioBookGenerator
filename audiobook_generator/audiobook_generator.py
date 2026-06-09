@@ -1456,11 +1456,6 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
             state.load_character_descriptions()
 
-            # Save metadata to track which voice engine was used
-            metadata_file = state.output_dir / "description_metadata.json"
-            with open(metadata_file, "w", encoding="utf-8") as mf:
-                json.dump({"voice_engine": voice_engine}, mf)
-
     # Stage 4: Generate Voice Samples with progress
     # Check for existing voice samples (resume mode)
     wav_files = list(state.chapters_dir.glob("*.wav"))

@@ -99,23 +99,23 @@ BAD Examples (do NOT use):
 """
 
 # Universal JSON format prompt - structured output that any engine can parse
-CHARACTER_DESCRIPTION_PROMPT_UNIVERSAL = """You MUST output ONLY a JSON object. No prose, no explanation, no markdown formatting.
+CHARACTER_DESCRIPTION_PROMPT_UNIVERSAL = """Output ONLY a JSON object. No prose, no explanation, no markdown.
 
-CRITICAL: Your entire response must be a single JSON object starting with { and ending with }.
-
-Required keys:
-- "gender": "male" or "female"
-- "age": "child", "teenager", "young adult", "middle-aged", or "elderly"
-- "pitch": "very low", "low", "moderate", "high", or "very high"
-- "accent": (optional) "american", "british", "australian", "canadian", "indian", "chinese", "korean", "japanese", "portuguese", "russian", or omit
-- "style": (optional) 1-3 traits: "raspy", "gravelly", "smooth", "breathy", "nasal", "booming", "whispery", "hoarse", "metallic", "guttural", "warm", "cold", "aristocratic", "streetwise", "scholarly", "rural"
-- "description": 2-4 sentence paragraph describing how this character speaks. Include personality, social class, speech patterns. Be vivid and specific.
+Format:
+{{
+  "gender": "male" or "female",
+  "age": "child" or "teenager" or "young adult" or "middle-aged" or "elderly",
+  "pitch": "very low" or "low" or "moderate" or "high" or "very high",
+  "accent": "american" or "british" or "australian" or "canadian" or "indian" or "chinese" or "korean" or "japanese" or "portuguese" or "russian" or omit,
+  "style": 1-3 traits from: raspy, gravelly, smooth, breathy, nasal, booming, whispery, hoarse, metallic, guttural, warm, cold, aristocratic, streetwise, scholarly, rural, nervous, calm, cheerful, dark, bright, gentle, sharp, rough, clear, mellow, authoritative, anxious, cheerful, deep, soft, gentle, sharp, rough, clear, mellow, authoritative, anxious, cheerful, deep, soft,
+  "description": 2-4 sentence paragraph describing how this character speaks vividly
+}}
 
 RULES:
 - ONE gender, ONE age, ONE pitch, ONE accent (or omit), 1-3 style traits
-- "description" MUST be natural language, not a list
+- "description" MUST be natural language
 - MAKE SIMILAR CHARACTERS DISTINCT: Different pitch and style for characters with same gender/age
-- Output ONLY the JSON, nothing else
+- Your entire response is the JSON object. Nothing else.
 
 Examples:
 {{"gender": "male", "age": "middle-aged", "pitch": "moderate", "style": "smooth, aristocratic", "description": "A smooth middle-aged aristocrat with a calm, measured cadence. He carries himself with quiet authority and speaks with the polished ease of someone accustomed to high society. His tone is warm but restrained."}}
@@ -632,7 +632,8 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                timeout=60,
+                max_tokens=4096,
+                timeout=120,
             )
             raw = response.choices[0].message.content
             # Validate universal JSON format

@@ -115,6 +115,7 @@ RULES:
 - ONE pitch only
 - ONE accent only (or omit)
 - 1-3 style traits max
+- MAKE SIMILAR CHARACTERS DISTINCT: If multiple characters share the same gender and age, give them DIFFERENT pitch and style traits so their voices sound unique
 
 Examples:
 {{"gender": "male", "age": "middle-aged", "pitch": "moderate", "style": "smooth, aristocratic"}}
@@ -347,7 +348,8 @@ def extract_character_dialogue(chapters_dir: Path, character_name: str, max_exam
 
 
 def build_character_context(characters: List[str], chapter_texts: List[str], chapter_files: List[Path] = [],
-                           chapters_dir: Optional[Path] = None, wiki_url_template: str = "") -> Tuple[str, List[str]]:
+                            chapters_dir: Optional[Path] = None, wiki_url_template: str = "",
+                            all_characters: Optional[List[str]] = None) -> Tuple[str, List[str]]:
     """Build context string with character names and their actual dialogue.
 
     Args:
@@ -356,6 +358,7 @@ def build_character_context(characters: List[str], chapter_texts: List[str], cha
         chapter_files: List of chapter file paths (deprecated, kept for compatibility)
         chapters_dir: Path to chapters directory (preferred method)
         wiki_url_template: Optional URL template for wiki lookup (with {name} placeholder)
+        all_characters: Optional list of ALL characters being described (for differentiation)
 
     Returns:
         Tuple of (context string, list of chapter-based dialogue messages)
@@ -363,6 +366,12 @@ def build_character_context(characters: List[str], chapter_texts: List[str], cha
     context = "Characters to describe:\n"
     for char in characters:
         context += f"{char}\n"
+
+    if all_characters and len(all_characters) > 1:
+        context += "\nOther characters in the book (make this character's voice distinct from these):\n"
+        for char in all_characters:
+            if char not in characters:
+                context += f"{char}\n"
 
     # Build character-specific context using actual dialogue from map files
     context = "Character dialogue examples from the book:\n"
@@ -637,7 +646,8 @@ def describe_characters_shared(
 
             context_result = build_character_context(
                 [character], chapter_texts, chapter_files,
-                chapters_dir=Path(output_dir), wiki_url_template=wiki_url_template
+                chapters_dir=Path(output_dir), wiki_url_template=wiki_url_template,
+                all_characters=canonical_characters
             )
             context = context_result[0]
             chapter_messages = context_result[1] if len(context_result) > 1 else []
@@ -679,7 +689,8 @@ def describe_characters_shared(
 
             context_result = build_character_context(
                 [character], chapter_texts, chapter_files,
-                chapters_dir=Path(output_dir), wiki_url_template=wiki_url_template
+                chapters_dir=Path(output_dir), wiki_url_template=wiki_url_template,
+                all_characters=canonical_characters
             )
             context = context_result[0]
             chapter_messages = context_result[1] if len(context_result) > 1 else []

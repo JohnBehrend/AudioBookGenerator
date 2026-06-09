@@ -107,7 +107,7 @@ CRITICAL: Output MUST be a single JSON object with these exact keys:
 - "pitch": "very low", "low", "moderate", "high", or "very high"
 - "accent": (optional) "american", "british", "australian", "canadian", "indian", "chinese", "korean", "japanese", "portuguese", "russian", or omit if not applicable
 - "style": (optional) distinctive traits like "raspy", "gravelly", "smooth", "breathy", "nasal", "booming", "whispery", "hoarse", "metallic", "guttural", "warm", "cold", "aristocratic", "streetwise", "scholarly", "rural", etc.
-- "description": A short natural language phrase describing how this character speaks, suitable for use in a voice prompt. Format: "{adjective} {gender} speaks {manner}". Examples: "a warm middle-aged man speaks calmly", "a nervous young woman speaks quickly", "an arrogant young man speaks with a British accent"
+- "description": A detailed natural language paragraph (2-4 sentences) describing how this character speaks. Include their personality, emotional state, social class, relationship to other characters, and any distinctive speech patterns. This is used directly in voice generation prompts, so be specific and vivid. Example: "A warm middle-aged man with a gentle, measured cadence. He speaks with quiet authority and a hint of weariness, his tone suggesting years of experience and patience."
 
 RULES:
 - Output ONLY the JSON object, nothing else
@@ -120,11 +120,11 @@ RULES:
 - MAKE SIMILAR CHARACTERS DISTINCT: If multiple characters share the same gender and age, give them DIFFERENT pitch and style traits so their voices sound unique
 
 Examples:
-{{"gender": "male", "age": "middle-aged", "pitch": "moderate", "style": "smooth, aristocratic", "description": "a smooth middle-aged aristocrat speaks calmly"}}
-{{"gender": "female", "age": "young adult", "pitch": "high", "accent": "british", "style": "breathy, warm", "description": "a warm young woman speaks breathily with a British accent"}}
-{{"gender": "male", "age": "elderly", "pitch": "very low", "style": "gravelly, raspy", "description": "a gravelly old man speaks slowly"}}
-{{"gender": "female", "age": "young adult", "pitch": "moderate", "accent": "american", "description": "a cheerful young woman speaks with an American accent"}}
-{{"gender": "male", "age": "young adult", "pitch": "high", "style": "thin, nervous", "description": "a nervous young man speaks quickly"}}
+{{"gender": "male", "age": "middle-aged", "pitch": "moderate", "style": "smooth, aristocratic", "description": "A smooth middle-aged aristocrat with a calm, measured cadence. He carries himself with quiet authority and speaks with the polished ease of someone accustomed to high society. His tone is warm but restrained."}}
+{{"gender": "female", "age": "young adult", "pitch": "high", "accent": "british", "style": "breathy, warm", "description": "A warm young woman with a breathy, inviting voice. She speaks with genuine kindness and a touch of British refinement. Her tone is cheerful and open, suggesting a nurturing personality."}}
+{{"gender": "male", "age": "elderly", "pitch": "very low", "style": "gravelly, raspy", "description": "A gravelly old man whose voice carries the weight of age and hardship. He speaks slowly and deliberately, each word measured. His tone is rough but not unkind."}}
+{{"gender": "female", "age": "young adult", "pitch": "moderate", "accent": "american", "description": "A cheerful young woman with a bright, energetic voice. She speaks with enthusiasm and an American accent, her tone suggesting confidence and warmth."}}
+{{"gender": "male", "age": "young adult", "pitch": "high", "style": "thin, nervous", "description": "A nervous young man with a thin, anxious voice. He speaks quickly and with uncertainty, his tone betraying insecurity and a lack of confidence."}}
 
 For group characters like "crowd", "voices", or "people", pick ONE representative voice.
 """

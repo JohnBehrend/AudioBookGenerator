@@ -382,6 +382,13 @@ def build_character_context(characters: List[str], chapter_texts: List[str], cha
     if chapters_dir and chapters_dir.is_dir():
         for char in characters:
             if char == "narrator":
+                # Narrator has no dialogue - use chapter text excerpts for context
+                context += f"\n--- {char} ---\n(The narrator provides the narration for this book)\n"
+                chapter_messages.append("The narrator provides the narration for this book. Here are some narration excerpts from the chapters:\n")
+                for f in sorted(chapters_dir.glob("chapter_*.txt"))[:3]:
+                    lines = f.read_text().split("\n")
+                    narration = [l for l in lines if not l.strip().startswith('"')]
+                    chapter_messages.append(f"From {f.name}:\n" + "\n".join(narration[:5]))
                 continue
             dialogue_examples = extract_character_dialogue(chapters_dir, char, max_examples=None)
             if dialogue_examples:
@@ -418,15 +425,26 @@ def _get_description_prompt(voice_engine: Optional[str]) -> str:
 def _parse_universal_description(raw: str) -> Optional[Dict[str, str]]:
     """Parse and validate a universal JSON description.
 
+    Handles JSON embedded in prose, markdown code blocks, or plain JSON.
     Returns dict with keys 'gender', 'age', 'pitch', 'accent', 'style' or None if invalid.
     """
     try:
         text = raw.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text
-            if text.endswith("```"):
-                text = text[:-3]
-        obj = json.loads(text)
+        # Try direct parse first
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError:
+            # Try extracting JSON from markdown code block
+            if "```" in text:
+                text = text.split("\n", 1)[1] if "\n" in text else text
+                if text.endswith("```"):
+                    text = text[:-3]
+            # Try finding JSON object anywhere in the text
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            if start >= 0 and end > start:
+                text = text[start:end]
+            obj = json.loads(text)
         gender = obj.get("gender", "").lower()
         age = obj.get("age", "").lower()
         pitch = obj.get("pitch", "moderate").lower()

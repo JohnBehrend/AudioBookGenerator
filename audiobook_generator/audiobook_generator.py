@@ -1748,7 +1748,7 @@ def main():
     parser.add_argument("--whisper-concurrency", type=int, default=1, help="Number of concurrent Whisper models for validation (default: 1)")
     parser.add_argument("--whisper-fast", action="store_true", help="Use faster Whisper settings (medium model, beam_size=3)")
     parser.add_argument("--gpus", nargs="+", default=None, help="GPU devices to use (e.g., --gpus cuda:0 cuda:1)")
-    parser.add_argument("--use-chunkformer", action="store_true", help="Enable ChunkFormer voice validation (gender/emotion/dialect/age classification)")
+    parser.add_argument("--skip-chunkformer", action="store_true", help="Skip ChunkFormer voice validation (gender/emotion/dialect/age classification)")
 
     args = parser.parse_args()
 
@@ -1931,7 +1931,7 @@ def main():
                 gpus=args.gpus,
                 whisper_concurrency=args.whisper_concurrency,
                 whisper_fast=args.whisper_fast,
-                use_chunkformer=args.use_chunkformer,
+                    use_chunkformer=not args.skip_chunkformer,
             )
             print(result)
         else:
@@ -2015,7 +2015,7 @@ def main():
                     seed_characters=load_seed_characters(args.seed_voice_map),
                     voice_engine=args.tts_engine,
                     validate=False,
-                    use_chunkformer=args.use_chunkformer,
+                use_chunkformer=not args.skip_chunkformer,
                     seed_clone_fallback_engines=_fallback_engines,
                 )
                 print(result_msg)

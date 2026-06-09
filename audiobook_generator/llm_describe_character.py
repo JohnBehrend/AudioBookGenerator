@@ -98,37 +98,32 @@ BAD Examples (do NOT use):
 - (male, old) (only basic ingredient, missing texture and vividness)
 """
 
-# Dramabox format prompt - concise, direct descriptions with gender first
-CHARACTER_DESCRIPTION_PROMPT_DRAMABOX = """You are a voice director creating voice profiles for an AI voice generator. Output MUST be valid JSON.
+# Universal JSON format prompt - structured output that any engine can parse
+CHARACTER_DESCRIPTION_PROMPT_UNIVERSAL = """You are an expert voice actor. Create voice profiles as JSON for TTS synthesis.
 
-CRITICAL RULES:
-- Output ONLY a JSON object with three keys: "gender", "age", "voice"
-- "gender" MUST be exactly "male" or "female"
-- "age" MUST be exactly one of: "young", "middle-aged", "old"
-- "voice" is a short description (10-20 words) with voice quality and TWO distinctive traits
-- Every character must sound distinct — avoid generic descriptions
-- Use specific voice qualities: raspy, nasal, gravelly, reedy, booming, whispery, hoarse, metallic, breathy, guttural, squeaky, muffled, cracked, slurred, monotone, sing-song, lisping, stuttering, wheezy, croaky, throaty, thin, smoky, silken, oily, rough, smooth, jagged, soft, harsh, warm, cold, boyish, girlish, childlike, mature, weathered, refined, crude, educated, uneducated, foreign, local, aristocratic, working-class, military, scholarly, streetwise, rural, urban
+CRITICAL: Output MUST be a single JSON object with these exact keys:
+- "gender": "male" or "female"
+- "age": "child", "teenager", "young adult", "middle-aged", or "elderly"
+- "pitch": "very low", "low", "moderate", "high", or "very high"
+- "accent": (optional) "american", "british", "australian", "canadian", "indian", "chinese", "korean", "japanese", "portuguese", "russian", or omit if not applicable
+- "style": (optional) distinctive traits like "raspy", "gravelly", "smooth", "breathy", "nasal", "booming", "whispery", "hoarse", "metallic", "guttural", "warm", "cold", "aristocratic", "streetwise", "scholarly", "rural", etc.
 
-FORMAT:
-{{"gender": "male", "age": "young", "voice": "thin reedy voice, squeaky and nervous"}}
+RULES:
+- Output ONLY the JSON object, nothing else
+- ONE gender only (male OR female)
+- ONE age only
+- ONE pitch only
+- ONE accent only (or omit)
+- 1-3 style traits max
 
-Good Examples:
-- {{"gender": "male", "age": "middle-aged", "voice": "deep gravelly baritone, coldly arrogant with a metallic edge"}}
-- {{"gender": "female", "age": "young", "voice": "bright clear soprano, breathy and sing-song"}}
-- {{"gender": "male", "age": "old", "voice": "rough raspy low voice, wheezy and guttural"}}
-- {{"gender": "female", "age": "middle-aged", "voice": "warm husky alto, nasal and monotone"}}
-- {{"gender": "male", "age": "young", "voice": "smooth mid-range tenor, lisping and oily"}}
-- {{"gender": "female", "age": "old", "voice": "sharp nasal voice, harsh and croaky"}}
-- {{"gender": "male", "age": "young", "voice": "thin reedy voice, squeaky and nervous"}}
-- {{"gender": "male", "age": "old", "voice": "booming bass, slurred and smoky"}}
-- {{"gender": "female", "age": "middle-aged", "voice": "silken alto, whispery and refined"}}
-- {{"gender": "male", "age": "middle-aged", "voice": "cracked baritone, jagged and streetwise"}}
+Examples:
+{{"gender": "male", "age": "middle-aged", "pitch": "moderate", "style": "smooth, aristocratic"}}
+{{"gender": "female", "age": "young adult", "pitch": "high", "accent": "british", "style": "breathy, warm"}}
+{{"gender": "male", "age": "elderly", "pitch": "very low", "style": "gravelly, raspy"}}
+{{"gender": "female", "age": "young adult", "pitch": "moderate", "accent": "american"}}
+{{"gender": "male", "age": "young adult", "pitch": "high", "style": "thin, nervous"}}
 
-BAD Examples (do NOT use):
-- {{"gender": "male", "age": "30s", "voice": "deep baritone"}} (age must be young/middle-aged/old)
-- {{"gender": "male", "age": "late teens", "voice": "deep baritone"}} (age must be young/middle-aged/old)
-- "Male, middle-aged, deep baritone" (must be JSON, not text)
-- {{"gender": "male", "age": "young", "voice": "deep baritone, commanding"}} (too generic)
+For group characters like "crowd", "voices", or "people", pick ONE representative voice.
 """
 
 
@@ -405,25 +400,14 @@ def build_character_context(characters: List[str], chapter_texts: List[str], cha
 
 
 def _get_description_prompt(voice_engine: Optional[str]) -> str:
-    """Get the appropriate character description prompt based on voice engine.
-
-    Args:
-        voice_engine: TTS engine name ('vox', 'dramabox', or other)
-
-    Returns:
-        Appropriate system prompt string
-    """
-    if voice_engine == "vox":
-        return CHARACTER_DESCRIPTION_PROMPT_VOX
-    if voice_engine == "dramabox":
-        return CHARACTER_DESCRIPTION_PROMPT_DRAMABOX
-    return CHARACTER_DESCRIPTION_PROMPT_OMNI
+    """Get the character description prompt. All engines use universal JSON format."""
+    return CHARACTER_DESCRIPTION_PROMPT_UNIVERSAL
 
 
-def _parse_dramabox_description(raw: str) -> Optional[Dict[str, str]]:
-    """Parse and validate a Dramabox JSON description.
+def _parse_universal_description(raw: str) -> Optional[Dict[str, str]]:
+    """Parse and validate a universal JSON description.
 
-    Returns dict with keys 'gender', 'age', 'voice' or None if invalid.
+    Returns dict with keys 'gender', 'age', 'pitch', 'accent', 'style' or None if invalid.
     """
     try:
         text = raw.strip()
@@ -434,25 +418,59 @@ def _parse_dramabox_description(raw: str) -> Optional[Dict[str, str]]:
         obj = json.loads(text)
         gender = obj.get("gender", "").lower()
         age = obj.get("age", "").lower()
-        voice = obj.get("voice", "").strip()
+        pitch = obj.get("pitch", "moderate").lower()
+        accent = obj.get("accent", "").lower()
+        style = obj.get("style", "")
         if gender not in ("male", "female"):
             return None
-        if age not in ("young", "middle-aged", "old"):
+        if age not in ("child", "teenager", "young adult", "middle-aged", "elderly", "young", "middle-aged", "old"):
             return None
-        if not voice:
-            return None
-        return {"gender": gender, "age": age, "voice": voice}
+        return {"gender": gender, "age": age, "pitch": pitch, "accent": accent, "style": style}
     except (json.JSONDecodeError, AttributeError):
         return None
 
 
-def _dramabox_description_to_prompt(parsed: Dict[str, str]) -> str:
-    """Convert parsed JSON description to Dramabox voice prompt string."""
-    return f"{parsed['gender'].capitalize()}, {parsed['age']}, {parsed['voice']}"
+def _universal_description_to_omni(parsed: Dict[str, str]) -> str:
+    """Convert universal JSON description to OmniVoice comma-separated format."""
+    parts = [parsed["gender"], parsed["age"]]
+    pitch_map = {"very low": "very low pitch", "low": "low pitch", "moderate": "moderate pitch", "high": "high pitch", "very high": "very high pitch"}
+    pitch = pitch_map.get(parsed.get("pitch", "moderate"), "moderate pitch")
+    parts.append(pitch)
+    if parsed.get("accent"):
+        accent_map = {"american": "american accent", "british": "british accent", "australian": "australian accent", "canadian": "canadian accent", "indian": "indian accent", "chinese": "chinese accent", "korean": "korean accent", "japanese": "japanese accent", "portuguese": "portuguese accent", "russian": "russian accent"}
+        accent = accent_map.get(parsed["accent"], parsed["accent"])
+        parts.append(accent)
+    return ", ".join(parts)
+
+
+def _universal_description_to_dramabox(parsed: Dict[str, str]) -> str:
+    """Convert universal JSON description to Dramabox prompt format."""
+    parts = [parsed["gender"], parsed["age"]]
+    if parsed.get("pitch"):
+        parts.append(parsed["pitch"])
+    if parsed.get("accent"):
+        parts.append(parsed["accent"])
+    if parsed.get("style"):
+        parts.extend(s.strip() for s in parsed["style"].split(","))
+    return ", ".join(parts)
+
+
+def _universal_description_to_vox(parsed: Dict[str, str]) -> str:
+    """Convert universal JSON description to VoxCPM format."""
+    parts = [parsed["gender"], parsed["age"]]
+    if parsed.get("pitch"):
+        parts.append(parsed["pitch"])
+    if parsed.get("style"):
+        parts.extend(s.strip() for s in parsed["style"].split(","))
+    if parsed.get("accent"):
+        parts.append(parsed["accent"])
+    return f"({', '.join(parts)})"
 
 
 def describe_character(client: OpenAI, model: str, character: str, context: str, chapter_messages: Optional[List[str]] = None, voice_engine: Optional[str] = None, max_retries: int = 3) -> str:
     """Ask the LLM to describe a single character.
+
+    Returns the raw JSON string. Engine adapters convert to their format.
 
     Args:
         client: OpenAI client instance
@@ -460,8 +478,8 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
         character: Character name to describe
         context: Character description context string
         chapter_messages: Optional list of chapter-based dialogue messages
-        voice_engine: TTS engine for voice generation ('omni', 'vox', etc.) - determines prompt format
-        max_retries: Max retries for Dramabox JSON validation
+        voice_engine: TTS engine (unused - all engines use same JSON format)
+        max_retries: Max retries for failed LLM calls
     """
     system_prompt = _get_description_prompt(voice_engine)
 
@@ -476,7 +494,7 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
             messages.append({"role": "user", "content": chapter_msg})
 
     # Final user message with the character to describe and summary context
-    messages.append({"role": "user", "content": f"Describe this character in detail: {character} \n\nContext:\n{context}"})
+    messages.append({"role": "user", "content": f"Describe this character: {character} \n\nContext:\n{context}"})
 
     for attempt in range(max_retries):
         try:
@@ -485,15 +503,14 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
                 messages=messages
             )
             raw = response.choices[0].message.content
-            # Validate Dramabox JSON format
-            if voice_engine == "dramabox":
-                parsed = _parse_dramabox_description(raw)
-                if parsed:
-                    return _dramabox_description_to_prompt(parsed)
-                # Retry with feedback
-                messages.append({"role": "assistant", "content": raw})
-                messages.append({"role": "user", "content": "Invalid output. Gender must be 'male' or 'female', age must be 'young', 'middle-aged', or 'old'. Return valid JSON."})
-                continue
+            # Validate universal JSON format
+            parsed = _parse_universal_description(raw)
+            if parsed:
+                return raw  # Return raw JSON for storage
+            # Retry with feedback
+            messages.append({"role": "assistant", "content": raw})
+            messages.append({"role": "user", "content": "Invalid output. Gender must be 'male' or 'female', age must be 'child', 'teenager', 'young adult', 'middle-aged', or 'elderly'. Return valid JSON."})
+            continue
             return raw
         except Exception as e:
             if attempt == max_retries - 1:

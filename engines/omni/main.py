@@ -36,7 +36,57 @@ def probe() -> None:
 
 
 def convert_description_to_instruct(description: str) -> str:
-    """Convert a voice description to OmniVoice instruct format."""
+    """Convert a voice description to OmniVoice instruct format.
+
+    Accepts either:
+    - Universal JSON: {"gender": "male", "age": "middle-aged", ...}
+    - Legacy comma-separated: "male, middle-aged, moderate pitch"
+    """
+    # Try parsing as JSON first
+    try:
+        text = description.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text
+            if text.endswith("```"):
+                text = text[:-3]
+        obj = json.loads(text)
+        # Convert from universal JSON to OmniVoice format
+        parts = []
+        gender = obj.get("gender", "").lower()
+        if gender in ("male", "female"):
+            parts.append(gender)
+
+        age = obj.get("age", "").lower()
+        age_map = {"child": "child", "teenager": "teenager", "young adult": "young adult", "young": "young adult", "middle-aged": "middle-aged", "middle aged": "middle-aged", "elderly": "elderly", "old": "elderly"}
+        if age in age_map:
+            parts.append(age_map[age])
+
+        pitch = obj.get("pitch", "moderate").lower()
+        pitch_map = {"very low": "very low pitch", "low": "low pitch", "moderate": "moderate pitch", "high": "high pitch", "very high": "very high pitch"}
+        if pitch in pitch_map:
+            parts.append(pitch_map[pitch])
+
+        accent = obj.get("accent", "").lower()
+        accent_map = {"american": "american accent", "british": "british accent", "australian": "australian accent", "canadian": "canadian accent", "indian": "indian accent", "chinese": "chinese accent", "korean": "korean accent", "japanese": "japanese accent", "portuguese": "portuguese accent", "russian": "russian accent"}
+        if accent in accent_map:
+            parts.append(accent_map[accent])
+
+        style = obj.get("style", "")
+        if style:
+            if style.lower() == "whisper":
+                parts.append("whisper")
+
+        # Repeat gender and age for emphasis
+        if gender:
+            parts.append(gender)
+        if age in age_map:
+            parts.append(age_map[age])
+
+        return ", ".join(parts)
+    except (json.JSONDecodeError, AttributeError):
+        pass
+
+    # Legacy comma-separated format
     instruct = description.replace(".", ",")
     parts = [p.strip().lower() for p in instruct.split(",") if p.strip()]
 

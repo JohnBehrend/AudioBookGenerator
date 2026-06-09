@@ -1421,23 +1421,9 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     descriptions_exist = descriptions_file.exists()
 
     # Check if voice engine changed (for resume mode)
+    # Note: descriptions are engine-agnostic text, so we don't force regeneration
+    # on engine change anymore. Only regenerate if explicitly requested.
     force_regenerate_descriptions = False
-    if resume and descriptions_exist:
-        metadata_file = state.output_dir / "description_metadata.json"
-        if metadata_file.exists():
-            with open(metadata_file, "r", encoding="utf-8") as mf:
-                metadata = json.load(mf)
-                old_voice_engine = metadata.get("voice_engine", "omni")
-                if old_voice_engine != voice_engine:
-                    force_regenerate_descriptions = True
-                    if verbose:
-                        print(f"[STAGE 3] Voice engine changed from '{old_voice_engine}' to '{voice_engine}' - regenerating descriptions")
-        else:
-            # No metadata file - assume omni for backwards compatibility
-            if voice_engine != "omni":
-                force_regenerate_descriptions = True
-                if verbose:
-                    print(f"[STAGE 3] No metadata file found, voice engine is '{voice_engine}' - regenerating descriptions")
 
     if resume and descriptions_exist and not force_regenerate_descriptions:
         if verbose:

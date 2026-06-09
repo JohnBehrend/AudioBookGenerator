@@ -35,8 +35,49 @@ def probe() -> None:
 def convert_description_to_prompt(description: str, text: str) -> str:
     """Convert a voice description and text to Dramabox prompt format.
 
+    Accepts either:
+    - Universal JSON: {"gender": "male", "age": "middle-aged", ...}
+    - Legacy comma-separated: "male, middle-aged, moderate pitch"
+
     Dramabox expects: <speaker description>, "<dialogue>"
     """
+    # Try parsing as JSON first
+    try:
+        raw = description.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw
+            if raw.endswith("```"):
+                raw = raw[:-3]
+        obj = json.loads(raw)
+        # Convert from universal JSON to Dramabox format
+        parts = []
+        gender = obj.get("gender", "").lower()
+        if gender in ("male", "female"):
+            parts.append(gender)
+
+        age = obj.get("age", "").lower()
+        age_map = {"child": "child", "teenager": "young", "young adult": "young", "young": "young", "middle-aged": "middle-aged", "middle aged": "middle-aged", "elderly": "old", "old": "old"}
+        if age in age_map:
+            parts.append(age_map[age])
+
+        pitch = obj.get("pitch", "").lower()
+        if pitch:
+            parts.append(pitch)
+
+        accent = obj.get("accent", "").lower()
+        if accent:
+            parts.append(accent)
+
+        style = obj.get("style", "")
+        if style:
+            parts.extend(s.strip() for s in style.split(","))
+
+        speaker = ", ".join(parts)
+        return f'A {speaker} speaks, "{text}"'
+    except (json.JSONDecodeError, AttributeError):
+        pass
+
+    # Legacy comma-separated format
     speaker = description.strip().rstrip(".")
     return f'A {speaker} speaks, "{text}"'
 

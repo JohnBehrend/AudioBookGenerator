@@ -194,7 +194,6 @@ class MockTTSEngine:
         voice_path: Optional[str],
         output_path: str,
         device: str,
-        validation_model: Any,
         verbose: bool = False,
     ) -> bool:
         """Mock line generation - writes silence audio.
@@ -204,7 +203,6 @@ class MockTTSEngine:
             voice_path: Path to voice reference (ignored)
             output_path: Where to write the output audio
             device: Device string (ignored)
-            validation_model: Validation model (ignored)
             verbose: Print verbose output
 
         Returns:

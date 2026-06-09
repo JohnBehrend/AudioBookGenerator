@@ -274,7 +274,6 @@ class TestPipelineStageIntegration:
             voice_path="/tmp/voice.wav",
             output_path=output_path,
             device="cpu",
-            validation_model=None,
         )
 
         assert success is True

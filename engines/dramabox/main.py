@@ -49,7 +49,17 @@ def convert_description_to_prompt(description: str, text: str) -> str:
             if raw.endswith("```"):
                 raw = raw[:-3]
         obj = json.loads(raw)
-        # Convert from universal JSON to Dramabox format
+
+        # Use natural language description if available
+        desc = obj.get("description", "").strip()
+        if desc:
+            # Remove leading article if present for cleaner prompt
+            desc_lower = desc.lower()
+            if desc_lower.startswith("a ") or desc_lower.startswith("an "):
+                desc = desc[2:]
+            return f'A {desc}, "{text}"'
+
+        # Fallback: build from structured fields
         parts = []
         gender = obj.get("gender", "").lower()
         if gender in ("male", "female"):

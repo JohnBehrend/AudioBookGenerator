@@ -107,6 +107,7 @@ CRITICAL: Output MUST be a single JSON object with these exact keys:
 - "pitch": "very low", "low", "moderate", "high", or "very high"
 - "accent": (optional) "american", "british", "australian", "canadian", "indian", "chinese", "korean", "japanese", "portuguese", "russian", or omit if not applicable
 - "style": (optional) distinctive traits like "raspy", "gravelly", "smooth", "breathy", "nasal", "booming", "whispery", "hoarse", "metallic", "guttural", "warm", "cold", "aristocratic", "streetwise", "scholarly", "rural", etc.
+- "description": A short natural language phrase describing how this character speaks, suitable for use in a voice prompt. Format: "{adjective} {gender} speaks {manner}". Examples: "a warm middle-aged man speaks calmly", "a nervous young woman speaks quickly", "an arrogant young man speaks with a British accent"
 
 RULES:
 - Output ONLY the JSON object, nothing else
@@ -115,14 +116,15 @@ RULES:
 - ONE pitch only
 - ONE accent only (or omit)
 - 1-3 style traits max
+- "description" MUST be a natural language phrase, not a list of attributes
 - MAKE SIMILAR CHARACTERS DISTINCT: If multiple characters share the same gender and age, give them DIFFERENT pitch and style traits so their voices sound unique
 
 Examples:
-{{"gender": "male", "age": "middle-aged", "pitch": "moderate", "style": "smooth, aristocratic"}}
-{{"gender": "female", "age": "young adult", "pitch": "high", "accent": "british", "style": "breathy, warm"}}
-{{"gender": "male", "age": "elderly", "pitch": "very low", "style": "gravelly, raspy"}}
-{{"gender": "female", "age": "young adult", "pitch": "moderate", "accent": "american"}}
-{{"gender": "male", "age": "young adult", "pitch": "high", "style": "thin, nervous"}}
+{{"gender": "male", "age": "middle-aged", "pitch": "moderate", "style": "smooth, aristocratic", "description": "a smooth middle-aged aristocrat speaks calmly"}}
+{{"gender": "female", "age": "young adult", "pitch": "high", "accent": "british", "style": "breathy, warm", "description": "a warm young woman speaks breathily with a British accent"}}
+{{"gender": "male", "age": "elderly", "pitch": "very low", "style": "gravelly, raspy", "description": "a gravelly old man speaks slowly"}}
+{{"gender": "female", "age": "young adult", "pitch": "moderate", "accent": "american", "description": "a cheerful young woman speaks with an American accent"}}
+{{"gender": "male", "age": "young adult", "pitch": "high", "style": "thin, nervous", "description": "a nervous young man speaks quickly"}}
 
 For group characters like "crowd", "voices", or "people", pick ONE representative voice.
 """

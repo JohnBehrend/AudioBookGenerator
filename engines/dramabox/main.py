@@ -187,6 +187,7 @@ def run_worker(device: str) -> None:
                 waveform, sr = model.generate(
                     prompt=prompt,
                     gen_duration=gen_duration,
+                    seed=hash(character_name) % (2**31),
                 )
 
                 if waveform is None or (hasattr(waveform, 'numel') and waveform.numel() == 0):
@@ -226,6 +227,7 @@ def run_worker(device: str) -> None:
                 waveform, sr = model.generate(
                     prompt=prompt,
                     voice_ref=voice_path,
+                    seed=hash(text + voice_path) % (2**31),
                 )
 
                 if waveform is None or (hasattr(waveform, 'numel') and waveform.numel() == 0):

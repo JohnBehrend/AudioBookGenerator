@@ -43,7 +43,8 @@ uv run python audiobook_generator.py <epub_file> [OPTIONS]
 # --verbose, -v        Print verbose output
 # --api-key KEY        LLM API key
 # --port PORT          LLM port
-# --tts-engine ENGINE  TTS engine: omni (default), vox, or dramabox
+# --tts-engine ENGINE  TTS engine: omni (default), dramabox, or vox
+# --voice-engine ENGINE  Voice generation engine: dramabox (default), omni, or vox
 # --device DEVICE      CUDA device (default: cuda)
 # --num-llm-attempts N Number of LLM attempts (default: 2)
 # --whisper-cpu        Run Whisper validation on CPU
@@ -95,14 +96,27 @@ uv sync
 - **OpenAI API** client for LLM operations
 - **ChunkFormer** for voice classification validation
 
-### TTS Engine: KugelAudio
+### TTS Engines
 
-The default TTS engine is KugelAudio, installed as a Python package dependency from GitHub:
+The pipeline supports multiple TTS engines in the `engines/` directory. Each engine is self-contained with its own `main.py` (glue code), `pyproject.toml`, and isolated virtual environment.
 
-- **Installation**: Automatically installed via `uv sync` (uses `pyproject.toml`)
-- **Version**: Pinned to commit `c2047edda01aa31e9472d29eac498881e907d628`
+**Available engines:**
+- **Omni** (`omni`) - Default TTS engine, downloads model from HuggingFace at runtime
+- **Dramabox** (`dramabox`) - Default voice generation engine, uses DramaBox as a git submodule
 
-The package is installed directly from the GitHub repository and requires no manual setup.
+**Engine setup:**
+```bash
+# Initialize submodules and build engine environments
+uv run python scripts/setup-engines.py
+```
+
+This runs `git submodule update --init --recursive` to fetch engine dependencies (e.g., DramaBox source), then creates isolated venvs for each engine.
+
+**Engine architecture:**
+- Only glue code (`main.py`, `pyproject.toml`) is committed to this repo
+- Engine source code lives in git submodules (e.g., `engines/dramabox/DramaBox/`)
+- Model weights are downloaded at runtime (HuggingFace, etc.)
+- Each engine runs as an isolated subprocess with its own venv
 
 ### Audio Processing
 
@@ -169,12 +183,10 @@ The pipeline uses an OpenAI-compatible API (LM Studio by default):
 
 ```
 AudioBookGenerator/
-├── audiobook_generator.py              # Main CLI entry point
 ├── audiobook_generator/
 │   ├── __init__.py                     # Package initialization
 │   ├── audiobook_generator.py          # Stage 5: Full audiobook TTS generation
 │   ├── config.py                       # Shared configuration
-│   ├── engines/                        # TTS engine abstraction
 │   ├── generate_voice_samples.py       # Stage 4: Voice sample generation
 │   ├── gradio_ui.py                    # Gradio web interface
 │   ├── llm_describe_character.py       # Stage 3: Character descriptions
@@ -184,7 +196,17 @@ AudioBookGenerator/
 │   ├── testing.py                      # Test utilities (MockLLMClient, etc.)
 │   ├── utils.py                        # Utility functions
 │   └── voice_mapper.py                 # Voice mapping logic
-└── tests/                              # Test suite (227 tests)
+├── engines/                            # TTS engines (glue code only)
+│   ├── omni/                           # OmniVoice engine
+│   │   ├── main.py                     # Worker process (glue code)
+│   │   └── pyproject.toml              # Engine dependencies
+│   └── dramabox/                       # DramaBox engine
+│       ├── main.py                     # Worker process (glue code)
+│       ├── pyproject.toml              # Engine dependencies
+│       └── DramaBox/                   # Git submodule -> resemble-ai/DramaBox
+├── scripts/
+│   └── setup-engines.py                # Initialize submodules + build envs
+└── tests/                              # Test suite
 ```
 
 ## Testing

@@ -326,7 +326,7 @@ def describe_characters_ui(
     pipeline_state: PipelineState,
     log_output: str,
     seed_voice_map: str = None,
-    voice_engine: str = "omni",
+    voice_engine: str = "dramabox",
     progress=gr.Progress()
 ) -> Tuple[str, PipelineState]:
     """Stage 3: Use LLM to describe characters."""
@@ -364,11 +364,11 @@ def describe_characters_ui(
             if existing_descriptions:
                 # Check if voice engine changed - if so, force regeneration
                 metadata_file = get_description_metadata_file()
-                old_voice_engine = "omni"  # Default for backwards compatibility
+                old_voice_engine = "dramabox"
                 if metadata_file and metadata_file.exists():
                     with open(metadata_file, "r", encoding="utf-8") as mf:
                         metadata = json.load(mf)
-                        old_voice_engine = metadata.get("voice_engine", "omni")
+                        old_voice_engine = metadata.get("voice_engine", "dramabox")
 
                 if old_voice_engine != voice_engine:
                     log_output += f"\nVoice engine changed from '{old_voice_engine}' to '{voice_engine}' - regenerating descriptions with new prompt format..."
@@ -484,10 +484,9 @@ def generate_voice_samples(
             return log_output, pipeline_state
         log_output += f"\nFound {num_characters} characters to process. (temp: {chapters_dir.parent})"
 
-        # Use provided voice_engine or default to omni
-
+        # Use provided voice_engine or default to dramabox
         if voice_engine is None:
-            voice_engine = "omni"
+            voice_engine = "dramabox"
 
         # Call generate_voice_samples from package
         progress(0, desc=f"Generating voice samples for {num_characters} characters with TTS engine '{voice_engine}'... (temp: {chapters_dir.parent})")

@@ -90,8 +90,9 @@ def run_worker(device: str) -> None:
     import os
 
     APP_DIR = Path(__file__).parent
-    sys.path.insert(0, str(APP_DIR / "ltx2"))
-    sys.path.insert(0, str(APP_DIR / "src"))
+    DRAMABOX_DIR = APP_DIR / "DramaBox"
+    sys.path.insert(0, str(DRAMABOX_DIR / "ltx2"))
+    sys.path.insert(0, str(DRAMABOX_DIR / "src"))
 
     import torch
     import soundfile as sf

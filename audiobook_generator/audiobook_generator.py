@@ -1100,7 +1100,7 @@ class PipelineState:
         self.character_descriptions = {}
         self.voice_map = {}
         self.selected_character = None
-        self.voice_engine = voice_engine or "omni"  # Default to omni for backwards compatibility
+        self.voice_engine = voice_engine or "dramabox"
 
     def load_chapter_maps(self):
         """Load all chapter map files from the chapters directory."""
@@ -1191,7 +1191,7 @@ class PipelineState:
 
 def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       verbose: bool = False, api_key: str = None, llm_port: str = None,
-                       voice_engine: str = "omni", tts_engine: str = "omni", turbo: bool = False,
+                        voice_engine: str = "dramabox", tts_engine: str = "omni", turbo: bool = False,
                       device: str = AUDIO_SETTINGS["default_device"], seed_voice_map: str = None,
                       num_llm_attempts: int = DEFAULTS["num_llm_attempts"],
                       resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
@@ -1725,7 +1725,7 @@ def main():
     parser.add_argument("--saved-temp-dir", help="Path to saved temp directory to restore from")
     parser.add_argument("--tts-engine", choices=["moss", "echo-tts", "omni", "vox", "dramabox"], help="TTS engine to use")
     parser.add_argument("--model", default=None, help="LLM model name (e.g., coder-model)")
-    parser.add_argument("--voice-engine", choices=["omni", "vox", "dramabox"], default="omni", help="Voice engine for character descriptions")
+    parser.add_argument("--voice-engine", choices=["omni", "vox", "dramabox"], default="dramabox", help="Voice engine for character descriptions")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     parser.add_argument("--resume", nargs="?", const=True, default=None, metavar="DIR",
                         help="Resume from existing output directory (use --output-dir or specify DIR)")

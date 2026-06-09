@@ -236,6 +236,7 @@ class MockTTSEngine:
         output_dir: Path,
         device: str,
         verbose: bool = False,
+        **kwargs,
     ) -> Tuple[bool, Optional[str], float]:
         """Mock voice sample generation.
 

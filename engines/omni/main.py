@@ -76,12 +76,6 @@ def convert_description_to_instruct(description: str) -> str:
             if style.lower() == "whisper":
                 parts.append("whisper")
 
-        # Repeat gender and age for emphasis
-        if gender:
-            parts.append(gender)
-        if age in age_map:
-            parts.append(age_map[age])
-
         return ", ".join(parts)
     except (json.JSONDecodeError, AttributeError):
         pass
@@ -133,12 +127,6 @@ def convert_description_to_instruct(description: str) -> str:
             mapped_parts.append(part)
         elif any(c in part for c in "河南陕西四川贵云南桂济石甘宁青岛东北话"):
             mapped_parts.append(part)
-
-    # Repeat gender and age at the end for emphasis (Omni struggles with these)
-    if gender_val:
-        mapped_parts.append(gender_val)
-    if age_val:
-        mapped_parts.append(age_val)
 
     return ", ".join(mapped_parts)
 

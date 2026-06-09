@@ -58,11 +58,31 @@ def setup_engine(engine_dir: Path) -> None:
         print(f"  WARNING: Verification failed: {result.stderr}")
 
 
+def init_submodules() -> None:
+    """Initialize and update git submodules for engine dependencies."""
+    print(f"\n{'='*60}")
+    print("Initializing engine submodules...")
+    print(f"{'='*60}")
+    result = subprocess.run(
+        ["git", "submodule", "update", "--init", "--recursive"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"  WARNING: Failed to update submodules: {result.stderr}", file=sys.stderr)
+    else:
+        print("  Submodules initialized successfully.")
+
+
 def main() -> None:
     """Main entry point."""
     if not ENGINES_DIR.exists():
         print(f"No engines directory found at {ENGINES_DIR}")
         sys.exit(1)
+
+    # Initialize submodules first (e.g., DramaBox source code)
+    init_submodules()
 
     engine_dirs = sorted(
         d for d in ENGINES_DIR.iterdir()
@@ -73,7 +93,7 @@ def main() -> None:
         print("No engines found. Create engine packages first.")
         sys.exit(1)
 
-    print(f"Found {len(engine_dirs)} engines:")
+    print(f"\nFound {len(engine_dirs)} engines:")
     for d in engine_dirs:
         print(f"  - {d.name}")
 

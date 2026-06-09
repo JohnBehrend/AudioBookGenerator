@@ -4,3 +4,6 @@
 [submodule "audiobook_generator/engines/echo_tts"]
 	path = audiobook_generator/engines/echo_tts
 	url = https://github.com/jordandare/echo-tts.git
+[submodule "engines/dramabox/DramaBox"]
+	path = engines/dramabox/DramaBox
+	url = https://github.com/resemble-ai/DramaBox.git

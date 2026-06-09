@@ -188,7 +188,7 @@ def generate_voice_samples(
     verbose: bool = False,
     progress=None,
     seed_characters: Dict[str, str] = None,
-    voice_engine: str = "omni",
+    voice_engine: str = "dramabox",
     force_regenerate: bool = False,
     validate: bool = False,
     engine=None,

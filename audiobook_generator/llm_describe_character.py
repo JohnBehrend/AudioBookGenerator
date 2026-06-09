@@ -511,7 +511,8 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
         try:
             response = client.chat.completions.create(
                 model=model,
-                messages=messages
+                messages=messages,
+                timeout=60,
             )
             raw = response.choices[0].message.content
             # Validate universal JSON format
@@ -521,8 +522,6 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
             # Retry with feedback
             messages.append({"role": "assistant", "content": raw})
             messages.append({"role": "user", "content": "Invalid output. Gender must be 'male' or 'female', age must be 'child', 'teenager', 'young adult', 'middle-aged', or 'elderly'. Return valid JSON."})
-            continue
-            return raw
         except Exception as e:
             if attempt == max_retries - 1:
                 return f"Error describing character: {e}"

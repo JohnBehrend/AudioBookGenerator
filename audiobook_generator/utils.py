@@ -577,7 +577,12 @@ def get_llm_client(api_key: str, port: str) -> OpenAI:
     if not hasattr(get_llm_client, '_cache'):
         get_llm_client._cache = {}
     if key not in get_llm_client._cache:
-        get_llm_client._cache[key] = OpenAI(base_url=f"http://localhost:{port}/v1", api_key=api_key)
+        from httpx import Timeout
+        get_llm_client._cache[key] = OpenAI(
+            base_url=f"http://localhost:{port}/v1",
+            api_key=api_key,
+            timeout=Timeout(connect=5.0, read=120, write=120, pool=5.0),
+        )
     return get_llm_client._cache[key]
 
 

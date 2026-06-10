@@ -16,7 +16,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
 from openai import OpenAI
 
-from .config import DEFAULTS, AUDIO_SETTINGS, VOICE_VALIDATION
+from .config import DEFAULTS, AUDIO_SETTINGS, VOICE_VALIDATION, LLM_SETTINGS
 
 # Import TTS submodule
 from tts import TTSEngine, get_engine_dir, list_engines, get_engine
@@ -45,34 +45,30 @@ class VoiceMapper:
         tts_engine: Optional[str] = None,
         duplicate_replacement_map: Optional[Dict[str, str]] = None,
         engine: Optional[Any] = None,
+        use_celebrity_voices: bool = False,
     ) -> None:
         """Initialize the VoiceMapper.
 
         Args:
-            output_dir: Directory to save/load voice samples and maps
-            device: Device to run TTS models ('cuda:0', 'cuda:1', etc.)
-            tts_engine: TTS engine to use ('moss', 'echo-tts', 'omni', 'vox', 'dramabox')
-                       Defaults to AUDIO_SETTINGS['default_tts_engine']
-            duplicate_replacement_map: Optional dict mapping duplicate character names to canonical names
-            engine: Optional pre-created TTS engine instance for injection (for testing/mocking)
+            output_dir: Output directory for voice files
+            device: CUDA device string
+            tts_engine: TTS engine name (omni, dramabox, etc.)
+            duplicate_replacement_map: Map of duplicate names to canonical names
+            engine: Optional pre-configured engine instance
+            use_celebrity_voices: If True, use celebrity voice references instead of generating samples
         """
-        self.output_dir = Path(output_dir)
+        self.output_dir = output_dir
         self.device = device
         self.tts_engine = tts_engine or AUDIO_SETTINGS["default_tts_engine"]
-        self.supported_extensions = AUDIO_SETTINGS.get("supported_audio_extensions", [".wav", ".mp3", ".flac"])
         self.duplicate_replacement_map = duplicate_replacement_map or {}
+        self.engine = engine
+        self.use_celebrity_voices = use_celebrity_voices
 
-        # State containers
-        self.voice_paths: Dict[str, str] = {}  # Cached voice file paths
-        self._cached_engine: Optional[Any] = None  # Cached TTS engine instance
+        # Voice paths cache
+        self.voice_paths: Dict[str, str] = {}
+        self._voice_map: Dict[str, Any] = {}
 
-        # Engine injection - allows mocking in tests
-        self._injected_engine: Optional[Any] = engine
-
-        # Create output directory if needed
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Load existing voice map if present
+        # Load existing voice map if available
         self._load_voice_map()
 
     def _load_voice_map(self) -> None:
@@ -455,6 +451,8 @@ class VoiceMapper:
         description: str,
         output_dir: Optional[str] = None,
         verbose: bool = False,
+        client: Optional[Any] = None,
+        model: str = "coder-model",
         **kwargs
     ) -> Tuple[bool, Optional[str], float]:
         """Generate a voice sample for a character using the configured TTS engine.
@@ -466,6 +464,8 @@ class VoiceMapper:
             description: Voice description from LLM
             output_dir: Output directory (defaults to self.output_dir)
             verbose: Print verbose output
+            client: Optional OpenAI client for celebrity matching
+            model: LLM model name for celebrity matching
             **kwargs: Additional arguments passed to the engine
 
         Returns:
@@ -473,6 +473,22 @@ class VoiceMapper:
         """
         if output_dir is None:
             output_dir = self.output_dir
+
+        # Use celebrity voice if enabled
+        if self.use_celebrity_voices and client:
+            from .celebrity_voices import build_celebrity_voice
+            if verbose:
+                print(f"    Matching celebrity voice for: {character_name}")
+            voice_path, metadata = build_celebrity_voice(
+                client=client,
+                model=model,
+                character=character_name,
+                description=description,
+                output_dir=str(output_dir),
+            )
+            if voice_path:
+                self.add_voice_path(character_name, voice_path)
+                return True, voice_path, 0.0
 
         engine = self.get_engine()
         # Inject static_voice_text from config if not already in kwargs

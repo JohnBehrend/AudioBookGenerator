@@ -1493,6 +1493,9 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 tts_engine=tts_engine,
                 use_chunkformer=True,
                 seed_clone_fallback_engines=_fallback_engines,
+                use_celebrity_voices=args.celebrity_voices,
+                llm_client=client,
+                llm_model=model,
             )
 
             if "Error" in result_msg or "failed" in result_msg.lower():
@@ -1730,6 +1733,7 @@ def main():
     parser.add_argument("--whisper-fast", action="store_true", help="Use faster Whisper settings (medium model, beam_size=3)")
     parser.add_argument("--gpus", nargs="+", default=None, help="GPU devices to use (e.g., --gpus cuda:0 cuda:1)")
     parser.add_argument("--skip-chunkformer", action="store_true", help="Skip ChunkFormer voice validation (gender/emotion/dialect/age classification)")
+    parser.add_argument("--celebrity-voices", action="store_true", help="Use celebrity voice references from YouTube instead of generating synthetic voices")
 
     args = parser.parse_args()
 

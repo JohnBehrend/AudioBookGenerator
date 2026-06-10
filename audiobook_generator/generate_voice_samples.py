@@ -196,6 +196,9 @@ def generate_voice_samples(
     use_chunkformer: bool = False,
     seed_clone_fallback_engines: List[str] = None,
     whisper_cpu: bool = True,
+    use_celebrity_voices: bool = False,
+    llm_client=None,
+    llm_model: str = "coder-model",
 ) -> Tuple[str, Dict[str, str]]:
     """Generate voice samples for characters via VoiceMapper.
 
@@ -497,7 +500,7 @@ def generate_voice_samples(
         # Create VoiceMapper once to cache the TTS model across all characters
         # Use tts_engine for voice generation (voice cloning), not voice_engine
         gen_engine = tts_engine or voice_engine
-        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=gen_engine, engine=engine)
+        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=gen_engine, engine=engine, use_celebrity_voices=use_celebrity_voices)
         max_tokens = 2048
 
         try:

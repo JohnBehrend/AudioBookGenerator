@@ -60,6 +60,7 @@ class VoiceMapper:
         self.output_dir = Path(output_dir)
         self.device = device
         self.tts_engine = tts_engine or AUDIO_SETTINGS["default_tts_engine"]
+        self.supported_extensions = AUDIO_SETTINGS.get("supported_audio_extensions", [".wav", ".mp3", ".flac"])
         self.duplicate_replacement_map = duplicate_replacement_map or {}
         self.engine = engine
         self.use_celebrity_voices = use_celebrity_voices

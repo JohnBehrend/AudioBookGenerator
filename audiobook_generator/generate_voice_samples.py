@@ -9,7 +9,7 @@ import sys
 import shutil
 import traceback
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from openai import OpenAI
 
 # Import config for default values

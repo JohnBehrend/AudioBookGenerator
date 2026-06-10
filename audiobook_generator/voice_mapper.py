@@ -57,7 +57,7 @@ class VoiceMapper:
             engine: Optional pre-configured engine instance
             use_celebrity_voices: If True, use celebrity voice references instead of generating samples
         """
-        self.output_dir = output_dir
+        self.output_dir = Path(output_dir)
         self.device = device
         self.tts_engine = tts_engine or AUDIO_SETTINGS["default_tts_engine"]
         self.duplicate_replacement_map = duplicate_replacement_map or {}

@@ -125,9 +125,9 @@ def download_celebrity_audio(
     ydl_opts = {
         "format": "bestaudio/best",
         "extractaudio": True,
-        "audioformat": "wav",
+        "audioformat": "mp3",
         "audioquality": 5,
-        "outtmpl": str(output_file),
+        "outtmpl": str(output_file.with_suffix(".mp3")),
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
@@ -135,23 +135,39 @@ def download_celebrity_audio(
         "retries": 2,
     }
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Search YouTube
-            search_url = f"ytsearch1:{search_query}"
-            info = ydl.extract_info(search_url, download=False)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # Search YouTube for short clips
+                search_url = f"ytsearch1:{search_query} under:1"
+                info = ydl.extract_info(search_url, download=False)
 
-            if not info or "title" not in info:
-                return None
+                if not info or "title" not in info:
+                    # Fallback: try without duration filter
+                    search_url = f"ytsearch1:{search_query}"
+                    info = ydl.extract_info(search_url, download=False)
 
-            # Download
-            ydl.download([search_url])
+                if not info or "title" not in info:
+                    return None
 
-            if not output_file.exists():
-                return None
+                # Download
+                ydl.download([search_url])
 
-            # Trim to max_duration if needed
-            trim_audio(str(output_file), max_duration)
+                mp3_file = output_file.with_suffix(".mp3")
+                if not mp3_file.exists():
+                    return None
+
+                # Convert to WAV
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", str(mp3_file), "-q:a", "0", str(output_file)],
+                    capture_output=True, timeout=30,
+                )
+                mp3_file.unlink(missing_ok=True)
+
+                if not output_file.exists():
+                    return None
+
+                # Trim to max_duration if needed
+                trim_audio(str(output_file), max_duration)
 
             return str(output_file)
 

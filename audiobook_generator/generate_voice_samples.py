@@ -120,7 +120,8 @@ def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_mo
 def generate_voice_sample(character_name: str, description: str, voice_mapper: VoiceMapper,
                           output_dir: str, verbose: bool = False,
                           validate: bool = False, validation_client: Optional[OpenAI] = None,
-                          max_new_tokens: int = None) -> Tuple[bool, Optional[str], float, bool, str]:
+                          max_new_tokens: int = None, llm_client: Optional[Any] = None,
+                          llm_model: str = "coder-model") -> Tuple[bool, Optional[str], float, bool, str]:
     """Generate a short voice sample for a character using VoiceDesign model via VoiceMapper.
 
     Uses voice design with an instruct prompt to generate speech
@@ -145,7 +146,9 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
             character_name=character_name,
             description=description,
             output_dir=output_dir,
-            verbose=verbose
+            verbose=verbose,
+            client=llm_client,
+            model=llm_model,
         )
 
         is_valid = True  # Default: no validation = accepted
@@ -549,7 +552,9 @@ def generate_voice_samples(
                             max_new_tokens=max_tokens,
                             verbose=False,
                             validate=False,
-                            validation_client=None
+                            validation_client=None,
+                            llm_client=llm_client,
+                            llm_model=llm_model,
                         )
                         generation_results[sample_num] = (sample_num, success, output_file, duration, validation_msg)
                     except Exception as e:

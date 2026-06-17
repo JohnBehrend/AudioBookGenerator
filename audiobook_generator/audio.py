@@ -408,12 +408,72 @@ def correct_voice_gender(
 # ============================================================================
 
 
+def remove_long_silences(audio_path: str, output_path: str, silence_threshold_db: int = -40, min_silence_duration_ms: int = 800, keep_buffer_ms: int = 200, verbose: bool = False) -> bool:
+    """Remove long silent gaps from audio while preserving speech.
+    
+    Detects silence using RMS amplitude and splits audio into speech segments,
+    rejoining them with short gaps to remove excessive pauses.
+    
+    Args:
+        audio_path: Path to the source audio file (.wav)
+        output_path: Path to write the processed audio (.wav)
+        silence_threshold_db: dBFS threshold below which audio is considered silent
+        min_silence_duration_ms: Minimum silence duration to trigger removal
+        keep_buffer_ms: Buffer to keep on either side of detected silence boundary
+        verbose: Print verbose output
+        
+    Returns:
+        True if processing was successful, False otherwise
+    """
+    import pydub
+    
+    try:
+        seg = pydub.AudioSegment.from_wav(audio_path)
+    except Exception as e:
+        if verbose:
+            print(f"  [Silence] Failed to load audio: {e}")
+        return False
+    
+    original_duration = len(seg)
+    
+    # Use pydub's split_on_silence to find speech segments
+    # Then rejoin with short gaps
+    try:
+        chunks = pydub.silence.split_on_silence(
+            seg,
+            min_silence_len=min_silence_duration_ms,
+            silence_thresh=silence_threshold_db,
+            keep_silence=keep_buffer_ms,
+        )
+    except Exception as e:
+        if verbose:
+            print(f"  [Silence] split_on_silence failed: {e}")
+        return False
+    
+    if not chunks:
+        return False
+    
+    # Join chunks with short gap (100ms of silence)
+    gap = pydub.AudioSegment.silent(duration=100, frame_rate=seg.frame_rate)
+    result = chunks[0]
+    for chunk in chunks[1:]:
+        result = result + gap + chunk
+    
+    result.export(output_path, format="wav")
+    
+    if verbose:
+        print(f"  [Silence] Reduced from {original_duration}ms to {len(result)}ms ({len(result)/original_duration*100:.0f}%)")
+    
+    return True
+
+
 def crop_to_ref_text(audio_path: str, output_path: str, ref_words: List[str], transcribed_words: List[str], start_times: List[float], end_times: List[float], verbose: bool = False) -> bool:
     """Crop audio to the span where reference words are spoken.
 
     Uses Whisper word-level timestamps to find the contiguous span of
     reference words in the transcription, then crops the audio to that range.
     Ensures the crop starts at a valid reference word, not at garbled prefix.
+    Also removes long silent pauses from the cropped audio.
 
     Args:
         audio_path: Path to the source audio file (.wav)
@@ -482,7 +542,34 @@ def crop_to_ref_text(audio_path: str, output_path: str, ref_words: List[str], tr
         print(f"  [Crop] Start at '{transcribed_words[actual_start]}' ({start_times[actual_start]:.2f}s), end at '{transcribed_words[best_end-1]}' ({end_times[best_end-1]:.2f}s)")
 
     cropped = seg[crop_start_ms:crop_end_ms]
-    cropped.export(output_path, format="wav")
+    
+    # Remove long silences from cropped audio
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_path = tmp.name
+    cropped.export(tmp_path, format="wav")
+    
+    silence_removed_path = output_path.replace(".wav", "_silence_removed.wav")
+    if remove_long_silences(tmp_path, silence_removed_path, verbose=verbose):
+        # Use the silence-removed version
+        import shutil
+        shutil.copy2(silence_removed_path, output_path)
+        try:
+            import os
+            os.remove(silence_removed_path)
+        except OSError:
+            pass
+    else:
+        # Fall back to original cropped version
+        cropped.export(output_path, format="wav")
+    
+    # Clean up temp file
+    try:
+        import os
+        os.remove(tmp_path)
+    except OSError:
+        pass
+    
     return True
 
 

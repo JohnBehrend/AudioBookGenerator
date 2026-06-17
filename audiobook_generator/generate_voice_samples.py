@@ -31,7 +31,7 @@ def _word_match_count(ref_words, transcribed_lower):
     return sum(1 for w in ref_words if re.search(r'\b' + re.escape(w) + r'\b', transcribed_lower))
 
 
-def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_model, verbose: bool = False) -> Tuple[bool, str]:
+def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_model, verbose: bool = False, skip_age: bool = False) -> Tuple[bool, str]:
     """Validate voice matches description using ChunkFormer model.
 
     Uses ChunkFormer to classify the voice (gender, age),
@@ -42,6 +42,7 @@ def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_mo
         description: Voice description from LLM
         chunkformer_model: Loaded ChunkFormer model
         verbose: Print debug output
+        skip_age: If True, skip age validation (for celebrity voices)
 
     Returns:
         Tuple of (is_valid, json_log_string)
@@ -68,7 +69,7 @@ def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_mo
             is_valid = False
             reasons.append(f"gender mismatch: expected {expected_gender}, got {predicted_gender}")
 
-        if expected_age is not None and predicted_age != expected_age:
+        if not skip_age and expected_age is not None and predicted_age != expected_age:
             is_valid = False
             reasons.append(f"age mismatch: expected {expected_age}, got {predicted_age}")
 
@@ -142,6 +143,12 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
         When validate=True, is_valid indicates if the voice passed validation.
     """
     try:
+        if verbose:
+            print(f"    [DEBUG] Generating voice for '{character_name}'")
+            print(f"    [DEBUG] Description: {description[:200] if description else 'None'}")
+            if voice_mapper.use_celebrity_voices:
+                print(f"    [DEBUG] Celebrity voices enabled - will attempt celebrity matching")
+
         success, output_file, duration = voice_mapper.generate_voice_sample(
             character_name=character_name,
             description=description,
@@ -150,6 +157,11 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
             client=llm_client,
             model=llm_model,
         )
+
+        if verbose:
+            print(f"    [DEBUG] Generation result: success={success}, output_file={output_file}, duration={duration}")
+            if output_file and os.path.exists(output_file):
+                print(f"    [DEBUG] Voice file confirmed exists: {output_file} ({os.path.getsize(output_file)} bytes)")
 
         is_valid = True  # Default: no validation = accepted
         validation_msg = ""
@@ -493,6 +505,29 @@ def generate_voice_samples(
         failed = []
         total_chars = len(descriptions)
 
+        # Safety check: verify no duplicate celebrities slipped through (LLM-level dedup is primary)
+        chars_no_celebrity = set()
+        if use_celebrity_voices:
+            used_celebrities = {}
+            for char_name, char_desc in descriptions.items():
+                try:
+                    desc_obj = json.loads(char_desc) if isinstance(char_desc, str) else char_desc
+                    if isinstance(desc_obj, dict):
+                        celeb = desc_obj.get("celebrity_voice", "")
+                        if celeb:
+                            if celeb in used_celebrities:
+                                # Should be rare now - LLM-level dedup prevents this
+                                desc_obj["celebrity_voice"] = ""
+                                descriptions[char_name] = json.dumps(desc_obj)
+                                chars_no_celebrity.add(char_name)
+                                print(f"  [DEDUP SAFETY] Removed duplicate celebrity '{celeb}' for '{char_name}' (already used by '{used_celebrities[celeb]}')")
+                            else:
+                                used_celebrities[celeb] = char_name
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+            if verbose and used_celebrities:
+                print(f"  [DEDUP] {len(used_celebrities)} unique celebrities across {total_chars} characters")
+
         if verbose:
             print("\n" + "=" * 60)
             print("NOTE: All voices speak the same static text from config.")
@@ -503,7 +538,8 @@ def generate_voice_samples(
         # Create VoiceMapper once to cache the TTS model across all characters
         # Use tts_engine for voice generation (voice cloning), not voice_engine
         gen_engine = tts_engine or voice_engine
-        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=gen_engine, engine=engine, use_celebrity_voices=use_celebrity_voices)
+        voice_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=gen_engine, engine=engine, use_celebrity_voices=use_celebrity_voices, whisper_model=vm)
+        no_celeb_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=gen_engine, engine=engine, use_celebrity_voices=False) if chars_no_celebrity else None
         max_tokens = 2048
 
         try:
@@ -537,7 +573,26 @@ def generate_voice_samples(
                         continue
 
                 # Generate samples sequentially until one passes validation
-                max_attempts = 3
+                max_attempts = 5 if use_celebrity_voices else 3
+
+                # Use non-celebrity mapper for deduplicated characters
+                char_has_celebrity = char_name not in chars_no_celebrity
+                effective_mapper = voice_mapper if char_has_celebrity else no_celeb_mapper
+
+                # Debug: print celebrity voice info from description
+                if verbose or use_celebrity_voices:
+                    try:
+                        desc_obj = json.loads(char_desc) if isinstance(char_desc, str) else char_desc
+                        if isinstance(desc_obj, dict):
+                            celeb = desc_obj.get("celebrity_voice", "")
+                            if celeb:
+                                print(f"    [DEBUG] Celebrity voice for '{char_name}': {celeb}")
+                            elif char_name in chars_no_celebrity:
+                                print(f"    [DEBUG] No celebrity_voice for '{char_name}' (dedup) - will use non-celebrity voice")
+                            elif use_celebrity_voices:
+                                print(f"    [DEBUG] No celebrity_voice field for '{char_name}' - will use LLM matching")
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
 
                 # Phase 1: Generate samples sequentially
                 generation_results = {}
@@ -547,15 +602,19 @@ def generate_voice_samples(
                         success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
                             character_name=_tmp_name,
                             description=char_desc,
-                            voice_mapper=voice_mapper,
+                            voice_mapper=effective_mapper,
                             output_dir=output_dir,
                             max_new_tokens=max_tokens,
-                            verbose=False,
+                            verbose=verbose,
                             validate=False,
                             validation_client=None,
                             llm_client=llm_client,
                             llm_model=llm_model,
                         )
+                        if verbose and success and output_file:
+                            print(f"    [DEBUG] Voice sample {sample_num} generated: {output_file}")
+                            print(f"    [DEBUG] Voice file exists: {os.path.exists(output_file)}")
+                            print(f"    [DEBUG] Voice file size: {os.path.getsize(output_file) if os.path.exists(output_file) else 'N/A'} bytes")
                         generation_results[sample_num] = (sample_num, success, output_file, duration, validation_msg)
                     except Exception as e:
                         if verbose:
@@ -567,6 +626,13 @@ def generate_voice_samples(
                 for sample_num in sorted(generation_results.keys()):
                     sample_num, success, output_file, duration, validation_msg = generation_results[sample_num]
                     if not success or not output_file:
+                        continue
+                    # Skip Whisper validation for celebrity voice samples - they're YouTube clips
+                    # that won't contain the static voice text
+                    if use_celebrity_voices and output_file and ("segment_" in output_file or "celebrity_voice" in output_file):
+                        if verbose:
+                            print(f"    Sample {sample_num}: Skipping Whisper validation for celebrity voice")
+                        candidates.append((99, output_file, sample_num, duration))
                         continue
                     try:
                         transcribed, starts, ends = transcribe_audio_with_whisper(vm, output_file)
@@ -582,13 +648,14 @@ def generate_voice_samples(
                         else:
                             use_path = output_file
                         all_attempts.append((matches, use_path, sample_num, duration))
-                        # Validate against description with ChunkFormer if available
+                         # Validate against description with ChunkFormer if available
                         if chunkformer_model:
                             if verbose:
                                 print(f"    Validating against description with ChunkFormer...")
                             cf_ok, cf_msg = _validate_with_chunkformer(
                                 use_path, char_desc,
-                                chunkformer_model, verbose=verbose
+                                chunkformer_model, verbose=verbose,
+                                skip_age=char_has_celebrity
                             )
                             if not cf_ok:
                                 if verbose:
@@ -611,6 +678,9 @@ def generate_voice_samples(
                     generated[char_name] = final_path
                     if verbose:
                         print(f"    Best: sample {best_att}, {best_score}/{len(ref_words)} words ({best_dur:.1f}s): {final_path}")
+                        print(f"    [DEBUG] Final voice file: {final_path}")
+                        print(f"    [DEBUG] Voice file exists: {os.path.exists(final_path)}")
+                        print(f"    [DEBUG] Voice file size: {os.path.getsize(final_path) if os.path.exists(final_path) else 'N/A'} bytes")
                 else:
                     failed.append(char_name)
                     if verbose:
@@ -631,6 +701,8 @@ def generate_voice_samples(
             # Skip cleanup if engine was injected (caller manages lifecycle)
             if voice_mapper._injected_engine is None:
                 voice_mapper.cleanup_engines()
+            if no_celeb_mapper and no_celeb_mapper._injected_engine is None:
+                no_celeb_mapper.cleanup_engines()
         except Exception as e:
             return f"Error generating voices: {str(e)}\n{traceback.format_exc()}", {}
 
@@ -638,6 +710,60 @@ def generate_voice_samples(
             print("\n" + "=" * 60)
             print(f"Primary engine ({gen_engine or voice_engine}): {len(generated)} generated, {len(failed)} failed")
             print("=" * 60)
+
+        # Fallback: Retry failed characters without celebrity voices
+        if failed and use_celebrity_voices:
+            if verbose:
+                print(f"\n[FALLBACK] Retrying {len(failed)} failed characters without celebrity voices...")
+            _no_celeb_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=gen_engine, engine=engine, use_celebrity_voices=False)
+            still_failed = []
+            for char_name in failed:
+                char_desc = descriptions[char_name]
+                voice_path = os.path.join(output_dir, f"{char_name}.wav")
+                if os.path.exists(voice_path):
+                    generated[char_name] = voice_path
+                    continue
+                _found = False
+                for sample_num in range(1, max_attempts + 1):
+                    _tmp_name = f"{char_name}.sample{sample_num}"
+                    try:
+                        success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
+                            character_name=_tmp_name,
+                            description=char_desc,
+                            voice_mapper=_no_celeb_mapper,
+                            output_dir=output_dir,
+                            max_new_tokens=max_tokens,
+                            verbose=verbose,
+                            validate=False,
+                            validation_client=None,
+                            llm_client=llm_client,
+                            llm_model=llm_model,
+                        )
+                        if not success or not output_file:
+                            continue
+                        try:
+                            transcribed, starts, ends = transcribe_audio_with_whisper(vm, output_file)
+                            matches = _word_match_count(ref_words, transcribed.lower())
+                            if matches >= len(ref_words) * 0.8:
+                                shutil.copy2(output_file, voice_path)
+                                generated[char_name] = voice_path
+                                if verbose:
+                                    print(f"    [FALLBACK] {char_name}: succeeded (sample {sample_num}, {matches}/{len(ref_words)} words)")
+                                _found = True
+                                break
+                        except Exception as e:
+                            if verbose:
+                                print(f"    [FALLBACK] {char_name}: Whisper error: {e}")
+                    except Exception as e:
+                        if verbose:
+                            print(f"    [FALLBACK] {char_name}: sample {sample_num} failed: {e}")
+                if not _found:
+                    still_failed.append(char_name)
+            failed = still_failed
+            _no_celeb_mapper.cleanup_engines()
+            if not failed:
+                if verbose:
+                    print(f"[SUCCESS] All characters have voices after falling back to non-celebrity generation")
 
         if failed and seed_clone_fallback_engines:
             # Retry failed characters with fallback engines

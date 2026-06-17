@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -108,21 +109,23 @@ Format:
   "pitch": "very low" or "low" or "moderate" or "high" or "very high",
   "accent": "american" or "british" or "australian" or "canadian" or "indian" or "chinese" or "korean" or "japanese" or "portuguese" or "russian" or omit,
   "style": 1-3 traits from: raspy, gravelly, smooth, breathy, nasal, booming, whispery, hoarse, metallic, guttural, warm, cold, aristocratic, streetwise, scholarly, rural, nervous, calm, cheerful, dark, bright, gentle, sharp, rough, clear, mellow, authoritative, anxious, cheerful, deep, soft, gentle, sharp, rough, clear, mellow, authoritative, anxious, cheerful, deep, soft,
-  "description": 2-4 sentence paragraph describing how this character speaks vividly
+  "description": 2-4 sentence paragraph describing how this character speaks vividly,
+  "celebrity_voice": Full name of a celebrity whose voice matches this character (e.g., "Benedict Cumberbatch", "Morgan Freeman", "Scarlett Johansson"). Choose living or recently-deceased celebrities with plenty of audio available. Pick someone whose natural speaking voice matches the character's voice description.
 }}
 
 RULES:
 - ONE gender, ONE age, ONE pitch, ONE accent (or omit), 1-3 style traits
 - "description" MUST be natural language
+- "celebrity_voice" MUST be a real celebrity name (NOT fictional characters)
 - MAKE SIMILAR CHARACTERS DISTINCT: Different pitch and style for characters with same gender/age
 - Your entire response is the JSON object. Nothing else.
 
 Examples:
-{{"gender": "male", "age": "middle-aged", "pitch": "moderate", "style": "smooth, aristocratic", "description": "A smooth middle-aged aristocrat with a calm, measured cadence. He carries himself with quiet authority and speaks with the polished ease of someone accustomed to high society. His tone is warm but restrained."}}
-{{"gender": "female", "age": "young adult", "pitch": "high", "accent": "british", "style": "breathy, warm", "description": "A warm young woman with a breathy, inviting voice. She speaks with genuine kindness and a touch of British refinement. Her tone is cheerful and open, suggesting a nurturing personality."}}
-{{"gender": "male", "age": "elderly", "pitch": "very low", "style": "gravelly, raspy", "description": "A gravelly old man whose voice carries the weight of age and hardship. He speaks slowly and deliberately, each word measured. His tone is rough but not unkind."}}
-{{"gender": "female", "age": "young adult", "pitch": "moderate", "accent": "american", "description": "A cheerful young woman with a bright, energetic voice. She speaks with enthusiasm and an American accent, her tone suggesting confidence and warmth."}}
-{{"gender": "male", "age": "young adult", "pitch": "high", "style": "thin, nervous", "description": "A nervous young man with a thin, anxious voice. He speaks quickly and with uncertainty, his tone betraying insecurity and a lack of confidence."}}
+{{"gender": "male", "age": "middle-aged", "pitch": "moderate", "style": "smooth, aristocratic", "description": "A smooth middle-aged aristocrat with a calm, measured cadence. He carries himself with quiet authority and speaks with the polished ease of someone accustomed to high society. His tone is warm but restrained.", "celebrity_voice": "Benedict Cumberbatch"}}
+{{"gender": "female", "age": "young adult", "pitch": "high", "accent": "british", "style": "breathy, warm", "description": "A warm young woman with a breathy, inviting voice. She speaks with genuine kindness and a touch of British refinement. Her tone is cheerful and open, suggesting a nurturing personality.", "celebrity_voice": "Emma Watson"}}
+{{"gender": "male", "age": "elderly", "pitch": "very low", "style": "gravelly, raspy", "description": "A gravelly old man whose voice carries the weight of age and hardship. He speaks slowly and deliberately, each word measured. His tone is rough but not unkind.", "celebrity_voice": "Morgan Freeman"}}
+{{"gender": "female", "age": "young adult", "pitch": "moderate", "accent": "american", "description": "A cheerful young woman with a bright, energetic voice. She speaks with enthusiasm and an American accent, her tone suggesting confidence and warmth.", "celebrity_voice": "Jennifer Lawrence"}}
+{{"gender": "male", "age": "young adult", "pitch": "high", "style": "thin, nervous", "description": "A nervous young man with a thin, anxious voice. He speaks quickly and with uncertainty, his tone betraying insecurity and a lack of confidence.", "celebrity_voice": "Tom Holland"}}
 
 For group characters like "crowd", "voices", or "people", pick ONE representative voice.
 """
@@ -426,7 +429,7 @@ def _parse_universal_description(raw: str) -> Optional[Dict[str, str]]:
 
     Handles JSON embedded in prose, markdown code blocks, or plain JSON.
     Falls back to extracting values from prose if no JSON found.
-    Returns dict with keys 'gender', 'age', 'pitch', 'accent', 'style' or None if invalid.
+    Returns dict with keys 'gender', 'age', 'pitch', 'accent', 'style', 'celebrity_voice' or None if invalid.
     """
     try:
         text = raw.strip()
@@ -454,11 +457,12 @@ def _parse_universal_description(raw: str) -> Optional[Dict[str, str]]:
         pitch = obj.get("pitch", "moderate").lower()
         accent = obj.get("accent", "").lower()
         style = obj.get("style", "")
+        celebrity_voice = obj.get("celebrity_voice", "")
         if gender not in ("male", "female"):
             return None
         if age not in ("child", "teenager", "young adult", "middle-aged", "elderly", "young", "middle-aged", "old"):
             return None
-        return {"gender": gender, "age": age, "pitch": pitch, "accent": accent, "style": style}
+        return {"gender": gender, "age": age, "pitch": pitch, "accent": accent, "style": style, "celebrity_voice": celebrity_voice}
     except (json.JSONDecodeError, AttributeError):
         return None
 
@@ -558,6 +562,7 @@ def _extract_from_prose(text: str) -> Optional[Dict[str, str]]:
         "accent": accent or "",
         "style": style,
         "description": description,
+        "celebrity_voice": "",
     }
 
 
@@ -598,7 +603,7 @@ def _universal_description_to_vox(parsed: Dict[str, str]) -> str:
     return f"({', '.join(parts)})"
 
 
-def describe_character(client: OpenAI, model: str, character: str, context: str, chapter_messages: Optional[List[str]] = None, voice_engine: Optional[str] = None, max_retries: int = 3) -> str:
+def describe_character(client: OpenAI, model: str, character: str, context: str, chapter_messages: Optional[List[str]] = None, voice_engine: Optional[str] = None, max_retries: int = 3, used_celebrities: Optional[List[str]] = None) -> str:
     """Ask the LLM to describe a single character.
 
     Returns the raw JSON string. Engine adapters convert to their format.
@@ -611,8 +616,16 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
         chapter_messages: Optional list of chapter-based dialogue messages
         voice_engine: TTS engine (unused - all engines use same JSON format)
         max_retries: Max retries for failed LLM calls
+        used_celebrities: List of celebrity names already assigned to other characters
+
+    Returns:
+        Raw JSON string describing the character.
     """
     system_prompt = _get_description_prompt(voice_engine)
+
+    # Add used celebrities constraint to system prompt
+    if used_celebrities:
+        system_prompt += f"\n\nIMPORTANT: Do NOT use these celebrities (they are already assigned to other characters): {', '.join(used_celebrities)}\nPick a DIFFERENT celebrity for this character."
 
     # System prompt first
     messages = [
@@ -760,6 +773,10 @@ def describe_characters_shared(
     descriptions = {}
     total_chars = len(canonical_characters)
 
+    # Thread-safe set to track used celebrities across parallel workers
+    used_celebrities_lock = threading.Lock()
+    used_celebrities: set = set()
+
     if max_concurrent > 1 and total_chars > 1:
         if verbose:
             print(f"Describing {total_chars} characters with {max_concurrent} concurrent workers...")
@@ -776,7 +793,24 @@ def describe_characters_shared(
             context = context_result[0]
             chapter_messages = context_result[1] if len(context_result) > 1 else []
 
-            description = describe_character(client, model, character, context, chapter_messages, voice_engine=voice_engine)
+            # Get current list of used celebrities (thread-safe read)
+            with used_celebrities_lock:
+                current_used = list(used_celebrities)
+
+            description = describe_character(client, model, character, context, chapter_messages, voice_engine=voice_engine, used_celebrities=current_used)
+
+            # Extract celebrity from description and add to used set (thread-safe write)
+            try:
+                desc_obj = json.loads(description) if isinstance(description, str) else description
+                if isinstance(desc_obj, dict):
+                    celeb = desc_obj.get("celebrity_voice", "")
+                    if celeb:
+                        with used_celebrities_lock:
+                            used_celebrities.add(celeb)
+                            if verbose:
+                                print(f"  [CELEB-DEDUP] Assigned '{celeb}' to '{character}' (now {len(used_celebrities)} unique celebrities)")
+            except (json.JSONDecodeError, AttributeError):
+                pass
 
             debug_output = {
                 "model": model,
@@ -819,8 +853,20 @@ def describe_characters_shared(
             context = context_result[0]
             chapter_messages = context_result[1] if len(context_result) > 1 else []
 
-            description = describe_character(client, model, character, context, chapter_messages, voice_engine=voice_engine)
+            description = describe_character(client, model, character, context, chapter_messages, voice_engine=voice_engine, used_celebrities=list(used_celebrities))
             descriptions[character] = description
+
+            # Extract celebrity and add to used set
+            try:
+                desc_obj = json.loads(description) if isinstance(description, str) else description
+                if isinstance(desc_obj, dict):
+                    celeb = desc_obj.get("celebrity_voice", "")
+                    if celeb:
+                        used_celebrities.add(celeb)
+                        if verbose:
+                            print(f"  [CELEB-DEDUP] Assigned '{celeb}' to '{character}' (now {len(used_celebrities)} unique celebrities)")
+            except (json.JSONDecodeError, AttributeError):
+                pass
 
             debug_output = {
                 "model": model,

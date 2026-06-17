@@ -7,3 +7,9 @@
 [submodule "engines/dramabox/DramaBox"]
 	path = engines/dramabox/DramaBox
 	url = https://github.com/resemble-ai/DramaBox.git
+[submodule "engines/zonos2/ZONOS2"]
+	path = engines/zonos2/ZONOS2
+	url = https://github.com/Zyphra/ZONOS2.git
+[submodule "engines/omni/OmniVoice"]
+	path = engines/omni/OmniVoice
+	url = https://github.com/k2-fsa/OmniVoice.git

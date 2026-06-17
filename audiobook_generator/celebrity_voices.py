@@ -19,6 +19,10 @@ import yt_dlp
 from .config import LLM_SETTINGS
 
 
+# Module-level cache for celebrity audio downloads to avoid duplicate YouTube requests
+_celebrity_audio_cache: Dict[str, str] = {}
+
+
 CELEBRITY_MATCHING_PROMPT = """You are a voice matching expert. Given a character description, suggest a celebrity whose voice best matches.
 
 Output ONLY a JSON object with these keys:
@@ -115,6 +119,17 @@ def download_celebrity_audio(
     Returns:
         Path to downloaded WAV file or None on failure
     """
+    # Check cache first - avoid downloading the same video multiple times
+    cache_key = f"{search_query}|{output_dir}"
+    if cache_key in _celebrity_audio_cache:
+        cached_path = _celebrity_audio_cache[cache_key]
+        if os.path.exists(cached_path):
+            print(f"    [DEBUG] Using cached celebrity audio: {cached_path}")
+            return cached_path
+        else:
+            # Cache entry is stale, remove it
+            del _celebrity_audio_cache[cache_key]
+
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
@@ -168,6 +183,10 @@ def download_celebrity_audio(
 
             # Trim to max_duration if needed
             trim_audio(str(output_file), max_duration)
+
+            # Cache the result
+            _celebrity_audio_cache[cache_key] = str(output_file)
+            print(f"    [DEBUG] Cached celebrity audio: {cache_key} -> {output_file}")
 
             return str(output_file)
 
@@ -274,8 +293,9 @@ def extract_speech_segments(
             return [str(segment_path)]
 
         # Extract speech segments (between silence gaps)
+        # silence_ends[i] to silence_starts[i+1] = speech region
         segments = []
-        for i, (start, end) in enumerate(zip(silence_ends, silence_starts)):
+        for i, (start, end) in enumerate(zip(silence_ends, silence_starts[1:])):
             duration = end - start
             if duration >= min_duration:
                 segment_path = out_path / f"{prefix}segment_{i}.wav"
@@ -309,6 +329,159 @@ def extract_speech_segments(
         return [str(segment_path)]
 
 
+CELEBRITY_SPEECH_SEGMENT_PROMPT = """You are analyzing a transcribed audio clip of a celebrity. The audio may contain multiple speakers (e.g., an interview with a host and guest).
+
+Given:
+- Celebrity name: {celebrity}
+- Character description: {description}
+- Transcription with timestamps: {transcription}
+
+Identify which portions of the audio are most likely spoken by the celebrity {celebrity}. The celebrity's speech should match the voice qualities described in the character description.
+
+Output ONLY a JSON array of objects, each with:
+- "start": start time in seconds (float)
+- "end": end time in seconds (float)
+- "text": the transcribed text for this segment
+
+Select up to 3 best segments that:
+1. Are most likely spoken by the celebrity (not the host/interviewer)
+2. Have clear speech (no music, crowd noise, or overlapping voices)
+3. Are at least 2 seconds long
+4. Best represent the voice quality described
+
+Example output:
+[
+  {{"start": 5.2, "end": 12.8, "text": "I think the key is to stay focused and keep pushing forward"}},
+  {{"start": 18.0, "end": 25.5, "text": "Every challenge is an opportunity to grow"}}
+]
+"""
+
+
+def identify_celebrity_segments(
+    client: Any,
+    model: str,
+    celebrity: str,
+    description: str,
+    audio_path: str,
+    whisper_model: Any,
+    max_segments: int = 3,
+    verbose: bool = False,
+) -> List[Dict[str, Any]]:
+    """Use Whisper + LLM to identify which segments contain celebrity speech.
+
+    Args:
+        client: OpenAI client instance
+        model: LLM model name
+        celebrity: Celebrity name
+        description: Character description (JSON string)
+        audio_path: Path to the audio file
+        whisper_model: WhisperModel instance
+        max_segments: Maximum number of segments to return
+        verbose: Print debug output
+
+    Returns:
+        List of dicts with 'start', 'end', 'text' keys, sorted by relevance
+    """
+    try:
+        from .utils import transcribe_audio_with_whisper
+
+        if verbose:
+            print(f"      [DEBUG] Transcribing celebrity audio with Whisper...")
+
+        # Transcribe the full audio with word-level timestamps
+        transcribed, start_times, end_times = transcribe_audio_with_whisper(whisper_model, audio_path)
+
+        if not transcribed or not start_times:
+            if verbose:
+                print(f"      [DEBUG] No transcription result for {audio_path}")
+            return []
+
+        if verbose:
+            print(f"      [DEBUG] Transcription: {transcribed[:200]}...")
+
+        # Build a readable transcription with timestamps
+        # Group words into sentences (approximate: split on punctuation)
+        sentences = []
+        current_sentence_words = []
+        current_start = None
+        current_end = None
+
+        for i, (word, start, end) in enumerate(zip(transcribed.split(), start_times, end_times)):
+            if current_start is None:
+                current_start = start
+            current_end = end
+            current_sentence_words.append(word)
+
+            # Split on sentence-ending punctuation
+            if word.endswith(('.', '!', '?', ';')) or i == len(start_times) - 1:
+                sentences.append({
+                    'start': round(current_start, 2),
+                    'end': round(current_end, 2),
+                    'text': ' '.join(current_sentence_words),
+                })
+                current_sentence_words = []
+                current_start = None
+                current_end = None
+
+        if not sentences:
+            if verbose:
+                print(f"      [DEBUG] No sentences found in transcription")
+            return []
+
+        # Build timestamped transcription string for the LLM
+        timestamped_lines = []
+        for sent in sentences:
+            timestamped_lines.append(f"[{sent['start']:.1f}s-{sent['end']:.1f}s] {sent['text']}")
+        timestamped_text = '\n'.join(timestamped_lines)
+
+        if verbose:
+            print(f"      [DEBUG] Timestamped transcription ({len(sentences)} sentences):")
+            for line in timestamped_lines[:10]:
+                print(f"        {line}")
+
+        # Use LLM to identify celebrity speech segments
+        prompt = CELEBRITY_SPEECH_SEGMENT_PROMPT.format(
+            celebrity=celebrity,
+            description=description,
+            transcription=timestamped_text,
+        )
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": "Analyze the transcription and identify which segments are spoken by the celebrity."},
+            ],
+        )
+
+        raw = response.choices[0].message.content
+        if not raw:
+            return []
+
+        # Parse JSON array from response
+        start_idx = raw.find("[")
+        end_idx = raw.rfind("]") + 1
+        if start_idx >= 0 and end_idx > start_idx:
+            segments = json.loads(raw[start_idx:end_idx])
+            # Validate and filter
+            valid_segments = []
+            for seg in segments:
+                if all(k in seg for k in ['start', 'end', 'text']):
+                    duration = seg['end'] - seg['start']
+                    if duration >= 2.0:
+                        valid_segments.append(seg)
+                        if verbose:
+                            print(f"      [DEBUG] Selected segment: [{seg['start']:.1f}s-{seg['end']:.1f}s] {seg['text'][:80]}...")
+            return valid_segments[:max_segments]
+
+        return []
+
+    except Exception as e:
+        if verbose:
+            print(f"      [DEBUG] Error identifying celebrity segments: {e}")
+        return []
+
+
 def build_celebrity_voice(
     client: Any,
     model: str,
@@ -316,6 +489,10 @@ def build_celebrity_voice(
     description: str,
     output_dir: str,
     max_duration: int = 30,
+    pre_matched_celebrity: Optional[str] = None,
+    num_samples: int = 3,
+    segments_per_sample: int = 3,
+    whisper_model: Any = None,
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     """Full pipeline: match celebrity, download audio, extract segments.
 
@@ -326,47 +503,141 @@ def build_celebrity_voice(
         description: Character voice description
         output_dir: Directory to save voice files
         max_duration: Max duration for downloaded clip
+        pre_matched_celebrity: Optional pre-matched celebrity name (skips LLM matching)
+        num_samples: Number of different audio samples to download
+        segments_per_sample: Number of segments to extract from each sample
+        whisper_model: Optional WhisperModel for celebrity speech identification
 
     Returns:
         Tuple of (best_voice_path, metadata) or (None, None) on failure
     """
-    # Match celebrity
-    match = match_celebrity(client, model, character, description)
-    if not match:
-        return None, None
+    # Strip .sampleN suffix from character name for search queries and file names
+    base_character = re.sub(r'\.sample\d+$', '', character)
+
+    # Match celebrity - use pre-matched if available
+    if pre_matched_celebrity:
+        print(f"    [DEBUG] Using pre-matched celebrity: {pre_matched_celebrity}")
+        # Generate a character-specific search query to avoid downloading the same video
+        character_key = base_character.replace(" ", "_").lower()
+        match = {
+            "celebrity": pre_matched_celebrity,
+            "reason": "Pre-matched from character description",
+            "search_query": f"{pre_matched_celebrity} {character_key} voice",
+        }
+    else:
+        print(f"    [DEBUG] No pre-matched celebrity - calling LLM to match for '{character}'")
+        match = match_celebrity(client, model, character, description)
+        if not match:
+            return None, None
 
     celebrity = match["celebrity"]
     search_query = match["search_query"]
+    print(f"    [DEBUG] Celebrity matched: {celebrity}")
+    print(f"    [DEBUG] Search query: {search_query}")
 
-    # Download audio
-    audio_path = download_celebrity_audio(
-        search_query=search_query,
-        output_dir=output_dir,
-        max_duration=max_duration,
-        file_prefix=character,
-    )
-    if not audio_path:
+    # Generate alternative search queries for diversity
+    search_queries = [search_query]
+    character_key = base_character.replace(" ", "_").lower()
+    search_queries.append(f"{celebrity} interview")
+    search_queries.append(f"{celebrity} speech")
+
+    # Download audio samples and extract segments
+    all_segments = []
+    best_segment = None
+    audio_sources = []
+    
+    for sample_idx in range(num_samples):
+        query = search_queries[sample_idx % len(search_queries)]
+        file_prefix = f"{base_character}_{sample_idx}"
+        
+        print(f"    [DEBUG] Sample {sample_idx + 1}/{num_samples}: Downloading with query '{query}'")
+        
+        audio_path = download_celebrity_audio(
+            search_query=query,
+            output_dir=output_dir,
+            max_duration=max_duration,
+            file_prefix=file_prefix,
+        )
+        
+        if not audio_path:
+            print(f"    [DEBUG] Failed to download audio for sample {sample_idx + 1}")
+            continue
+        
+        audio_sources.append(audio_path)
+        
+        # Use Whisper+LLM to identify celebrity speech segments if whisper_model is available
+        if whisper_model:
+            print(f"    [DEBUG] Using Whisper+LLM to identify celebrity speech segments...")
+            llm_segments = identify_celebrity_segments(
+                client=client,
+                model=model,
+                celebrity=celebrity,
+                description=description,
+                audio_path=audio_path,
+                whisper_model=whisper_model,
+                max_segments=segments_per_sample,
+                verbose=True,
+            )
+            
+            if llm_segments:
+                print(f"    [DEBUG] LLM identified {len(llm_segments)} celebrity speech segments")
+                # Extract LLM-identified segments using ffmpeg
+                out_path = Path(output_dir)
+                out_path.mkdir(parents=True, exist_ok=True)
+                
+                for seg_idx, seg in enumerate(llm_segments):
+                    seg_path = out_path / f"{file_prefix}_llm_segment_{seg_idx}.wav"
+                    start = seg['start']
+                    end = seg['end']
+                    
+                    try:
+                        subprocess.run(
+                            ["ffmpeg", "-y", "-i", audio_path, "-ss", str(start),
+                             "-to", str(end), "-q:a", "0", str(seg_path)],
+                            capture_output=True, timeout=30,
+                        )
+                        if seg_path.exists():
+                            all_segments.append(str(seg_path))
+                            if best_segment is None or Path(seg_path).stat().st_size > Path(best_segment).stat().st_size:
+                                best_segment = str(seg_path)
+                    except Exception as e:
+                        print(f"      [DEBUG] Error extracting LLM segment: {e}")
+            else:
+                print(f"    [DEBUG] LLM failed to identify celebrity speech segments, falling back to silence detection")
+        
+        # Also extract speech segments using silence detection (for fallback)
+        segments = extract_speech_segments(
+            audio_path=audio_path,
+            output_dir=output_dir,
+            file_prefix=file_prefix,
+        )
+        
+        if not segments:
+            print(f"    [DEBUG] No segments extracted for sample {sample_idx + 1}")
+            continue
+        
+        print(f"    [DEBUG] Extracted {len(segments)} segments from sample {sample_idx + 1}")
+        
+        # Add to all segments
+        all_segments.extend(segments)
+        
+        # Update best segment (longest by file size)
+        for seg in segments:
+            if best_segment is None or Path(seg).stat().st_size > Path(best_segment).stat().st_size:
+                best_segment = seg
+    
+    if not all_segments:
         return None, None
 
-    # Extract speech segments
-    segments = extract_speech_segments(
-        audio_path=audio_path,
-        output_dir=output_dir,
-        file_prefix=character,
-    )
-    if not segments:
-        return None, None
-
-    # Use longest segment as voice reference
-    best_segment = max(segments, key=lambda p: Path(p).stat().st_size)
+    print(f"    [DEBUG] Total segments collected: {len(all_segments)}")
 
     metadata = {
         "character": character,
         "celebrity": celebrity,
         "reason": match.get("reason", ""),
         "search_query": search_query,
-        "audio_source": audio_path,
-        "segments": segments,
+        "audio_sources": audio_sources,
+        "segments": all_segments,
         "best_segment": best_segment,
     }
 

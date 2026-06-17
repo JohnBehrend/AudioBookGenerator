@@ -46,6 +46,7 @@ class VoiceMapper:
         duplicate_replacement_map: Optional[Dict[str, str]] = None,
         engine: Optional[Any] = None,
         use_celebrity_voices: bool = False,
+        whisper_model: Any = None,
     ) -> None:
         """Initialize the VoiceMapper.
 
@@ -56,14 +57,17 @@ class VoiceMapper:
             duplicate_replacement_map: Map of duplicate names to canonical names
             engine: Optional pre-configured engine instance
             use_celebrity_voices: If True, use celebrity voice references instead of generating samples
+            whisper_model: Optional WhisperModel for celebrity speech identification
         """
         self.output_dir = Path(output_dir)
         self.device = device
         self.tts_engine = tts_engine or AUDIO_SETTINGS["default_tts_engine"]
         self.supported_extensions = AUDIO_SETTINGS.get("supported_audio_extensions", [".wav", ".mp3", ".flac"])
         self.duplicate_replacement_map = duplicate_replacement_map or {}
-        self.engine = engine
+        self._injected_engine = engine
+        self._cached_engine = None
         self.use_celebrity_voices = use_celebrity_voices
+        self.whisper_model = whisper_model
 
         # Voice paths cache
         self.voice_paths: Dict[str, str] = {}
@@ -157,6 +161,7 @@ class VoiceMapper:
         voice_file = os.path.basename(voice_path)
         self._voice_map[character_name] = voice_file
         self._save_voice_map()
+        print(f"    [DEBUG] Added voice path for '{character_name}': {voice_path}")
 
     def get_all_voice_paths(self) -> Dict[str, str]:
         """Get all cached voice paths.
@@ -475,26 +480,154 @@ class VoiceMapper:
         if output_dir is None:
             output_dir = self.output_dir
 
+        engine = self.get_engine()
+
         # Use celebrity voice if enabled
         if self.use_celebrity_voices and client:
             from .celebrity_voices import build_celebrity_voice
+            # Try to extract celebrity_voice from description first
+            pre_matched_celebrity = None
+            try:
+                desc_obj = json.loads(description) if isinstance(description, str) else description
+                if isinstance(desc_obj, dict):
+                    pre_matched_celebrity = desc_obj.get("celebrity_voice", "")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
             if verbose:
-                print(f"    Matching celebrity voice for: {character_name}")
+                print(f"    Celebrity voice enabled for: {character_name}")
+                if pre_matched_celebrity:
+                    print(f"    Pre-matched celebrity: {pre_matched_celebrity}")
+                else:
+                    print(f"    No pre-matched celebrity - will use LLM to match")
+
             voice_path, metadata = build_celebrity_voice(
                 client=client,
                 model=model,
                 character=character_name,
                 description=description,
                 output_dir=str(output_dir),
+                pre_matched_celebrity=pre_matched_celebrity or None,
+                whisper_model=self.whisper_model,
             )
             if voice_path:
-                self.add_voice_path(character_name, voice_path)
-                return True, voice_path, 0.0
+                if verbose:
+                    print(f"    [DEBUG] Celebrity voice path: {voice_path}")
+                    if metadata:
+                        print(f"    [DEBUG] Celebrity: {metadata.get('celebrity', 'N/A')}")
+                        print(f"    [DEBUG] Search query: {metadata.get('search_query', 'N/A')}")
+                        print(f"    [DEBUG] Best segment: {metadata.get('best_segment', 'N/A')}")
+                        all_segments = metadata.get('segments', [voice_path])
+                        print(f"    [DEBUG] Available segments: {len(all_segments)}")
+                        audio_sources = metadata.get('audio_sources', [])
+                        print(f"    [DEBUG] Audio sources downloaded: {len(audio_sources)}")
 
-        engine = self.get_engine()
+                # Collect all segments to try (best first, then alternatives)
+                all_segments = metadata.get('segments', [voice_path]) if metadata else [voice_path]
+                if voice_path not in all_segments:
+                    all_segments.insert(0, voice_path)
+
+                # Now use the celebrity audio as a voice reference to generate a proper WAV
+                # speaking the static text (not just raw YouTube audio)
+                static_text = DEFAULTS.get("static_voice_text", "")
+                ref_output_path = os.path.join(str(output_dir), f"{character_name}_ref.wav")
+
+                # Try each segment until one produces valid output
+                for seg_idx, seg_path in enumerate(all_segments):
+                    if verbose:
+                        seg_label = "best" if seg_idx == 0 else f"alternative #{seg_idx}"
+                        print(f"    [DEBUG] Attempting celebrity TTS with {seg_label} segment: {seg_path}")
+                        print(f"    [DEBUG] Text: {static_text[:100]}...")
+
+                    try:
+                        success = engine.generate_line(
+                            text=static_text,
+                            voice_path=seg_path,
+                            output_path=ref_output_path,
+                            verbose=verbose,
+                            ref_text="",  # Let engine transcribe
+                        )
+
+                        if not success or not os.path.exists(ref_output_path):
+                            if verbose:
+                                print(f"    [DEBUG] TTS generation failed for segment, trying next...")
+                            continue
+
+                        file_size = os.path.getsize(ref_output_path)
+                        duration_seconds = file_size / (24000 * 2)  # rough estimate (16-bit mono)
+                        if verbose:
+                            print(f"    [DEBUG] Generated reference WAV: {ref_output_path} ({file_size} bytes)")
+                            print(f"    [DEBUG] Estimated duration: {duration_seconds:.1f}s")
+
+                        # Validate the generated reference WAV
+                        validation_ok = True
+                        validation_msg = ""
+
+                        # Check 1: Duration must be reasonable for the static text
+                        if duration_seconds < 2.0 or duration_seconds > 60.0:
+                            validation_ok = False
+                            validation_msg = f"Duration {duration_seconds:.1f}s outside acceptable range (2-60s)"
+                            if verbose:
+                                print(f"    [DEBUG] Validation FAILED: {validation_msg}")
+
+                        # Check 2: File size sanity check
+                        if file_size < 1000:
+                            validation_ok = False
+                            validation_msg = f"File too small ({file_size} bytes)"
+                            if verbose:
+                                print(f"    [DEBUG] Validation FAILED: {validation_msg}")
+
+                        # Check 3: LLM-based voice validation (if enabled)
+                        if validation_ok and VOICE_VALIDATION["enable"] and client:
+                            if verbose:
+                                print(f"    [DEBUG] Running LLM voice validation on reference WAV...")
+                            try:
+                                llm_valid, llm_msg = VoiceMapper.validate_voice_with_llm(
+                                    voice_path=ref_output_path,
+                                    description=description,
+                                    sample_text=static_text,
+                                    client=client,
+                                    model=model,
+                                    verbose=verbose
+                                )
+                                if not llm_valid:
+                                    validation_ok = False
+                                    validation_msg = f"LLM validation failed: {llm_msg[:100]}"
+                                    if verbose:
+                                        print(f"    [DEBUG] Validation FAILED: {validation_msg}")
+                                elif verbose:
+                                    print(f"    [DEBUG] LLM validation passed")
+                            except Exception as e:
+                                if verbose:
+                                    print(f"    [DEBUG] LLM validation error: {e} (ignoring)")
+
+                        if validation_ok:
+                            if verbose:
+                                print(f"    [DEBUG] Celebrity reference WAV PASSED validation")
+                            self.add_voice_path(character_name, ref_output_path)
+                            return True, ref_output_path, duration_seconds
+                        else:
+                            if verbose:
+                                print(f"    [DEBUG] Validation failed, trying next segment...")
+                            continue
+
+                    except Exception as e:
+                        if verbose:
+                            print(f"    [DEBUG] TTS generation error: {e}, trying next segment...")
+                        continue
+
+                # All segments failed
+                if verbose:
+                    print(f"    [DEBUG] All celebrity segments failed for '{character_name}', returning failure")
+                return False, None, 0.0
+            elif verbose:
+                print(f"    [DEBUG] Celebrity voice generation failed for '{character_name}'")
+
         # Inject static_voice_text from config if not already in kwargs
         if "static_voice_text" not in kwargs:
             kwargs["static_voice_text"] = DEFAULTS.get("static_voice_text", "")
+        if verbose:
+            print(f"    [DEBUG] Calling TTS engine '{self.tts_engine}' for '{character_name}'")
         success, output_file, duration = engine.generate_voice_sample(
             character_name=character_name,
             description=description,
@@ -505,7 +638,14 @@ class VoiceMapper:
         )
 
         if success:
+            if verbose:
+                print(f"    [DEBUG] Voice generated successfully: {output_file}")
+                if output_file and os.path.exists(output_file):
+                    print(f"    [DEBUG] Voice file verified: {output_file} ({os.path.getsize(output_file)} bytes)")
             self.add_voice_path(character_name, output_file)
+        else:
+            if verbose:
+                print(f"    [DEBUG] Voice generation failed for '{character_name}'")
 
         return success, output_file, duration
 

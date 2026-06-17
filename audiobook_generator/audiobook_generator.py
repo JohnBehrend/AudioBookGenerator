@@ -226,13 +226,17 @@ def _tts_generate_only(
 
     engine = tts_config.engine if tts_config.engine is not None else voice_mapper.get_engine()
     try:
-        engine.generate_line(
+        result = engine.generate_line(
             text=full_script,
             voice_path=voice_path,
             output_path=output_path,
             device=tts_config.device,
             verbose=tts_config.verbose,
         )
+        if not result:
+            if tts_config.verbose:
+                print(f"    Engine reported failure for {output_path}")
+            return None
     except Exception as e:
         print(f"    Engine generation failed: {e}")
         if tts_config.verbose:
@@ -723,13 +727,20 @@ def generate_audiobook_from_chapters(
 
                         try:
                             engine = tts_config.engine if tts_config.engine is not None else voice_mapper.get_engine()
-                            engine.generate_line(
+                            result = engine.generate_line(
                                 text=full_script,
                                 voice_path=item["voice_path"],
                                 output_path=output_path,
                                 device=tts_config.device,
                                 verbose=tts_config.verbose,
                             )
+                            if not result:
+                                if tts_config.verbose:
+                                    print(f"    Engine reported failure for {output_path}")
+                                with line_state_lock:
+                                    state["retries"] += 1
+                                work_queue.task_done()
+                                continue
                         except Exception as e:
                             print(f"    Engine generation failed: {e}")
                             if tts_config.verbose:
@@ -1201,7 +1212,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                        gpus: Optional[List[str]] = None, whisper_concurrency: int = 1,
                        whisper_fast: bool = False,
                         llm_model: str = None,
-                       use_chunkformer: bool = False) -> str:
+                       use_chunkformer: bool = False, celebrity_voices: bool = False,
+                       desc_concurrency: int = 1) -> str:
     """Run the full audiobook pipeline from EPUB to MP3.
 
     Args:
@@ -1436,7 +1448,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             print(f"[STAGE 3] Describing {len(state.characters)} characters...")
 
         num_chars = len(state.characters)
-        max_concurrent = min(8, max(4, num_chars // 4))
+        max_concurrent = desc_concurrency
         if verbose:
             print(f"[STAGE 3] Describing {num_chars} characters with {max_concurrent} concurrent workers...")
 
@@ -1481,6 +1493,16 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             _all_engines = list_engines()
             _fallback_engines = [e for e in _all_engines if e != voice_engine]
 
+            # Create LLM client if celebrity voices are enabled
+            client = None
+            model = LLM_SETTINGS.get("default_model", "coder-model")
+            if celebrity_voices:
+                from .utils import get_llm_client
+                client = get_llm_client(
+                    LLM_SETTINGS.get("api_key", ""),
+                    str(LLM_SETTINGS.get("port", 1234)),
+                )
+
             result_msg, generated_voices = gen_voice_samples(
                 descriptions=state.character_descriptions,
                 output_dir=str(state.output_dir),
@@ -1493,7 +1515,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 tts_engine=tts_engine,
                 use_chunkformer=True,
                 seed_clone_fallback_engines=_fallback_engines,
-                use_celebrity_voices=args.celebrity_voices,
+                use_celebrity_voices=celebrity_voices,
                 llm_client=client,
                 llm_model=model,
             )
@@ -1557,7 +1579,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             concurrency=concurrency,
             gpus=gpus,
             whisper_concurrency=whisper_concurrency,
-            whisper_fast=whisper_fast)
+            whisper_fast=whisper_fast,
+            whisper_cpu=whisper_cpu)
 
         if verbose:
             print(f"  {status}")
@@ -1734,6 +1757,7 @@ def main():
     parser.add_argument("--gpus", nargs="+", default=None, help="GPU devices to use (e.g., --gpus cuda:0 cuda:1)")
     parser.add_argument("--skip-chunkformer", action="store_true", help="Skip ChunkFormer voice validation (gender/emotion/dialect/age classification)")
     parser.add_argument("--celebrity-voices", action="store_true", help="Use celebrity voice references from YouTube instead of generating synthetic voices")
+    parser.add_argument("--desc-concurrency", type=int, default=1, help="Number of concurrent workers for character description generation (default: 1 for correct celebrity dedup)")
 
     args = parser.parse_args()
 
@@ -1917,6 +1941,9 @@ def main():
                 whisper_concurrency=args.whisper_concurrency,
                 whisper_fast=args.whisper_fast,
                     use_chunkformer=not args.skip_chunkformer,
+                celebrity_voices=args.celebrity_voices,
+                llm_model=args.model,
+                desc_concurrency=args.desc_concurrency,
             )
             print(result)
         else:
@@ -1980,6 +2007,7 @@ def main():
                     seed_characters=load_seed_characters(args.seed_voice_map),
                     progress_callback=None,
                     voice_engine=args.voice_engine,
+                    max_concurrent=args.desc_concurrency,
                 )
                 print(result_msg)
 
@@ -1992,6 +2020,16 @@ def main():
                 _all_engines = ["omni", "vox", "moss", "echo-tts", "dramabox"]
                 _fallback_engines = [e for e in _all_engines if e != args.tts_engine]
 
+                # Create LLM client for celebrity voices if enabled
+                llm_client = None
+                if args.celebrity_voices:
+                    from .utils import get_llm_client
+                    llm_client = get_llm_client(
+                        LLM_SETTINGS.get("api_key", ""),
+                        str(LLM_SETTINGS.get("port", 1234)),
+                    )
+                    model = LLM_SETTINGS.get("default_model", "coder-model")
+
                 result_msg, generated = gen_voice_samples(
                     descriptions=descriptions,
                     output_dir=str(work_dir),
@@ -2000,8 +2038,11 @@ def main():
                     seed_characters=load_seed_characters(args.seed_voice_map),
                     voice_engine=args.tts_engine,
                     validate=False,
-                use_chunkformer=not args.skip_chunkformer,
+                    use_chunkformer=not args.skip_chunkformer,
                     seed_clone_fallback_engines=_fallback_engines,
+                    use_celebrity_voices=args.celebrity_voices,
+                    llm_client=llm_client,
+                    llm_model=LLM_SETTINGS.get("default_model", "coder-model"),
                 )
                 print(result_msg)
 

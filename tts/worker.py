@@ -1,111 +1,22 @@
 """Subprocess worker infrastructure for TTS engines.
 
-Each engine runs TTS inference in an isolated uv environment via a worker
-subprocess. This module provides EngineWorker which manages the subprocess
-lifecycle and request/response communication via JSON over stdin/stdout.
+Each engine runs TTS inference in an isolated subprocess. This module provides
+EngineWorker which manages the subprocess lifecycle and request/response
+communication via JSON over stdin/stdout.
+
+Engine-agnostic: discovers engines by `main.py`, finds python via `.venv/bin/python`.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any, Optional
 
-_ENVIRONMENTS_DIR = Path(__file__).parent / ".environments"
-
 _Request = dict[str, Any]
 _Response = dict[str, Any]
-
-
-def _run_cmd(cmd: list[str], cwd: str, env: dict[str, str], label: str, engine_name: str) -> None:
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, env=env)
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to {label} for {engine_name}: {result.stderr}")
-
-
-def _ensure_env(engine_name: str, engine_dir: Path) -> str:
-    """Ensure the per-engine uv environment exists. Returns the python executable path."""
-    env_dir = _ENVIRONMENTS_DIR / engine_name
-    venv_dir = env_dir / ".venv"
-    python = str(venv_dir / "bin" / "python")
-
-    if venv_dir.exists():
-        result = subprocess.run(
-            [python, "-c", "import audiobook_generator"],
-            capture_output=True,
-        )
-        if result.returncode == 0:
-            return python
-
-    project_root = Path(__file__).resolve().parent.parent
-    env = os.environ.copy()
-    env["VIRTUAL_ENV"] = str(venv_dir)
-
-    print(f"  Setting up {engine_name} environment...")
-    env_dir.mkdir(parents=True, exist_ok=True)
-    if not venv_dir.exists():
-        _run_cmd(["uv", "venv", str(venv_dir)], str(env_dir), env,
-                  "create venv", engine_name)
-
-    _run_cmd(["uv", "pip", "install", "-e", "."], str(engine_dir), env,
-              "install deps", engine_name)
-    _run_cmd(["uv", "pip", "install", "-e", str(project_root), "--no-deps"], str(engine_dir), env,
-              "install main package", engine_name)
-
-    print(f"  {engine_name} environment ready.")
-    return python
-
-
-def _run_worker_subprocess(engine_name: str, engine_class: str) -> None:
-    """Entry point for the worker subprocess.
-
-    Reads JSON requests from stdin, writes JSON responses to stdout.
-    """
-    import importlib
-
-    module = importlib.import_module(
-        f"audiobook_generator.engines.{engine_name.replace('-', '_')}"
-    )
-    engine_cls = getattr(module, engine_class)
-
-    # Create in-memory queues for the engine's _run_worker
-    from multiprocessing import Queue
-    req_queue: Any = Queue()
-    resp_queue: Any = Queue()
-
-    import threading
-
-    def _forward_responses():
-        """Forward responses from engine queue to stdout."""
-        while True:
-            try:
-                resp = resp_queue.get(timeout=1)
-                line = json.dumps(resp) + "\n"
-                sys.stdout.write(line)
-                sys.stdout.flush()
-            except Exception:
-                continue
-
-    def _forward_requests():
-        """Forward requests from stdin to engine queue."""
-        for line in sys.stdin:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-                req_queue.put(msg)
-            except json.JSONDecodeError:
-                continue
-
-    t = threading.Thread(target=_forward_responses, daemon=True)
-    t.start()
-
-    engine_cls._run_worker(req_queue, resp_queue)
 
 
 class EngineWorker:
@@ -115,18 +26,27 @@ class EngineWorker:
         self.engine_dir = engine_dir
         self.device = device
         self._process: Optional[subprocess.Popen] = None
-        self._python: str | None = None
         self._next_id = 0
 
+    def _find_python(self) -> str:
+        """Find the python executable for this engine."""
+        venv_python = self.engine_dir / ".venv" / "bin" / "python"
+        if venv_python.exists():
+            return str(venv_python)
+        raise RuntimeError(
+            f"Engine {self.engine_dir.name} environment not set up. "
+            f"Run: uv run python scripts/setup-engines.py {self.engine_dir.name}"
+        )
+
     def start(self) -> None:
-        """Start the worker subprocess using the engine's isolated Python."""
+        """Start the worker subprocess."""
         if self._process is not None and self._process.poll() is None:
             return
 
-        self._python = _ensure_env(self.engine_dir.name, self.engine_dir)
+        python = self._find_python()
 
         self._process = subprocess.Popen(
-            [self._python, str(self.engine_dir / "main.py"), "--device", self.device],
+            [python, str(self.engine_dir / "main.py"), "--device", self.device],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

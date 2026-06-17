@@ -6,15 +6,20 @@ dependencies = [
     "torch>=2.9.1",
     "torchaudio>=2.9.1",
     "transformers>=5.0.0",
-    "omnivoice @ git+https://github.com/k2-fsa/OmniVoice.git",
+    "omnivoice",
     "soundfile",
 ]
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128" }]
 torchaudio = [{ index = "pytorch-cu128" }]
+omnivoice = { path = "./OmniVoice" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

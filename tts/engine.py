@@ -56,6 +56,12 @@ class TTSEngine:
             ref_text=ref_text,
             **kwargs,
         )
+        if "error" in resp:
+            print(f"    [EngineError] generate_line failed: {resp['error']}")
+            if resp.get("traceback"):
+                print(f"    {resp['traceback']}")
+        elif not resp.get("success", False):
+            print(f"    [EngineError] generate_line returned success=False (no error details)")
         return resp.get("success", False)
 
     def generate_voice_sample(

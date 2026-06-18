@@ -1427,7 +1427,19 @@ def identify_celebrity_segments(
         start_idx = raw.find("[")
         end_idx = raw.rfind("]") + 1
         if start_idx >= 0 and end_idx > start_idx:
-            segments = json.loads(raw[start_idx:end_idx])
+            try:
+                segments = json.loads(raw[start_idx:end_idx])
+            except json.JSONDecodeError:
+                # Try to clean up the JSON (remove extra commas, etc.)
+                cleaned = raw[start_idx:end_idx]
+                cleaned = re.sub(r',\s*]', ']', cleaned)
+                cleaned = re.sub(r'\[\s*,', '[', cleaned)
+                try:
+                    segments = json.loads(cleaned)
+                except json.JSONDecodeError:
+                    if verbose:
+                        print(f"      [DEBUG] Failed to parse JSON from LLM response")
+                    return []
             # Validate and filter
             valid_segments = []
             for seg in segments:

@@ -741,14 +741,20 @@ def transcribe_audio_with_whisper(validation_model: Any, audio_path: str) -> Tup
 
     Returns:
         Tuple of (detected_string, start_times, end_times)
-        - detected_string: The transcribed text (distilled)
+        - detected_string: The transcribed text (raw, with punctuation)
         - start_times: List of start times for each word
         - end_times: List of end times for each word
     """
-    segments_list, info = validation_model.transcribe(audio_path, beam_size=5, word_timestamps=True)
+    result = validation_model.transcribe(audio_path, beam_size=5, word_timestamps=True)
+    
+    if isinstance(result, dict):
+        segments_list = result.get("segments", [])
+    else:
+        segments_list = result
+    
     from .pipeline import collect_transcription_segments
     segments, start_times, end_times = collect_transcription_segments(segments_list)
-    detected_string = distill_string(" ".join(segments))
+    detected_string = " ".join(segments)
     return detected_string, start_times, end_times
 
 
@@ -767,11 +773,25 @@ def transcribe_audio_for_ref_text(validation_model: Any, audio_path: str, verbos
         Raw transcribed text suitable for ref_text, or None if transcription fails
     """
     try:
-        segments_list, info = validation_model.transcribe(audio_path, beam_size=5, word_timestamps=True)
+        result = validation_model.transcribe(audio_path, beam_size=5, word_timestamps=True)
+        
+        if isinstance(result, dict):
+            segments_list = result.get("segments", [])
+        else:
+            segments_list = result
+        
         words = []
         for segment in segments_list:
-            for word in segment.words:
-                w = word.word.strip()
+            if isinstance(segment, dict):
+                seg_words = segment.get("words", [])
+            else:
+                seg_words = getattr(segment, "words", [])
+
+            for word in seg_words:
+                if isinstance(word, dict):
+                    w = word.get("word", "").strip()
+                else:
+                    w = word.word.strip()
                 if w:
                     words.append(w)
 

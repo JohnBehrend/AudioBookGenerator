@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -104,17 +105,29 @@ def download_celebrity_audio(
     output_dir: str,
     max_duration: int = 30,
     file_prefix: str = "",
+    client: Any = None,
+    model: str = "",
+    celebrity: str = "",
+    description: str = "",
+    verbose: bool = False,
 ) -> Optional[str]:
     """Download audio clip of celebrity using yt-dlp.
 
-    Searches YouTube for the query, downloads the best match,
-    and extracts a clean audio segment.
+    First tries to find the best video by analyzing subtitles,
+    then downloads audio only from the selected video.
+
+    Falls back to direct download if subtitle analysis fails.
 
     Args:
         search_query: YouTube search query (e.g. "Benedict Cumberbatch interview")
         output_dir: Directory to save audio file
         max_duration: Maximum duration in seconds for the clip
         file_prefix: Prefix for output filename
+        client: OpenAI client for LLM-based video selection
+        model: LLM model name
+        celebrity: Celebrity name
+        description: Character description
+        verbose: Print debug output
 
     Returns:
         Path to downloaded WAV file or None on failure
@@ -136,7 +149,32 @@ def download_celebrity_audio(
     prefix = f"{file_prefix}_" if file_prefix else ""
     output_file = out_path / f"{prefix}celebrity_voice.wav"
 
-    # Search YouTube and download
+    # Try subtitle-based video selection first
+    selected_url = None
+    best_segment = None
+    if client and model and celebrity:
+        if verbose:
+            print(f"    [DEBUG] Trying subtitle-based video selection...")
+        selected_url, best_segment = find_best_celebrity_video(
+            client=client,
+            model=model,
+            search_query=search_query,
+            celebrity=celebrity,
+            description=description,
+            output_dir=output_dir,
+            max_results=5,
+            verbose=verbose,
+        )
+        if selected_url:
+            if verbose:
+                print(f"    [DEBUG] Selected video via subtitles: {selected_url}")
+            if best_segment:
+                print(f"    [DEBUG] Best segment: [{best_segment['start']:.1f}s-{best_segment['end']:.1f}s]")
+        else:
+            if verbose:
+                print(f"    [DEBUG] Subtitle selection failed, falling back to direct download")
+
+    # Download audio (either from selected URL or direct search)
     ydl_opts = {
         "format": "bestaudio/best",
         "extractaudio": True,
@@ -152,20 +190,24 @@ def download_celebrity_audio(
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Search YouTube for short clips
-            search_url = f"ytsearch1:{search_query} short"
-            info = ydl.extract_info(search_url, download=False)
-
-            if not info or "title" not in info:
-                # Fallback: try without duration filter
-                search_url = f"ytsearch1:{search_query}"
+            if selected_url:
+                # Download the selected video directly
+                ydl.download([selected_url])
+            else:
+                # Search YouTube for short clips
+                search_url = f"ytsearch1:{search_query} short"
                 info = ydl.extract_info(search_url, download=False)
 
-            if not info or "title" not in info:
-                return None
+                if not info or "title" not in info:
+                    # Fallback: try without duration filter
+                    search_url = f"ytsearch1:{search_query}"
+                    info = ydl.extract_info(search_url, download=False)
 
-            # Download
-            ydl.download([search_url])
+                if not info or "title" not in info:
+                    return None
+
+                # Download
+                ydl.download([search_url])
 
             mp3_file = output_file.with_suffix(".mp3")
             if not mp3_file.exists():
@@ -181,8 +223,29 @@ def download_celebrity_audio(
             if not output_file.exists():
                 return None
 
-            # Trim to max_duration if needed
-            trim_audio(str(output_file), max_duration)
+            # If best segment is known, extract just that portion
+            if best_segment and 'start' in best_segment and 'end' in best_segment:
+                if verbose:
+                    print(f"    [DEBUG] Extracting best segment: [{best_segment['start']:.1f}s-{best_segment['end']:.1f}s]")
+                trimmed_path = str(output_file) + ".trimmed.wav"
+                try:
+                    subprocess.run(
+                        ["ffmpeg", "-y", "-i", str(output_file),
+                         "-ss", str(best_segment['start']),
+                         "-to", str(best_segment['end']),
+                         "-q:a", "0", trimmed_path],
+                        capture_output=True, timeout=30,
+                    )
+                    if Path(trimmed_path).exists():
+                        shutil.move(trimmed_path, str(output_file))
+                        if verbose:
+                            print(f"    [DEBUG] Trimmed to best segment successfully")
+                except Exception as e:
+                    if verbose:
+                        print(f"    [DEBUG] Error trimming to best segment: {e}")
+            else:
+                # Trim to max_duration if needed
+                trim_audio(str(output_file), max_duration)
 
             # Cache the result
             _celebrity_audio_cache[cache_key] = str(output_file)
@@ -195,6 +258,870 @@ def download_celebrity_audio(
         if output_file.exists():
             output_file.unlink()
         return None
+
+
+def find_best_celebrity_video(
+    client: Any,
+    model: str,
+    search_query: str,
+    celebrity: str,
+    description: str,
+    output_dir: str = ".",
+    max_results: int = 5,
+    verbose: bool = False,
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """Find the best YouTube video for a celebrity using Whisper transcription.
+
+    Searches YouTube, downloads audio, transcribes with Whisper,
+    uses LLM to determine which video likely has the celebrity speaking most clearly,
+    then returns the video URL and best segment timestamps for the best one.
+
+    Args:
+        client: OpenAI client instance
+        model: LLM model name
+        search_query: YouTube search query
+        celebrity: Celebrity name
+        description: Character description
+        output_dir: Directory for temp files
+        max_results: Max number of videos to check
+        verbose: Print debug output
+
+    Returns:
+        Tuple of (url, best_segment_info) where best_segment_info contains
+        'start', 'end', 'text' keys, or (None, None) on failure
+    """
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    if verbose:
+        print(f"    [DEBUG] Searching YouTube for {max_results} videos with query: '{search_query}'")
+
+    # Search YouTube for multiple results - use browser cookies to avoid rate limiting
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "socket_timeout": 30,
+        "retries": 2,
+        # Don't download anything yet, just get info
+        "skip_download": True,
+        # Use browser cookies to avoid rate limiting
+        "cookiesfrombrowser": ("firefox",),
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Search and get multiple results
+            search_url = f"ytsearch{max_results}:{search_query}"
+            info_dict = ydl.extract_info(search_url, download=False)
+
+            if not info_dict:
+                if verbose:
+                    print(f"    [DEBUG] No results found for '{search_query}'")
+                return None, None
+
+            # Extract entries from search result dict
+            info_list = []
+            if isinstance(info_dict, dict):
+                if 'entries' in info_dict:
+                    info_list = info_dict['entries']
+                elif 'url' in info_dict or 'title' in info_dict:
+                    info_list = [info_dict]
+            elif isinstance(info_dict, list):
+                info_list = info_dict
+
+            if not info_list:
+                if verbose:
+                    print(f"    [DEBUG] No results found for '{search_query}'")
+                return None, None
+
+            if verbose:
+                print(f"    [DEBUG] Found {len(info_list)} videos")
+
+            # Download audio and transcribe with Whisper, stopping early when LLM approves
+            candidate_videos = []
+            for idx, info in enumerate(info_list):
+                title = info.get('title', 'Unknown')
+                duration = info.get('duration', 0)
+                url = info.get('webpage_url', '')
+
+                if verbose:
+                    print(f"    [DEBUG] Video {idx+1}: {title[:60]} ({duration}s) - {url}")
+
+                # Download audio for this video
+                audio_path = _download_audio_for_transcription(
+                    info=info,
+                    output_dir=out_path,
+                    file_prefix=f"audio_{idx}",
+                )
+                
+                if audio_path:
+                    # Transcribe with Whisper
+                    whisper_text = _transcribe_with_whisper(
+                        audio_path=audio_path,
+                        whisper_model=None,
+                        max_duration=30,  # Only transcribe first 30 seconds
+                    )
+                    
+                    if whisper_text:
+                        candidate_videos.append({
+                            'index': idx,
+                            'title': title,
+                            'duration': duration,
+                            'url': url,
+                            'subtitle_text': whisper_text,
+                        })
+                        if verbose:
+                            print(f"    [DEBUG] Whisper transcription found for video {idx+1}: {len(whisper_text)} chars")
+                        
+                        # Stop early - ask LLM if this video is good enough
+                        if len(whisper_text) >= 200:
+                            approved, best_segment = _evaluate_single_video_with_llm(
+                                client=client,
+                                model=model,
+                                celebrity=celebrity,
+                                description=description,
+                                video=candidate_videos[-1],
+                                verbose=verbose,
+                            )
+                            if approved:
+                                # Store the best segment info for later extraction
+                                if best_segment:
+                                    candidate_videos[-1]['best_segment'] = best_segment
+                                if verbose:
+                                    print(f"    [DEBUG] LLM approved this video, stopping early")
+                                return candidate_videos[-1]['url'], best_segment
+                
+                # Clean up audio file after transcription
+                if audio_path and Path(audio_path).exists():
+                    try:
+                        os.unlink(audio_path)
+                    except Exception:
+                        pass
+
+            if not candidate_videos:
+                if verbose:
+                    print(f"    [DEBUG] No videos with transcriptions found")
+                return None, None
+
+            # If no video was approved early, use LLM to select the best from all candidates
+            if verbose:
+                print(f"    [DEBUG] No video approved early, selecting best from {len(candidate_videos)} candidates")
+            best_video = _select_best_video_with_llm(
+                client=client,
+                model=model,
+                celebrity=celebrity,
+                description=description,
+                candidate_videos=candidate_videos,
+                verbose=verbose,
+            )
+
+            if best_video:
+                if verbose:
+                    print(f"    [DEBUG] Best video selected: {best_video['title'][:60]} - {best_video['url']}")
+                return best_video['url'], best_video.get('best_segment')
+            else:
+                if verbose:
+                    print(f"    [DEBUG] LLM failed to select best video, returning first with transcription")
+                first = candidate_videos[0] if candidate_videos else None
+                return (first['url'], first.get('best_segment')) if first else (None, None)
+
+    except Exception as e:
+        if verbose:
+            print(f"    [DEBUG] Error finding best video: {e}")
+        return None, None
+
+
+def _download_and_parse_subtitles(
+    info: Dict[str, Any],
+    output_dir: Path,
+    file_prefix: str = "",
+) -> Optional[str]:
+    """Download and parse subtitles from a YouTube video using yt-dlp.
+
+    Uses yt-dlp to download subtitles directly (handles rate limiting),
+    then parses the content.
+
+    Args:
+        info: Video info dict from yt-dlp extract_info
+        output_dir: Directory to save temporary subtitle files
+        file_prefix: Prefix for subtitle files
+
+    Returns:
+        Parsed subtitle text or None if no subtitles available
+    """
+    try:
+        # Check for subtitles (manual or auto-generated)
+        subs = info.get('subtitles') or {}
+        auto_subs = info.get('automatic_captions') or {}
+
+        # Combine both sources
+        all_subs = {}
+        if subs:
+            all_subs.update(subs)
+        if auto_subs:
+            all_subs.update(auto_subs)
+
+        if not all_subs:
+            return None
+
+        # Find English subtitles
+        lang_keys = ['en', 'en-US', 'en-GB']
+        sub_lang = None
+        for lang in lang_keys:
+            if lang in all_subs:
+                sub_lang = lang
+                break
+
+        if not sub_lang:
+            # Try first available language
+            for lang in all_subs.keys():
+                sub_lang = lang
+                break
+
+        if not sub_lang:
+            return None
+
+        # Get the webpage URL for this video
+        video_url = info.get('webpage_url') or info.get('url')
+        if not video_url:
+            return None
+
+        # Create temp directory for subtitle download
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix=f"sub_{file_prefix}_") as tmp_dir:
+            # Use yt-dlp to download subtitles with browser cookies
+            ydl_opts = {
+                "format": "bestaudio/best",
+                "noplaylist": True,
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "writesubtitles": True,
+                "writeautomaticsub": False,
+                "subtitleslangs": [sub_lang],
+                "subtitlesformat": "vtt",
+                "outtmpl": os.path.join(tmp_dir, "%(id)s"),
+                # Use browser cookies to avoid rate limiting
+                "cookiesfrombrowser": ("firefox",),
+            }
+
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([video_url])
+            except Exception:
+                pass
+
+            # Look for downloaded subtitle files
+            for f in Path(tmp_dir).glob("*.vtt"):
+                content = f.read_text(encoding='utf-8')
+                parsed = _parse_vtt_content(content)
+                if parsed:
+                    return parsed
+
+            # Try SRT format
+            for f in Path(tmp_dir).glob("*.srt"):
+                content = f.read_text(encoding='utf-8')
+                parsed = _parse_srt_content(content)
+                if parsed:
+                    return parsed
+
+            # Try JSON3 format
+            for f in Path(tmp_dir).glob("*.json3"):
+                content = f.read_text(encoding='utf-8')
+                parsed = _parse_json3_content(content)
+                if parsed:
+                    return parsed
+
+        return None
+
+    except Exception as e:
+        return None
+
+
+def _download_audio_for_transcription(
+    info: Dict[str, Any],
+    output_dir: Path,
+    file_prefix: str = "",
+    max_duration: int = 30,
+) -> Optional[str]:
+    """Download audio from a YouTube video for transcription.
+
+    Args:
+        info: Video info dict from yt-dlp extract_info
+        output_dir: Directory to save audio file
+        file_prefix: Prefix for output filename
+        max_duration: Maximum duration in seconds
+
+    Returns:
+        Path to downloaded WAV file or None on failure
+    """
+    try:
+        video_url = info.get('webpage_url') or info.get('url')
+        if not video_url:
+            return None
+
+        output_file = output_dir / f"{file_prefix}_whisper_input.wav"
+
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "extractaudio": True,
+            "audioformat": "mp3",
+            "audioquality": 5,
+            "outtmpl": str(output_file.with_suffix(".mp3")),
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+            "socket_timeout": 30,
+            "retries": 2,
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([video_url])
+
+        mp3_file = output_file.with_suffix(".mp3")
+        if not mp3_file.exists():
+            print(f"    [DEBUG] Audio download failed: {mp3_file} does not exist")
+            return None
+
+        # Convert to WAV
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(mp3_file), "-q:a", "0", str(output_file)],
+            capture_output=True, timeout=30,
+        )
+        mp3_file.unlink(missing_ok=True)
+
+        if not output_file.exists():
+            print(f"    [DEBUG] WAV conversion failed: {output_file} does not exist")
+            return None
+
+        # Trim to max_duration
+        trim_audio(str(output_file), max_duration)
+
+        return str(output_file)
+
+    except Exception as e:
+        print(f"    [DEBUG] Error downloading audio for transcription: {e}")
+        return None
+
+
+def _transcribe_with_whisper(
+    audio_path: str,
+    whisper_model: Any = None,
+    max_duration: int = 30,
+) -> Optional[str]:
+    """Transcribe audio using Whisper.
+
+    Args:
+        audio_path: Path to audio file
+        whisper_model: WhisperModel instance (if None, will be created)
+        max_duration: Maximum duration to transcribe
+
+    Returns:
+        Transcribed text or None on failure
+    """
+    try:
+        from .utils import transcribe_audio_with_whisper
+
+        if not Path(audio_path).exists():
+            print(f"    [DEBUG] Whisper input file missing: {audio_path}")
+            return None
+
+        # Create Whisper model if needed
+        if whisper_model is None:
+            import whisper
+            whisper_model = whisper.load_model("base")
+
+        # Transcribe the audio
+        transcribed, start_times, end_times = transcribe_audio_with_whisper(whisper_model, audio_path)
+
+        if not transcribed:
+            print(f"    [DEBUG] Whisper transcription returned empty for {audio_path}")
+            return None
+
+        print(f"    [DEBUG] Whisper transcription succeeded: {len(transcribed)} chars")
+        return transcribed
+
+    except Exception as e:
+        print(f"    [DEBUG] Error in Whisper transcription: {e}")
+        return None
+
+
+def _download_subtitle_from_url(url: str, output_path: Path) -> bool:
+    """Download subtitle content from URL with retry logic.
+
+    Args:
+        url: Subtitle URL
+        output_path: Where to save the subtitle file
+
+    Returns:
+        True if successful, False otherwise
+    """
+    import time
+    import requests
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                output_path.write_text(resp.text, encoding='utf-8')
+                return True
+            elif resp.status_code == 429:
+                # Rate limited, wait and retry
+                wait_time = 2 ** attempt
+                time.sleep(wait_time)
+                continue
+            else:
+                return False
+        except Exception:
+            if attempt < max_retries - 1:
+                time.sleep(1)
+                continue
+            return False
+
+    return False
+
+
+def _parse_json3_content(content: str) -> Optional[str]:
+    """Parse JSON3 subtitle content and extract text with timestamps.
+
+    Args:
+        content: Raw JSON3 content string
+
+    Returns:
+        Formatted text with timestamps or None if parsing fails
+    """
+    try:
+        data = json.loads(content)
+        events = data.get('events', [])
+        if not events:
+            return None
+
+        result_lines = []
+        for event in events:
+            start_ms = event.get('tStartMs', 0)
+            duration_ms = event.get('dDurationMs', 0)
+            end_ms = start_ms + duration_ms
+
+            # Get text segments
+            segs = event.get('segs', [])
+            text = ''.join(seg.get('utf8', '') for seg in segs).strip()
+
+            # Skip empty or noise text
+            if not text or text in ['\n', '-']:
+                continue
+
+            # Clean up text (remove newlines within lines)
+            text = text.replace('\n', ' ').strip()
+
+            start_sec = start_ms / 1000.0
+            end_sec = end_ms / 1000.0
+
+            result_lines.append(f"[{start_sec:.1f}s-{end_sec:.1f}s] {text}")
+
+        return '\n'.join(result_lines) if result_lines else None
+
+    except Exception:
+        return None
+
+
+def _parse_vtt_content(content: str) -> Optional[str]:
+    """Parse VTT subtitle content and extract text with timestamps.
+
+    Args:
+        content: Raw VTT content string
+
+    Returns:
+        Formatted text with timestamps or None if parsing fails
+    """
+    lines = content.split('\n')
+    entries = []
+    current_start = None
+    current_end = None
+    current_text = []
+
+    for line in lines:
+        line = line.strip()
+
+        # Skip empty lines
+        if not line:
+            continue
+
+        # Skip WEBVTT header
+        if line.startswith('WEBVTT') or line.startswith('Kind:') or line.startswith('Language:'):
+            continue
+
+        # Skip cue identifier numbers
+        if line.isdigit():
+            continue
+
+        # Check for timestamp line (e.g., "00:00:00.000 --> 00:00:05.000")
+        if '-->' in line:
+            # Save previous entry
+            if current_start and current_text:
+                text = ' '.join(current_text).strip()
+                if text and text not in ['[Music]', '[Applause]', '[Laughter]', '(music)', '(applause)', '(laughter)']:
+                    entries.append({
+                        'start': current_start,
+                        'end': current_end,
+                        'text': text,
+                    })
+            current_text = []
+            parts = line.split('-->')
+            if len(parts) == 2:
+                current_start = _parse_vtt_time(parts[0].strip())
+                current_end = _parse_vtt_time(parts[1].strip())
+        else:
+            # This is subtitle text
+            current_text.append(line)
+
+    # Save last entry
+    if current_start and current_text:
+        text = ' '.join(current_text).strip()
+        if text and text not in ['[Music]', '[Applause]', '[Laughter]', '(music)', '(applause)', '(laughter)']:
+            entries.append({
+                'start': current_start,
+                'end': current_end,
+                'text': text,
+            })
+
+    if not entries:
+        return None
+
+    # Build formatted text
+    result_lines = []
+    for entry in entries:
+        start_str = f"{entry['start']:.1f}"
+        end_str = f"{entry['end']:.1f}"
+        result_lines.append(f"[{start_str}s-{end_str}s] {entry['text']}")
+
+    return '\n'.join(result_lines)
+
+
+def _parse_srt_content(content: str) -> Optional[str]:
+    """Parse SRT subtitle content and extract text with timestamps.
+
+    Args:
+        content: Raw SRT content string
+
+    Returns:
+        Formatted text with timestamps or None if parsing fails
+    """
+    lines = content.split('\n')
+    entries = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # Skip empty lines
+        if not line:
+            i += 1
+            continue
+
+        # Check if this is a sequence number
+        if line.isdigit():
+            i += 1
+            if i >= len(lines):
+                break
+
+            # Parse timestamp line (e.g., "00:00:00,000 --> 00:00:05,000")
+            time_line = lines[i].strip()
+            if '-->' in time_line:
+                parts = time_line.split('-->')
+                if len(parts) == 2:
+                    start = _parse_srt_time(parts[0].strip())
+                    end = _parse_srt_time(parts[1].strip())
+
+                    # Collect text lines until next entry
+                    text_lines = []
+                    i += 1
+                    while i < len(lines):
+                        text_line = lines[i].strip()
+                        if not text_line:
+                            break
+                        # Stop if next line is a number (sequence number)
+                        if text_line.isdigit():
+                            break
+                        text_lines.append(text_line)
+                        i += 1
+
+                    text = ' '.join(text_lines).strip()
+                    if text:
+                        entries.append({
+                            'start': start,
+                            'end': end,
+                            'text': text,
+                        })
+                    continue
+
+            i += 1
+        else:
+            i += 1
+
+    if not entries:
+        return None
+
+    # Build formatted text
+    result_lines = []
+    for entry in entries:
+        result_lines.append(f"[{entry['start']:.1f}s-{entry['end']:.1f}s] {entry['text']}")
+
+    return '\n'.join(result_lines)
+
+
+def _parse_srt_time(time_str: str) -> float:
+    """Parse SRT time string (e.g., "00:00:05,000") to seconds.
+
+    Args:
+        time_str: SRT time string
+
+    Returns:
+        Time in seconds as float
+    """
+    try:
+        time_str = time_str.strip()
+        # Handle format "HH:MM:SS,mmm"
+        if ',' in time_str:
+            parts = time_str.split(',')
+            time_part = parts[0]
+            ms = int(parts[1]) if len(parts) > 1 else 0
+        else:
+            time_part = time_str
+            ms = 0
+
+        if ':' in time_part:
+            time_parts = time_part.split(':')
+            hours = int(time_parts[0]) if len(time_parts) > 2 else 0
+            minutes = int(time_parts[1]) if len(time_parts) > 1 else 0
+            seconds = int(time_parts[2]) if len(time_parts) > 0 else 0
+            return hours * 3600 + minutes * 60 + seconds + ms / 1000.0
+
+        return float(time_str)
+    except (ValueError, IndexError):
+        return 0.0
+
+
+def _parse_vtt_time(time_str: str) -> float:
+    """Parse VTT time string (e.g., "00:00:05.000") to seconds.
+
+    Args:
+        time_str: VTT time string
+
+    Returns:
+        Time in seconds as float
+    """
+    try:
+        # Remove any extra spaces
+        time_str = time_str.strip()
+
+        # Handle format "HH:MM:SS.mmm" or "MM:SS.mmm"
+        if '.' in time_str:
+            parts = time_str.split('.')
+            if ':' in parts[0]:
+                time_parts = parts[0].split(':')
+                hours = int(time_parts[0]) if len(time_parts) > 2 else 0
+                minutes = int(time_parts[1]) if len(time_parts) > 1 else 0
+                seconds = int(time_parts[2]) if len(time_parts) > 0 else 0
+                return hours * 3600 + minutes * 60 + seconds + float(f"0.{parts[1]}")
+            else:
+                return float(time_str)
+
+        # Handle format without milliseconds
+        if ':' in time_str:
+            time_parts = time_str.split(':')
+            hours = int(time_parts[0]) if len(time_parts) > 2 else 0
+            minutes = int(time_parts[1]) if len(time_parts) > 1 else 0
+            seconds = int(time_parts[2]) if len(time_parts) > 0 else 0
+            return hours * 3600 + minutes * 60 + seconds
+
+        return float(time_str)
+    except (ValueError, IndexError):
+        return 0.0
+
+
+def _select_best_video_with_llm(
+    client: Any,
+    model: str,
+    celebrity: str,
+    description: str,
+    candidate_videos: List[Dict[str, Any]],
+    verbose: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Use LLM to select the best video based on subtitles.
+
+    Args:
+        client: OpenAI client instance
+        model: LLM model name
+        celebrity: Celebrity name
+        description: Character description
+        candidate_videos: List of candidate videos with subtitles
+        verbose: Print debug output
+
+    Returns:
+        Best video dict or None on failure
+    """
+    if not candidate_videos:
+        return None
+
+    # Build prompt for LLM
+    videos_summary = []
+    for i, vid in enumerate(candidate_videos):
+        # Truncate subtitle text to keep prompt manageable
+        subtitle_text = vid.get('subtitle_text', '')[:2000]
+        videos_summary.append(
+            f"Video {i+1}: {vid['title'][:80]}\n"
+            f"Duration: {vid['duration']}s\n"
+            f"Subtitles:\n{subtitle_text}\n"
+        )
+
+    videos_text = "\n---\n".join(videos_summary)
+
+    prompt = f"""You are analyzing YouTube videos to find one that contains speech segments suitable for extracting {celebrity}'s voice.
+
+Given character description: {description}
+
+These videos may contain multiple speakers (interviews, podcasts, etc.). Your task is to find which video has the BEST segments where {celebrity} speaks clearly enough to extract their voice for voice cloning.
+
+Consider:
+1. Does the video contain any segments where {celebrity} is actually speaking (first-person, personal experiences)?
+2. Which video has the most clear, isolated segments of {celebrity} speaking?
+3. Are there usable segments even if other speakers are present?
+
+Return ONLY a JSON object with:
+- "best_index": 0-based index of the best video (integer)
+- "reason": Brief explanation why this video was chosen
+
+Example:
+{{"best_index": 2, "reason": "This interview has Awkwafina answering questions directly with clear speech segments suitable for voice extraction"}}
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": f"Select the best video for {celebrity} from these {len(candidate_videos)} options:\n\n{videos_text}"},
+            ],
+        )
+
+        raw = response.choices[0].message.content
+        if not raw:
+            return None
+
+        # Parse JSON
+        start_idx = raw.find("{")
+        end_idx = raw.rfind("}") + 1
+        if start_idx >= 0 and end_idx > start_idx:
+            result = json.loads(raw[start_idx:end_idx])
+            best_idx = result.get('best_index', 0)
+            reason = result.get('reason', 'N/A')
+
+            if verbose:
+                print(f"    [DEBUG] LLM selected video {best_idx}: {reason}")
+
+            if 0 <= best_idx < len(candidate_videos):
+                return candidate_videos[best_idx]
+
+        return None
+
+    except Exception as e:
+        if verbose:
+            print(f"    [DEBUG] Error selecting best video: {e}")
+        return None
+
+
+def _evaluate_single_video_with_llm(
+    client: Any,
+    model: str,
+    celebrity: str,
+    description: str,
+    video: Dict[str, Any],
+    verbose: bool = False,
+) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """Ask LLM if a single video is good enough for celebrity voice.
+
+    Returns tuple of (approved, best_segment_info) where best_segment_info
+    contains 'start', 'end', 'text' if approved.
+    """
+    subtitle_text = video.get('subtitle_text', '')[:2000]
+
+    prompt = f"""You are evaluating a YouTube video to determine if it contains speech segments suitable for extracting the celebrity {celebrity}'s voice.
+
+Character description: {description}
+
+Video: {video['title']}
+Duration: {video['duration']}s
+Transcription excerpt:
+{subtitle_text}
+
+This video may contain multiple speakers (interviews, podcasts, conversations). Your task is to identify the BEST segment where {celebrity} speaks clearly enough to extract their voice.
+
+Consider:
+1. Does {celebrity} speak at all in this video? Look for first-person statements, personal experiences, or direct dialogue.
+2. Are there any clear, isolated segments of {celebrity} speaking (even if short)?
+3. Is the audio quality acceptable for voice extraction?
+
+Return ONLY a JSON object with:
+- "approved": true or false (boolean)
+- "reason": Brief explanation
+- "best_start": Start time in seconds of the best segment (float), e.g. 5.2
+- "best_end": End time in seconds of the best segment (float), e.g. 12.8
+- "best_text": The transcribed text of the best segment
+
+If not approved, set best_start/best_end to null.
+
+Example:
+{{"approved": true, "reason": "Ryan Reynolds speaks directly in several interview segments", "best_start": 5.2, "best_end": 12.8, "best_text": "Yeah, we sure did"}}
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": f"Is this video good enough for {celebrity}'s voice? Find the best segment."},
+            ],
+        )
+
+        raw = response.choices[0].message.content
+        if not raw:
+            return False, None
+
+        # Parse JSON
+        start_idx = raw.find("{")
+        end_idx = raw.rfind("}") + 1
+        if start_idx >= 0 and end_idx > start_idx:
+            result = json.loads(raw[start_idx:end_idx])
+            approved = result.get('approved', False)
+            reason = result.get('reason', 'N/A')
+            best_start = result.get('best_start')
+            best_end = result.get('best_end')
+            best_text = result.get('best_text')
+
+            if verbose:
+                print(f"    [DEBUG] LLM evaluated video: {'APPROVED' if approved else 'REJECTED'} - {reason}")
+
+            best_segment = None
+            if approved and best_start is not None and best_end is not None:
+                best_segment = {
+                    'start': float(best_start),
+                    'end': float(best_end),
+                    'text': best_text or '',
+                }
+                if verbose:
+                    print(f"    [DEBUG] Best segment: [{best_start:.1f}s-{best_end:.1f}s] {best_text[:80]}...")
+
+            return approved, best_segment
+
+        return False, None
+
+    except Exception as e:
+        if verbose:
+            print(f"    [DEBUG] Error evaluating video: {e}")
+        return False, None
 
 
 def trim_audio(audio_path: str, max_duration: int) -> None:
@@ -329,14 +1256,30 @@ def extract_speech_segments(
         return [str(segment_path)]
 
 
-CELEBRITY_SPEECH_SEGMENT_PROMPT = """You are analyzing a transcribed audio clip of a celebrity. The audio may contain multiple speakers (e.g., an interview with a host and guest).
+CELEBRITY_SPEECH_SEGMENT_PROMPT = """You are analyzing a transcribed audio clip that may contain multiple speakers. You must identify which speaker is the celebrity and select ONLY their speech segments.
 
 Given:
 - Celebrity name: {celebrity}
 - Character description: {description}
 - Transcription with timestamps: {transcription}
 
-Identify which portions of the audio are most likely spoken by the celebrity {celebrity}. The celebrity's speech should match the voice qualities described in the character description.
+CRITICAL INSTRUCTIONS:
+1. FIRST identify all speakers in the audio. Look for patterns like:
+   - Host/interviewer asking questions (often shorter, directed at someone)
+   - Guest/celebrity answering (longer, more personal responses)
+   - Third parties talking ABOUT the celebrity (mentions by name, "she said", "he mentioned")
+   - Multiple people talking at once or overlapping
+   
+2. Then select ONLY segments where the celebrity {celebrity} is speaking. A segment should NOT be selected if:
+   - Someone else is talking about the celebrity
+   - The speaker is clearly an interviewer/host asking questions
+   - The content suggests a third party describing events (like "some people say that...")
+   - The speaker is introducing or talking about the celebrity rather than being the celebrity
+   
+3. The celebrity's speech should:
+   - Match the gender described in the character description (if female, look for female speech; if male, look for male speech)
+   - Use first-person language ("I", "my", "we") rather than third-person references to the celebrity
+   - Be the actual voice of the celebrity, not someone else talking about them
 
 Output ONLY a JSON array of objects, each with:
 - "start": start time in seconds (float)
@@ -344,7 +1287,7 @@ Output ONLY a JSON array of objects, each with:
 - "text": the transcribed text for this segment
 
 Select up to 3 best segments that:
-1. Are most likely spoken by the celebrity (not the host/interviewer)
+1. Are definitely spoken BY the celebrity (not about them, not by hosts)
 2. Have clear speech (no music, crowd noise, or overlapping voices)
 3. Are at least 2 seconds long
 4. Best represent the voice quality described
@@ -354,6 +1297,8 @@ Example output:
   {{"start": 5.2, "end": 12.8, "text": "I think the key is to stay focused and keep pushing forward"}},
   {{"start": 18.0, "end": 25.5, "text": "Every challenge is an opportunity to grow"}}
 ]
+
+IMPORTANT: If you cannot determine which speaker is the celebrity, return an empty array []. It's better to return no segments than to select the wrong speaker.
 """
 
 
@@ -375,7 +1320,7 @@ def identify_celebrity_segments(
         celebrity: Celebrity name
         description: Character description (JSON string)
         audio_path: Path to the audio file
-        whisper_model: WhisperModel instance
+        whisper_model: WhisperModel instance (if None, loads base model)
         max_segments: Maximum number of segments to return
         verbose: Print debug output
 
@@ -387,6 +1332,11 @@ def identify_celebrity_segments(
 
         if verbose:
             print(f"      [DEBUG] Transcribing celebrity audio with Whisper...")
+
+        # Load whisper model if not provided
+        if whisper_model is None:
+            import whisper
+            whisper_model = whisper.load_model("base")
 
         # Transcribe the full audio with word-level timestamps
         transcribed, start_times, end_times = transcribe_audio_with_whisper(whisper_model, audio_path)
@@ -517,12 +1467,17 @@ def build_celebrity_voice(
     # Match celebrity - use pre-matched if available
     if pre_matched_celebrity:
         print(f"    [DEBUG] Using pre-matched celebrity: {pre_matched_celebrity}")
-        # Generate a character-specific search query to avoid downloading the same video
-        character_key = base_character.replace(" ", "_").lower()
+        try:
+            desc_obj = json.loads(description) if isinstance(description, str) else description
+            style = desc_obj.get("style", "") if isinstance(desc_obj, dict) else ""
+            gender = desc_obj.get("gender", "") if isinstance(desc_obj, dict) else ""
+        except (json.JSONDecodeError, AttributeError):
+            style = ""
+            gender = ""
         match = {
             "celebrity": pre_matched_celebrity,
             "reason": "Pre-matched from character description",
-            "search_query": f"{pre_matched_celebrity} {character_key} voice",
+            "search_query": f"{pre_matched_celebrity} {style} dialogue",
         }
     else:
         print(f"    [DEBUG] No pre-matched celebrity - calling LLM to match for '{character}'")
@@ -536,10 +1491,23 @@ def build_celebrity_voice(
     print(f"    [DEBUG] Search query: {search_query}")
 
     # Generate alternative search queries for diversity
-    search_queries = [search_query]
-    character_key = base_character.replace(" ", "_").lower()
-    search_queries.append(f"{celebrity} interview")
-    search_queries.append(f"{celebrity} speech")
+    # Include character traits from description for better matching
+    try:
+        desc_obj = json.loads(description) if isinstance(description, str) else description
+        style = desc_obj.get("style", "") if isinstance(desc_obj, dict) else ""
+        gender = desc_obj.get("gender", "") if isinstance(desc_obj, dict) else ""
+        age = desc_obj.get("age", "") if isinstance(desc_obj, dict) else ""
+    except (json.JSONDecodeError, AttributeError):
+        style = ""
+        gender = ""
+        age = ""
+
+    # Build queries that focus on emotional/dialogue scenes
+    search_queries = [
+        f"{celebrity} {style} dialogue",
+        f"{celebrity} emotional scene",
+        f"{celebrity} {gender} speech",
+    ]
 
     # Download audio samples and extract segments
     all_segments = []
@@ -557,6 +1525,11 @@ def build_celebrity_voice(
             output_dir=output_dir,
             max_duration=max_duration,
             file_prefix=file_prefix,
+            client=client,
+            model=model,
+            celebrity=celebrity,
+            description=description,
+            verbose=True,
         )
         
         if not audio_path:

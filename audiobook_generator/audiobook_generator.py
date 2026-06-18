@@ -283,12 +283,24 @@ def _validate_and_clip_audio(
 
     if tts_config.validation_model is not None:
         if tts_config.whisper_pool is not None:
-            segments_list, info = tts_config.whisper_pool.transcribe(output_path, beam_size=5, word_timestamps=True)
+            result = tts_config.whisper_pool.transcribe(output_path, beam_size=5, word_timestamps=True)
+            if isinstance(result, dict):
+                segments_list = result.get("segments", [])
+            else:
+                segments_list = result
         elif tts_config.whisper_lock:
             with tts_config.whisper_lock:
-                segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+                result = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+                if isinstance(result, dict):
+                    segments_list = result.get("segments", [])
+                else:
+                    segments_list = result
         else:
-            segments_list, info = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+            result = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
+            if isinstance(result, dict):
+                segments_list = result.get("segments", [])
+            else:
+                segments_list = result
 
         segments, start_times, end_times = collect_transcription_segments(segments_list)
 

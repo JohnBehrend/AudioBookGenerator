@@ -472,16 +472,25 @@ def collect_transcription_segments(
     Returns:
         Tuple of (segments, start_times, end_times) lists
     """
-    from .utils import distill_string
-
     segments = []
     start_times = []
     end_times = []
 
     for segment in segments_list:
-        for word in segment.words:
-            segments.append(distill_string(word.word.strip()))
-            start_times.append(word.start)
-            end_times.append(word.end)
+        # Handle both dict and object-based segment structures
+        if isinstance(segment, dict):
+            words = segment.get("words", [])
+        else:
+            words = getattr(segment, "words", [])
+
+        for word in words:
+            if isinstance(word, dict):
+                segments.append(word.get("word", "").strip())
+                start_times.append(word.get("start", 0.0))
+                end_times.append(word.get("end", 0.0))
+            else:
+                segments.append(word.word.strip())
+                start_times.append(word.start)
+                end_times.append(word.end)
 
     return segments, start_times, end_times

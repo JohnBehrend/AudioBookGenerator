@@ -747,8 +747,13 @@ def transcribe_audio_with_whisper(validation_model: Any, audio_path: str) -> Tup
     """
     result = validation_model.transcribe(audio_path, beam_size=5, word_timestamps=True)
     
+    # Handle different return types from whisper models
     if isinstance(result, dict):
+        # openai-whisper returns dict with "segments" key
         segments_list = result.get("segments", [])
+    elif isinstance(result, tuple):
+        # faster_whisper returns (generator, info) tuple
+        segments_list = result[0] if len(result) > 0 else []
     else:
         segments_list = result
     
@@ -775,8 +780,13 @@ def transcribe_audio_for_ref_text(validation_model: Any, audio_path: str, verbos
     try:
         result = validation_model.transcribe(audio_path, beam_size=5, word_timestamps=True)
         
+        # Handle different return types from whisper models
         if isinstance(result, dict):
+            # openai-whisper returns dict with "segments" key
             segments_list = result.get("segments", [])
+        elif isinstance(result, tuple):
+            # faster_whisper returns (generator, info) tuple
+            segments_list = result[0] if len(result) > 0 else []
         else:
             segments_list = result
         

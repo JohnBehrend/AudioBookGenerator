@@ -628,10 +628,10 @@ def _transcribe_with_whisper(
             print(f"    [DEBUG] Whisper input file missing: {audio_path}")
             return None
 
-        # Create Whisper model if needed
+        # Create Whisper model if needed (using faster_whisper)
         if whisper_model is None:
-            import whisper
-            whisper_model = whisper.load_model("base")
+            from faster_whisper import WhisperModel
+            whisper_model = WhisperModel("base", device="cuda", compute_type="float16")
 
         # Transcribe the audio
         transcribed, start_times, end_times = transcribe_audio_with_whisper(whisper_model, audio_path)
@@ -1333,10 +1333,10 @@ def identify_celebrity_segments(
         if verbose:
             print(f"      [DEBUG] Transcribing celebrity audio with Whisper...")
 
-        # Load whisper model if not provided
+        # Load whisper model if not provided (using faster_whisper)
         if whisper_model is None:
-            import whisper
-            whisper_model = whisper.load_model("base")
+            from faster_whisper import WhisperModel
+            whisper_model = WhisperModel("base", device="cuda", compute_type="float16")
 
         # Transcribe the full audio with word-level timestamps
         transcribed, start_times, end_times = transcribe_audio_with_whisper(whisper_model, audio_path)

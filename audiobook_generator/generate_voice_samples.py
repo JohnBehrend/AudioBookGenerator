@@ -65,13 +65,23 @@ def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_mo
         is_valid = True
         reasons = []
 
+        gender_prob = result["gender"]["prob"]
+        age_prob = result["age"]["prob"]
+        GENDER_CONFIDENCE_THRESHOLD = 0.7
+
         if expected_gender is not None and predicted_gender != expected_gender:
-            is_valid = False
-            reasons.append(f"gender mismatch: expected {expected_gender}, got {predicted_gender}")
+            if gender_prob >= GENDER_CONFIDENCE_THRESHOLD:
+                is_valid = False
+                reasons.append(f"gender mismatch: expected {expected_gender}, got {predicted_gender} (conf: {gender_prob:.2f})")
+            elif verbose:
+                print(f"      [INFO] Gender mismatch ignored (conf: {gender_prob:.2f} < {GENDER_CONFIDENCE_THRESHOLD})")
 
         if not skip_age and expected_age is not None and predicted_age != expected_age:
-            is_valid = False
-            reasons.append(f"age mismatch: expected {expected_age}, got {predicted_age}")
+            if age_prob >= 0.7:
+                is_valid = False
+                reasons.append(f"age mismatch: expected {expected_age}, got {predicted_age} (conf: {age_prob:.2f})")
+            elif verbose:
+                print(f"      [INFO] Age mismatch ignored (conf: {age_prob:.2f} < 0.7)")
 
         if verbose:
             print(f"      Description: {description[:80]}")

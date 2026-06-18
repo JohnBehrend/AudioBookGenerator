@@ -1438,12 +1438,12 @@ def identify_celebrity_segments(
                     segments = json.loads(cleaned)
                 except json.JSONDecodeError:
                     if verbose:
-                        print(f"      [DEBUG] Failed to parse JSON from LLM response")
+                        print(f"      [DEBUG] Failed to parse JSON from LLM response: {raw[start_idx:end_idx][:200]}")
                     return []
             # Validate and filter
             valid_segments = []
             for seg in segments:
-                if all(k in seg for k in ['start', 'end', 'text']):
+                if isinstance(seg, dict) and all(k in seg for k in ['start', 'end', 'text']):
                     duration = seg['end'] - seg['start']
                     if duration >= 2.0:
                         valid_segments.append(seg)

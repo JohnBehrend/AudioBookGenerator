@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yt_dlp
 
@@ -22,6 +22,33 @@ from .config import LLM_SETTINGS
 
 # Module-level cache for celebrity audio downloads to avoid duplicate YouTube requests
 _celebrity_audio_cache: Dict[str, str] = {}
+
+
+def _retry_llm_call(func: Callable, max_retries: int = 3, backoff: float = 1.0, verbose: bool = False) -> Any:
+    """Retry an LLM call with exponential backoff on connection errors.
+
+    Args:
+        func: Function to call (no arguments)
+        max_retries: Maximum number of attempts
+        backoff: Initial backoff in seconds
+        verbose: Print debug output
+
+    Returns:
+        Result of func() or None on failure
+    """
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            err_str = str(e).lower()
+            if "connection" in err_str or "timeout" in err_str or "reset" in err_str:
+                wait_time = backoff * (2 ** attempt)
+                if verbose:
+                    print(f"      [DEBUG] LLM connection error (attempt {attempt+1}/{max_retries}): {e}, retrying in {wait_time:.1f}s")
+                time.sleep(wait_time)
+            else:
+                raise
+    return None
 
 
 CELEBRITY_MATCHING_PROMPT = """You are a voice matching expert. Given a character description, suggest a celebrity whose voice best matches.
@@ -977,7 +1004,7 @@ Example:
 {{"best_index": 2, "reason": "This interview has Awkwafina answering questions directly with clear speech segments suitable for voice extraction"}}
 """
 
-    try:
+    def _llm_call():
         response = client.chat.completions.create(
             model=model,
             messages=[
@@ -985,31 +1012,29 @@ Example:
                 {"role": "user", "content": f"Select the best video for {celebrity} from these {len(candidate_videos)} options:\n\n{videos_text}"},
             ],
         )
+        return response.choices[0].message.content
 
-        raw = response.choices[0].message.content
-        if not raw:
-            return None
-
-        # Parse JSON
-        start_idx = raw.find("{")
-        end_idx = raw.rfind("}") + 1
-        if start_idx >= 0 and end_idx > start_idx:
-            result = json.loads(raw[start_idx:end_idx])
-            best_idx = result.get('best_index', 0)
-            reason = result.get('reason', 'N/A')
-
-            if verbose:
-                print(f"    [DEBUG] LLM selected video {best_idx}: {reason}")
-
-            if 0 <= best_idx < len(candidate_videos):
-                return candidate_videos[best_idx]
-
-        return None
-
-    except Exception as e:
+    raw = _retry_llm_call(_llm_call, max_retries=3, backoff=2.0, verbose=verbose)
+    if not raw:
         if verbose:
-            print(f"    [DEBUG] Error selecting best video: {e}")
+            print(f"    [DEBUG] Error selecting best video: Connection error (all retries failed)")
         return None
+
+    # Parse JSON
+    start_idx = raw.find("{")
+    end_idx = raw.rfind("}") + 1
+    if start_idx >= 0 and end_idx > start_idx:
+        result = json.loads(raw[start_idx:end_idx])
+        best_idx = result.get('best_index', 0)
+        reason = result.get('reason', 'N/A')
+
+        if verbose:
+            print(f"    [DEBUG] LLM selected video {best_idx}: {reason}")
+
+        if 0 <= best_idx < len(candidate_videos):
+            return candidate_videos[best_idx]
+
+    return None
 
 
 def _evaluate_single_video_with_llm(
@@ -1061,7 +1086,7 @@ Example:
 {{"approved": true, "reason": "Ryan Reynolds speaks directly in several interview segments", "best_start": 5.2, "best_end": 15.8, "best_text": "I think the key is to stay focused and keep pushing forward"}}
 """
 
-    try:
+    def _llm_call():
         response = client.chat.completions.create(
             model=model,
             messages=[
@@ -1069,53 +1094,51 @@ Example:
                 {"role": "user", "content": f"Is this video good enough for {celebrity}'s voice? Find the best segment."},
             ],
         )
+        return response.choices[0].message.content
 
-        raw = response.choices[0].message.content
-        if not raw:
-            return False, None
-
-        # Parse JSON
-        start_idx = raw.find("{")
-        end_idx = raw.rfind("}") + 1
-        if start_idx >= 0 and end_idx > start_idx:
-            result = json.loads(raw[start_idx:end_idx])
-            approved = result.get('approved', False)
-            reason = result.get('reason', 'N/A')
-            best_start = result.get('best_start')
-            best_end = result.get('best_end')
-            best_text = result.get('best_text')
-
-            if verbose:
-                print(f"    [DEBUG] LLM evaluated video: {'APPROVED' if approved else 'REJECTED'} - {reason}")
-
-            best_segment = None
-            if approved and best_start is not None and best_end is not None:
-                seg_start = float(best_start)
-                seg_end = float(best_end)
-                seg_duration = seg_end - seg_start
-
-                # Enforce minimum segment length (10 seconds)
-                if seg_duration < 10.0:
-                    if verbose:
-                        print(f"    [DEBUG] Segment too short ({seg_duration:.1f}s), rejecting video")
-                    return False, None
-
-                best_segment = {
-                    'start': seg_start,
-                    'end': seg_end,
-                    'text': best_text or '',
-                }
-                if verbose:
-                    print(f"    [DEBUG] Best segment: [{seg_start:.1f}s-{seg_end:.1f}s] ({seg_duration:.1f}s) {best_text[:80]}...")
-
-            return approved, best_segment
-
-        return False, None
-
-    except Exception as e:
+    raw = _retry_llm_call(_llm_call, max_retries=3, backoff=2.0, verbose=verbose)
+    if not raw:
         if verbose:
-            print(f"    [DEBUG] Error evaluating video: {e}")
+            print(f"    [DEBUG] Error evaluating video: Connection error (all retries failed)")
         return False, None
+
+    # Parse JSON
+    start_idx = raw.find("{")
+    end_idx = raw.rfind("}") + 1
+    if start_idx >= 0 and end_idx > start_idx:
+        result = json.loads(raw[start_idx:end_idx])
+        approved = result.get('approved', False)
+        reason = result.get('reason', 'N/A')
+        best_start = result.get('best_start')
+        best_end = result.get('best_end')
+        best_text = result.get('best_text')
+
+        if verbose:
+            print(f"    [DEBUG] LLM evaluated video: {'APPROVED' if approved else 'REJECTED'} - {reason}")
+
+        best_segment = None
+        if approved and best_start is not None and best_end is not None:
+            seg_start = float(best_start)
+            seg_end = float(best_end)
+            seg_duration = seg_end - seg_start
+
+            # Enforce minimum segment length (10 seconds)
+            if seg_duration < 10.0:
+                if verbose:
+                    print(f"    [DEBUG] Segment too short ({seg_duration:.1f}s), rejecting video")
+                return False, None
+
+            best_segment = {
+                'start': seg_start,
+                'end': seg_end,
+                'text': best_text or '',
+            }
+            if verbose:
+                print(f"    [DEBUG] Best segment: [{seg_start:.1f}s-{seg_end:.1f}s] ({seg_duration:.1f}s) {best_text[:80]}...")
+
+        return approved, best_segment
+
+    return False, None
 
 
 def trim_audio(audio_path: str, max_duration: int) -> None:
@@ -1390,16 +1413,20 @@ def identify_celebrity_segments(
             transcription=timestamped_text,
         )
 
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": "Analyze the transcription and identify which segments are spoken by the celebrity."},
-            ],
-        )
+        def _llm_call():
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": "Analyze the transcription and identify which segments are spoken by the celebrity."},
+                ],
+            )
+            return response.choices[0].message.content
 
-        raw = response.choices[0].message.content
+        raw = _retry_llm_call(_llm_call, max_retries=3, backoff=2.0, verbose=verbose)
         if not raw:
+            if verbose:
+                print(f"      [DEBUG] Error identifying celebrity segments: Connection error (all retries failed)")
             return []
 
         # Parse JSON array from response

@@ -521,10 +521,11 @@ class VoiceMapper:
                         audio_sources = metadata.get('audio_sources', [])
                         print(f"    [DEBUG] Audio sources downloaded: {len(audio_sources)}")
 
-                # Collect all segments to try
+                # Collect all segments to try (limit to 3 per sample)
                 all_segments = metadata.get('segments', [voice_path]) if metadata else [voice_path]
                 if voice_path not in all_segments:
                     all_segments.insert(0, voice_path)
+                all_segments = all_segments[:3]
 
                 # Now use the celebrity audio as a voice reference to generate a proper WAV
                 # speaking the static text (not just raw YouTube audio)

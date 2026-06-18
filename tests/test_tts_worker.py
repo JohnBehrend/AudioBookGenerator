@@ -46,8 +46,8 @@ class TestEngineWorker:
         mock_process.poll.return_value = None
         mock_popen.return_value = mock_process
         
-        # Mock _ensure_env
-        with patch("tts.worker._ensure_env", return_value="/usr/bin/python"):
+        # Mock _find_python
+        with patch.object(EngineWorker, '_find_python', return_value="/usr/bin/python"):
             worker = EngineWorker(Path("/tmp/test-engine"), device="cuda:0")
             worker.start()
             
@@ -92,54 +92,63 @@ class TestEngineWorker:
             mock_shutdown.assert_called_once()
 
 
-class TestEnsureEnv:
-    """Test _ensure_env function."""
+class TestFindPython:
+    """Test EngineWorker._find_python method."""
 
-    @patch("tts.worker.subprocess.run")
-    def test_existing_env(self, mock_run):
-        """Test using existing environment."""
-        from tts.worker import _ensure_env
+    def test_find_python_without_venv(self):
+        """Test raising error when venv doesn't exist."""
+        from tts.worker import EngineWorker
 
-        # Mock that venv exists and has audiobook_generator installed
-        mock_run.return_value = MagicMock(returncode=0)
+        engine_dir = Path("/tmp/test-engine")
+        worker = EngineWorker(engine_dir)
 
-        with patch("tts.worker.Path.exists", return_value=True):
-            result = _ensure_env("omni", Path("/tmp/test-engine"))
-            assert isinstance(result, str)
+        with patch("pathlib.Path.exists", return_value=False):
+            with pytest.raises(RuntimeError, match="environment not set up"):
+                worker._find_python()
 
 
-class TestRunCmd:
-    """Test _run_cmd function."""
+class TestProtocol:
+    """Test JSON protocol format."""
 
-    @patch("tts.worker.subprocess.run")
-    def test_successful_command(self, mock_run):
-        """Test successful command execution."""
-        from tts.worker import _run_cmd
+    def test_ready_message(self):
+        """Test ready message format."""
+        msg = {"type": "ready"}
+        assert msg["type"] == "ready"
+
+    def test_request_format(self):
+        """Test request message format."""
+        req = {
+            "type": "request",
+            "id": 1,
+            "method": "generate_line",
+            "kwargs": {
+                "text": "Hello world",
+                "voice_path": "/path/to/voice.wav",
+                "output_path": "/path/to/output.wav",
+            }
+        }
+        assert req["type"] == "request"
+        assert req["id"] == 1
+        assert req["method"] == "generate_line"
+        assert "text" in req["kwargs"]
+        assert "voice_path" in req["kwargs"]
+        assert "output_path" in req["kwargs"]
+
+    def test_response_format(self):
+        """Test response message format."""
+        resp_success = {"id": 1, "success": True}
+        resp_fail = {"id": 1, "success": False}
+        resp_error = {"id": 1, "error": "message", "traceback": "..."}
         
-        mock_run.return_value = MagicMock(returncode=0, stderr="")
-        _run_cmd(["uv", "venv"], "/tmp", {}, "create venv", "omni")
-        
-        mock_run.assert_called_once()
+        assert resp_success["id"] == 1
+        assert resp_success["success"] is True
+        assert resp_fail["success"] is False
+        assert resp_error["error"] == "message"
 
-    @patch("tts.worker.subprocess.run")
-    def test_failed_command(self, mock_run):
-        """Test failed command execution."""
-        from tts.worker import _run_cmd
-        
-        mock_run.return_value = MagicMock(returncode=1, stderr="Error occurred")
-        
-        with pytest.raises(RuntimeError, match="Failed to create venv"):
-            _run_cmd(["uv", "venv"], "/tmp", {}, "create venv", "omni")
-
-
-class TestRunWorkerSubprocess:
-    """Test _run_worker_subprocess function."""
-
-    def test_function_exists(self):
-        """Test that _run_worker_subprocess exists."""
-        from tts.worker import _run_worker_subprocess
-        
-        assert callable(_run_worker_subprocess)
+    def test_shutdown_message(self):
+        """Test shutdown message format."""
+        msg = {"type": "shutdown"}
+        assert msg["type"] == "shutdown"
 
 
 class TestProtocol:

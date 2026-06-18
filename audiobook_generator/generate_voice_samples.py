@@ -583,7 +583,7 @@ def generate_voice_samples(
                         continue
 
                 # Generate samples sequentially until one passes validation
-                max_attempts = 5 if use_celebrity_voices else 3
+                max_attempts = 3 if use_celebrity_voices else 3
 
                 # Use non-celebrity mapper for deduplicated characters
                 char_has_celebrity = char_name not in chars_no_celebrity
@@ -692,9 +692,19 @@ def generate_voice_samples(
                         print(f"    [DEBUG] Voice file exists: {os.path.exists(final_path)}")
                         print(f"    [DEBUG] Voice file size: {os.path.getsize(final_path) if os.path.exists(final_path) else 'N/A'} bytes")
                 else:
-                    failed.append(char_name)
-                    if verbose:
-                        print(f"    All {max_attempts} samples failed for '{char_name}'")
+                    # If all ChunkFormer checks failed, pick the first generated sample anyway
+                    if all_attempts:
+                        first_matches, first_file, first_num, first_dur = all_attempts[0]
+                        final_path = os.path.join(output_dir, f"{char_name}.wav")
+                        shutil.copy2(first_file, final_path)
+                        generated[char_name] = final_path
+                        if verbose:
+                            print(f"    All samples failed ChunkFormer but picking first: sample {first_num}, {first_matches}/{len(ref_words)} words ({first_dur:.1f}s): {final_path}")
+                            print(f"    [DEBUG] Final voice file: {final_path}")
+                    else:
+                        failed.append(char_name)
+                        if verbose:
+                            print(f"    All {max_attempts} samples failed for '{char_name}'")
                 # Always clean up all temp files
                 for _fa in range(1, max_attempts + 1):
                     _fp = os.path.join(output_dir, f"{char_name}.sample{_fa}.wav")

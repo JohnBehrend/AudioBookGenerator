@@ -516,13 +516,12 @@ class VoiceMapper:
                     if metadata:
                         print(f"    [DEBUG] Celebrity: {metadata.get('celebrity', 'N/A')}")
                         print(f"    [DEBUG] Search query: {metadata.get('search_query', 'N/A')}")
-                        print(f"    [DEBUG] Best segment: {metadata.get('best_segment', 'N/A')}")
                         all_segments = metadata.get('segments', [voice_path])
                         print(f"    [DEBUG] Available segments: {len(all_segments)}")
                         audio_sources = metadata.get('audio_sources', [])
                         print(f"    [DEBUG] Audio sources downloaded: {len(audio_sources)}")
 
-                # Collect all segments to try (best first, then alternatives)
+                # Collect all segments to try
                 all_segments = metadata.get('segments', [voice_path]) if metadata else [voice_path]
                 if voice_path not in all_segments:
                     all_segments.insert(0, voice_path)
@@ -530,14 +529,17 @@ class VoiceMapper:
                 # Now use the celebrity audio as a voice reference to generate a proper WAV
                 # speaking the static text (not just raw YouTube audio)
                 static_text = DEFAULTS.get("static_voice_text", "")
-                ref_output_path = os.path.join(str(output_dir), f"{character_name}_ref.wav")
 
-                # Try each segment until one produces valid output
+                # Track best reference across all segments
+                best_ref_path = None
+                best_ref_duration = 0.0
+
+                # Try each segment and generate a reference for it
                 for seg_idx, seg_path in enumerate(all_segments):
+                    ref_output_path = os.path.join(str(output_dir), f"{character_name}_ref{seg_idx}.wav")
+
                     if verbose:
-                        seg_label = "best" if seg_idx == 0 else f"alternative #{seg_idx}"
-                        print(f"    [DEBUG] Attempting celebrity TTS with {seg_label} segment: {seg_path}")
-                        print(f"    [DEBUG] Text: {static_text[:100]}...")
+                        print(f"    [DEBUG] Attempting celebrity TTS with segment {seg_idx}: {seg_path}")
 
                     try:
                         success = engine.generate_line(
@@ -550,7 +552,7 @@ class VoiceMapper:
 
                         if not success or not os.path.exists(ref_output_path):
                             if verbose:
-                                print(f"    [DEBUG] TTS generation failed for segment, trying next...")
+                                print(f"    [DEBUG] TTS generation failed for segment {seg_idx}, trying next...")
                             continue
 
                         file_size = os.path.getsize(ref_output_path)
@@ -603,12 +605,14 @@ class VoiceMapper:
 
                         if validation_ok:
                             if verbose:
-                                print(f"    [DEBUG] Celebrity reference WAV PASSED validation")
-                            self.add_voice_path(character_name, ref_output_path)
-                            return True, ref_output_path, duration_seconds
+                                print(f"    [DEBUG] Reference {seg_idx} PASSED validation")
+                            # Track best reference (first one that passes is used)
+                            if best_ref_path is None:
+                                best_ref_path = ref_output_path
+                                best_ref_duration = duration_seconds
                         else:
                             if verbose:
-                                print(f"    [DEBUG] Validation failed, trying next segment...")
+                                print(f"    [DEBUG] Validation failed for reference {seg_idx}, trying next...")
                             continue
 
                     except Exception as e:
@@ -616,10 +620,16 @@ class VoiceMapper:
                             print(f"    [DEBUG] TTS generation error: {e}, trying next segment...")
                         continue
 
-                # All segments failed
-                if verbose:
-                    print(f"    [DEBUG] All celebrity segments failed for '{character_name}', returning failure")
-                return False, None, 0.0
+                # Use the best reference found
+                if best_ref_path:
+                    if verbose:
+                        print(f"    [DEBUG] Using best reference: {best_ref_path}")
+                    self.add_voice_path(character_name, best_ref_path)
+                    return True, best_ref_path, best_ref_duration
+                else:
+                    if verbose:
+                        print(f"    [DEBUG] All celebrity segments failed for '{character_name}', returning failure")
+                    return False, None, 0.0
             elif verbose:
                 print(f"    [DEBUG] Celebrity voice generation failed for '{character_name}'")
 

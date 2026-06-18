@@ -1059,22 +1059,27 @@ Transcription excerpt:
 
 This video may contain multiple speakers (interviews, podcasts, conversations). Your task is to identify the BEST segment where {celebrity} speaks clearly enough to extract their voice.
 
+CRITICAL REQUIREMENTS:
+- The selected segment MUST be at least 10 seconds long
+- The segment should be between 10 and 30 seconds
+- Choose a continuous portion of speech, not fragmented fragments
+
 Consider:
 1. Does {celebrity} speak at all in this video? Look for first-person statements, personal experiences, or direct dialogue.
-2. Are there any clear, isolated segments of {celebrity} speaking (even if short)?
+2. Are there any clear, isolated segments of {celebrity} speaking (at least 10 seconds)?
 3. Is the audio quality acceptable for voice extraction?
 
 Return ONLY a JSON object with:
 - "approved": true or false (boolean)
 - "reason": Brief explanation
 - "best_start": Start time in seconds of the best segment (float), e.g. 5.2
-- "best_end": End time in seconds of the best segment (float), e.g. 12.8
+- "best_end": End time in seconds of the best segment (float), e.g. 15.8 (must be at least 10 seconds after start)
 - "best_text": The transcribed text of the best segment
 
 If not approved, set best_start/best_end to null.
 
 Example:
-{{"approved": true, "reason": "Ryan Reynolds speaks directly in several interview segments", "best_start": 5.2, "best_end": 12.8, "best_text": "Yeah, we sure did"}}
+{{"approved": true, "reason": "Ryan Reynolds speaks directly in several interview segments", "best_start": 5.2, "best_end": 15.8, "best_text": "I think the key is to stay focused and keep pushing forward"}}
 """
 
     try:
@@ -1106,13 +1111,23 @@ Example:
 
             best_segment = None
             if approved and best_start is not None and best_end is not None:
+                seg_start = float(best_start)
+                seg_end = float(best_end)
+                seg_duration = seg_end - seg_start
+
+                # Enforce minimum segment length (10 seconds)
+                if seg_duration < 10.0:
+                    if verbose:
+                        print(f"    [DEBUG] Segment too short ({seg_duration:.1f}s), rejecting video")
+                    return False, None
+
                 best_segment = {
-                    'start': float(best_start),
-                    'end': float(best_end),
+                    'start': seg_start,
+                    'end': seg_end,
                     'text': best_text or '',
                 }
                 if verbose:
-                    print(f"    [DEBUG] Best segment: [{best_start:.1f}s-{best_end:.1f}s] {best_text[:80]}...")
+                    print(f"    [DEBUG] Best segment: [{seg_start:.1f}s-{seg_end:.1f}s] ({seg_duration:.1f}s) {best_text[:80]}...")
 
             return approved, best_segment
 

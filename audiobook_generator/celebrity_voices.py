@@ -1318,7 +1318,7 @@ def extract_speech_segments(
         return [str(segment_path)]
 
 
-CELEBRITY_SPEECH_SEGMENT_PROMPT = """You are analyzing a transcribed audio clip that may contain multiple speakers. You must identify which speaker is the celebrity and select ONLY their speech segments.
+CELEBRITY_SPEECH_SEGMENT_PROMPT = """You are analyzing a transcribed audio clip that may contain multiple speakers. You must identify which speaker is the celebrity and select their speech segments.
 
 Given:
 - Celebrity name: {celebrity}
@@ -1331,36 +1331,34 @@ CRITICAL INSTRUCTIONS:
    - Guest/celebrity answering (longer, more personal responses)
    - Third parties talking ABOUT the celebrity (mentions by name, "she said", "he mentioned")
    - Multiple people talking at once or overlapping
-   
-2. Then select ONLY segments where the celebrity {celebrity} is speaking. A segment should NOT be selected if:
+
+2. Then select segments where the celebrity {celebrity} is speaking. A segment should NOT be selected if:
    - Someone else is talking about the celebrity
    - The speaker is clearly an interviewer/host asking questions
-   - The content suggests a third party describing events (like "some people say that...")
+   - The content suggests a third party describing events
    - The speaker is introducing or talking about the celebrity rather than being the celebrity
-   
+
 3. The celebrity's speech should:
    - Match the gender described in the character description (if female, look for female speech; if male, look for male speech)
    - Use first-person language ("I", "my", "we") rather than third-person references to the celebrity
    - Be the actual voice of the celebrity, not someone else talking about them
+
+4. If there are multiple speakers and you're unsure which is the celebrity, select segments from BOTH speakers and add them all to the same array so the pipeline can try each voice.
 
 Output ONLY a JSON array of objects, each with:
 - "start": start time in seconds (float)
 - "end": end time in seconds (float)
 - "text": the transcribed text for this segment
 
-Select up to 3 best segments that:
-1. Are definitely spoken BY the celebrity (not about them, not by hosts)
-2. Have clear speech (no music, crowd noise, or overlapping voices)
-3. Are at least 2 seconds long
-4. Best represent the voice quality described
+Select up to 6 segments total (including alternatives if unsure).
 
-Example output:
+Example:
 [
-  {{"start": 5.2, "end": 12.8, "text": "I think the key is to stay focused and keep pushing forward"}},
-  {{"start": 18.0, "end": 25.5, "text": "Every challenge is an opportunity to grow"}}
+  {{"start": 5.2, "end": 12.8, "text": "I think the key is..."}},
+  {{"start": 18.0, "end": 25.5, "text": "Every challenge is..."}}
 ]
 
-IMPORTANT: If you cannot determine which speaker is the celebrity, return an empty array []. It's better to return no segments than to select the wrong speaker.
+IMPORTANT: Segments must be at least 2 seconds long. If you cannot find any usable segments, return an empty array [].
 """
 
 
@@ -1665,8 +1663,7 @@ def find_and_extract_video_segment(
                             seg_path = Path(output_dir) / f"{file_prefix}_segment{seg_idx}.wav"
                             if _extract_segment_from_audio(audio_path, seg['start'], seg['end'], str(seg_path)):
                                 if verbose:
-                                    print(f"    [DEBUG] Extracted LLM-identified segment {seg_idx}: {seg_path}")
-                        # Return first segment path; caller will find all segments by glob
+                                    print(f"    [DEBUG] Extracted segment {seg_idx}: {seg_path}")
                         return str(Path(output_dir) / f"{file_prefix}_segment0.wav"), audio_path
 
     # Fallback: silence detection

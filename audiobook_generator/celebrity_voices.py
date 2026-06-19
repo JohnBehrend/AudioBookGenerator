@@ -180,6 +180,7 @@ def download_celebrity_audio(
     selected_url = None
     best_segment = None
     existing_audio = None
+    all_rejected = False
     if client and model and celebrity:
         if verbose:
             print(f"    [DEBUG] Trying subtitle-based video selection...")
@@ -203,7 +204,8 @@ def download_celebrity_audio(
                     print(f"    [DEBUG] Reusing existing audio: {existing_audio}")
         else:
             if verbose:
-                print(f"    [DEBUG] Subtitle selection failed, falling back to direct download")
+                print(f"    [DEBUG] All videos rejected by LLM, not falling back to blind download")
+            all_rejected = True
 
     # Use existing audio from video selection, or download fresh
     if existing_audio and os.path.exists(existing_audio):
@@ -213,6 +215,9 @@ def download_celebrity_audio(
             os.unlink(existing_audio)
         except Exception:
             pass
+    elif all_rejected:
+        # All videos were rejected by LLM — don't fall back to blind download
+        return None
     else:
         # Download audio (either from selected URL or direct search)
         ydl_opts = {
@@ -360,6 +365,7 @@ def find_best_celebrity_video(
 
             # Download audio and transcribe with Whisper, stopping early when LLM approves
             candidate_videos = []
+            rejected_videos = set()
             best_audio_path = None
             for idx, info in enumerate(info_list):
                 title = info.get('title', 'Unknown')
@@ -413,6 +419,8 @@ def find_best_celebrity_video(
                                     print(f"    [DEBUG] LLM approved this video, stopping early")
                                 best_audio_path = audio_path
                                 return candidate_videos[-1]['url'], best_segment, best_audio_path
+                            else:
+                                rejected_videos.add(candidate_videos[-1]['index'])
                 
                 # Clean up audio file after transcription (only for non-selected videos)
                 if audio_path and Path(audio_path).exists():
@@ -426,15 +434,22 @@ def find_best_celebrity_video(
                     print(f"    [DEBUG] No videos with transcriptions found")
                 return None, None, None
 
-            # If no video was approved early, use LLM to select the best from all candidates
+            # Filter out rejected videos
+            viable = [v for v in candidate_videos if v['index'] not in rejected_videos]
+            if not viable:
+                if verbose:
+                    print(f"    [DEBUG] All {len(candidate_videos)} videos rejected by LLM, returning None")
+                return None, None, None
+
+            # If no video was approved early, use LLM to select the best from viable candidates
             if verbose:
-                print(f"    [DEBUG] No video approved early, selecting best from {len(candidate_videos)} candidates")
+                print(f"    [DEBUG] No video approved early, selecting best from {len(viable)} viable candidates")
             best_video = _select_best_video_with_llm(
                 client=client,
                 model=model,
                 celebrity=celebrity,
                 description=description,
-                candidate_videos=candidate_videos,
+                candidate_videos=viable,
                 verbose=verbose,
             )
 
@@ -444,8 +459,8 @@ def find_best_celebrity_video(
                 return best_video['url'], best_video.get('best_segment'), best_audio_path
             else:
                 if verbose:
-                    print(f"    [DEBUG] LLM failed to select best video, returning first with transcription")
-                first = candidate_videos[0] if candidate_videos else None
+                    print(f"    [DEBUG] LLM failed to select best video, returning first viable")
+                first = viable[0] if viable else None
                 return (first['url'], first.get('best_segment'), best_audio_path) if first else (None, None, None)
 
     except Exception as e:

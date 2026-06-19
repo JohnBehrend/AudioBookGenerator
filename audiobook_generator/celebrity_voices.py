@@ -1349,6 +1349,9 @@ Output ONLY a JSON array of objects, each with:
 - "start": start time in seconds (float)
 - "end": end time in seconds (float)
 - "text": the transcribed text for this segment
+- "confidence": "high", "medium", or "low" (your confidence this speaker is the celebrity)
+
+ORDER THE ARRAY BY CONFIDENCE: most confident segments first, least confident last.
 
 Select up to 6 segments total (including alternatives if unsure).
 
@@ -1915,7 +1918,8 @@ def build_celebrity_voice(
         if verbose:
             print(f"    [DEBUG] Found {len(video_segments)} segments from video {vid_idx+1}")
 
-        # Try each segment: validate, generate reference, return on first pass
+        # Try each segment: validate, generate reference, collect all passing
+        video_refs = []
         for seg_idx, seg_path in enumerate(video_segments):
             # Step 2: Validate segment
             is_valid, reason = validate_celebrity_segment(
@@ -1943,37 +1947,34 @@ def build_celebrity_voice(
                 )
 
                 if ref_path:
+                    video_refs.append((ref_path, seg_path, audio_source))
                     if verbose:
-                        print(f"    [DEBUG] Video {vid_idx+1} segment {seg_idx}: reference generated, returning early")
-                    metadata = {
-                        "character": character,
-                        "celebrity": celebrity,
-                        "reason": match.get("reason", ""),
-                        "search_query": query,
-                        "segment": seg_path,
-                        "audio_source": audio_source,
-                    }
-                    return ref_path, metadata
+                        print(f"    [DEBUG] Video {vid_idx+1} segment {seg_idx}: reference generated")
                 else:
                     if verbose:
                         print(f"    [DEBUG] Reference generation failed for video {vid_idx+1} segment {seg_idx}")
                     all_segments.append(seg_path)
-                    continue
             else:
-                # No TTS engine, return segment directly
-                if verbose:
-                    print(f"    [DEBUG] No TTS engine, returning segment directly")
-                metadata = {
-                    "character": character,
-                    "celebrity": celebrity,
-                    "reason": match.get("reason", ""),
-                    "search_query": query,
-                    "segment": seg_path,
-                    "audio_source": audio_source,
-                }
-                return seg_path, metadata
+                # No TTS engine, collect segment directly
+                video_refs.append((seg_path, seg_path, audio_source))
 
-            all_segments.append(seg_path)
+        # Return best reference from this video (first one that passes downstream validation)
+        if video_refs:
+            # Return all refs; caller will try each one
+            best_ref, best_seg, best_audio = video_refs[0]
+            metadata = {
+                "character": character,
+                "celebrity": celebrity,
+                "reason": match.get("reason", ""),
+                "search_query": query,
+                "segment": best_seg,
+                "audio_source": best_audio,
+                "alternatives": [r[0] for r in video_refs[1:]],
+            }
+            return best_ref, metadata
+        else:
+            for seg_path in video_segments:
+                all_segments.append(seg_path)
 
     # All videos failed — return first segment if available
     if all_segments:

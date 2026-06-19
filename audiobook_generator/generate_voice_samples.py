@@ -642,7 +642,7 @@ def generate_voice_samples(
                             print(f"    [DEBUG] Voice file size: {os.path.getsize(output_file) if os.path.exists(output_file) else 'N/A'} bytes")
 
                         # Validate immediately after generation
-                        if use_celebrity_voices and output_file and ("_ref.wav" in output_file or "_fallback" in output_file):
+                        if use_celebrity_voices and output_file and ("_ref" in output_file or "_fallback" in output_file):
                             if verbose:
                                 print(f"    Sample {sample_num}: Celebrity reference generated, skipping Whisper validation")
                             candidates.append((99, output_file, sample_num, duration))

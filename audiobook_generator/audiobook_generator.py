@@ -286,6 +286,8 @@ def _validate_and_clip_audio(
             result = tts_config.whisper_pool.transcribe(output_path, beam_size=5, word_timestamps=True)
             if isinstance(result, dict):
                 segments_list = result.get("segments", [])
+            elif isinstance(result, tuple):
+                segments_list = result[0]
             else:
                 segments_list = result
         elif tts_config.whisper_lock:
@@ -293,12 +295,16 @@ def _validate_and_clip_audio(
                 result = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
                 if isinstance(result, dict):
                     segments_list = result.get("segments", [])
+                elif isinstance(result, tuple):
+                    segments_list = result[0]
                 else:
                     segments_list = result
         else:
             result = tts_config.validation_model.transcribe(output_path, beam_size=5, word_timestamps=True)
             if isinstance(result, dict):
                 segments_list = result.get("segments", [])
+            elif isinstance(result, tuple):
+                segments_list = result[0]
             else:
                 segments_list = result
 

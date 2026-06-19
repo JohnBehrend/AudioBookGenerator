@@ -149,18 +149,19 @@ class VoiceMapper:
 
         return None
 
-    def add_voice_path(self, character_name: str, voice_path: str) -> None:
+    def add_voice_path(self, character_name: str, voice_path: str, persist: bool = True) -> None:
         """Add a voice path to the internal cache and voice map.
 
         Args:
             character_name: Character name
             voice_path: Absolute path to the voice file
+            persist: If True, save to voices_map.json. If False, only cache in memory.
         """
         self.voice_paths[character_name] = voice_path
-        # Store relative path in voice map
-        voice_file = os.path.basename(voice_path)
-        self._voice_map[character_name] = voice_file
-        self._save_voice_map()
+        if persist:
+            voice_file = os.path.basename(voice_path)
+            self._voice_map[character_name] = voice_file
+            self._save_voice_map()
         print(f"    [DEBUG] Added voice path for '{character_name}': {voice_path}")
 
     def get_all_voice_paths(self) -> Dict[str, str]:
@@ -625,7 +626,7 @@ class VoiceMapper:
                 if best_ref_path:
                     if verbose:
                         print(f"    [DEBUG] Using best reference: {best_ref_path}")
-                    self.add_voice_path(character_name, best_ref_path)
+                    self.add_voice_path(character_name, best_ref_path, persist=False)
                     return True, best_ref_path, best_ref_duration
                 else:
                     if verbose:
@@ -653,7 +654,7 @@ class VoiceMapper:
                 print(f"    [DEBUG] Voice generated successfully: {output_file}")
                 if output_file and os.path.exists(output_file):
                     print(f"    [DEBUG] Voice file verified: {output_file} ({os.path.getsize(output_file)} bytes)")
-            self.add_voice_path(character_name, output_file)
+            self.add_voice_path(character_name, output_file, persist=False)
         else:
             if verbose:
                 print(f"    [DEBUG] Voice generation failed for '{character_name}'")

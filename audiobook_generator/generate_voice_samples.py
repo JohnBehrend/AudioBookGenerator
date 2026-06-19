@@ -604,8 +604,9 @@ def generate_voice_samples(
                     except (json.JSONDecodeError, AttributeError):
                         pass
 
-                # Phase 1: Generate samples sequentially
-                generation_results = {}
+                # Generate and validate samples sequentially, stop on first passing sample
+                candidates = []
+                all_attempts = []
                 for sample_num in range(1, max_attempts + 1):
                     _tmp_name = f"{char_name}.sample{sample_num}"
                     try:
@@ -621,65 +622,63 @@ def generate_voice_samples(
                             llm_client=llm_client,
                             llm_model=llm_model,
                         )
-                        if verbose and success and output_file:
+                        if not success or not output_file:
+                            if verbose:
+                                print(f"    Sample {sample_num}: generation failed")
+                            continue
+                        if verbose:
                             print(f"    [DEBUG] Voice sample {sample_num} generated: {output_file}")
                             print(f"    [DEBUG] Voice file exists: {os.path.exists(output_file)}")
                             print(f"    [DEBUG] Voice file size: {os.path.getsize(output_file) if os.path.exists(output_file) else 'N/A'} bytes")
-                        generation_results[sample_num] = (sample_num, success, output_file, duration, validation_msg)
+
+                        # Validate immediately after generation
+                        # Skip Whisper validation for celebrity voice samples - they're YouTube clips
+                        # that won't contain the static voice text
+                        if use_celebrity_voices and output_file and ("segment_" in output_file or "celebrity_voice" in output_file):
+                            if verbose:
+                                print(f"    Sample {sample_num}: Skipping Whisper validation for celebrity voice")
+                            candidates.append((99, output_file, sample_num, duration))
+                            break  # First passing celebrity sample is enough
+                        try:
+                            transcribed, starts, ends = transcribe_audio_with_whisper(vm, output_file)
+                            transcribed_words = transcribed.split()
+                            matches = _word_match_count(ref_words, transcribed.lower())
+                            if matches < len(ref_words) * 0.8:
+                                if verbose:
+                                    print(f"    Sample {sample_num}: {matches}/{len(ref_words)} words (too few): {transcribed[:80]}...")
+                                continue
+                            cropped_path = output_file + ".cropped.wav"
+                            if crop_to_ref_text(output_file, cropped_path, ref_words, transcribed_words, starts, ends, verbose=False):
+                                use_path = cropped_path
+                            else:
+                                use_path = output_file
+                            all_attempts.append((matches, use_path, sample_num, duration))
+                            # Validate against description with ChunkFormer if available
+                            if chunkformer_model:
+                                if verbose:
+                                    print(f"    Validating against description with ChunkFormer...")
+                                cf_ok, cf_msg = _validate_with_chunkformer(
+                                    use_path, char_desc,
+                                    chunkformer_model, verbose=verbose,
+                                    skip_age=char_has_celebrity
+                                )
+                                if not cf_ok:
+                                    if verbose:
+                                        print(f"    Sample {sample_num}: ChunkFormer FAIL")
+                                    continue
+                                else:
+                                    if verbose:
+                                        print(f"    Sample {sample_num}: ChunkFormer PASS")
+                            if verbose:
+                                print(f"    Sample {sample_num}: {matches}/{len(ref_words)} words ({duration:.1f}s): {transcribed[:80]}...")
+                            candidates.append((matches, use_path, sample_num, duration))
+                            break  # First passing sample is enough
+                        except Exception as e:
+                            if verbose:
+                                print(f"    Sample {sample_num}: processing failed ({e})")
                     except Exception as e:
                         if verbose:
                             print(f"    Sample {sample_num}: generation failed ({e})")
-
-                # Phase 2: Whisper + ChunkFormer validation (sequentially to share GPU/CPU)
-                candidates = []
-                all_attempts = []
-                for sample_num in sorted(generation_results.keys()):
-                    sample_num, success, output_file, duration, validation_msg = generation_results[sample_num]
-                    if not success or not output_file:
-                        continue
-                    # Skip Whisper validation for celebrity voice samples - they're YouTube clips
-                    # that won't contain the static voice text
-                    if use_celebrity_voices and output_file and ("segment_" in output_file or "celebrity_voice" in output_file):
-                        if verbose:
-                            print(f"    Sample {sample_num}: Skipping Whisper validation for celebrity voice")
-                        candidates.append((99, output_file, sample_num, duration))
-                        continue
-                    try:
-                        transcribed, starts, ends = transcribe_audio_with_whisper(vm, output_file)
-                        transcribed_words = transcribed.split()
-                        matches = _word_match_count(ref_words, transcribed.lower())
-                        if matches < len(ref_words) * 0.8:
-                            if verbose:
-                                print(f"    Sample {sample_num}: {matches}/{len(ref_words)} words (too few): {transcribed[:80]}...")
-                            continue
-                        cropped_path = output_file + ".cropped.wav"
-                        if crop_to_ref_text(output_file, cropped_path, ref_words, transcribed_words, starts, ends, verbose=False):
-                            use_path = cropped_path
-                        else:
-                            use_path = output_file
-                        all_attempts.append((matches, use_path, sample_num, duration))
-                         # Validate against description with ChunkFormer if available
-                        if chunkformer_model:
-                            if verbose:
-                                print(f"    Validating against description with ChunkFormer...")
-                            cf_ok, cf_msg = _validate_with_chunkformer(
-                                use_path, char_desc,
-                                chunkformer_model, verbose=verbose,
-                                skip_age=char_has_celebrity
-                            )
-                            if not cf_ok:
-                                if verbose:
-                                    print(f"    Sample {sample_num}: ChunkFormer FAIL")
-                                continue
-                            else:
-                                if verbose:
-                                    print(f"    Sample {sample_num}: ChunkFormer PASS")
-                        if verbose:
-                            print(f"    Sample {sample_num}: {matches}/{len(ref_words)} words ({duration:.1f}s): {transcribed[:80]}...")
-                        candidates.append((matches, use_path, sample_num, duration))
-                    except Exception as e:
-                        if verbose:
-                            print(f"    Sample {sample_num}: processing failed ({e})")
                 if candidates:
                     candidates.sort(key=lambda x: x[0], reverse=True)
                     best_score, best_file, best_att, best_dur = candidates[0]
@@ -857,9 +856,16 @@ def generate_voice_samples(
             if verbose:
                 print(f"\n[WARN] Could not generate voices for {len(fallback_failed)} characters, narrator used as fallback: {', '.join(fallback_failed[:10])}{'...' if len(fallback_failed) > 10 else ''}")
 
-        # VoiceMapper automatically saves voices_map.json when voice paths are added
+        # Write final voices_map.json with only character entries (not sample entries)
+        import json as json_mod
+        voices_map = {}
+        for char_name, voice_path in generated.items():
+            voices_map[char_name] = os.path.basename(voice_path)
+        voices_map_path = os.path.join(output_dir, "voices_map.json")
+        with open(voices_map_path, "w", encoding="utf-8") as f:
+            json_mod.dump(voices_map, f, indent=2)
         if verbose:
-            print(f"\nGenerated voices_map.json automatically by VoiceMapper")
+            print(f"\nGenerated voices_map.json with {len(voices_map)} character entries")
 
         return f"Successfully generated {len(generated)} voice sample(s).", generated
 

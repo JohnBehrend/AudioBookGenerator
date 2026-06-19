@@ -645,6 +645,17 @@ def generate_voice_samples(
                         if use_celebrity_voices and output_file and ("_ref" in output_file or "_fallback" in output_file):
                             if verbose:
                                 print(f"    Sample {sample_num}: Celebrity reference generated, skipping Whisper validation")
+                            # Still run ChunkFormer to catch gender mismatches
+                            if chunkformer_model:
+                                cf_ok, cf_msg = _validate_with_chunkformer(
+                                    output_file, char_desc,
+                                    chunkformer_model, verbose=verbose,
+                                    skip_age=char_has_celebrity
+                                )
+                                if not cf_ok:
+                                    if verbose:
+                                        print(f"    Sample {sample_num}: ChunkFormer FAIL: {cf_msg}")
+                                    continue
                             candidates.append((99, output_file, sample_num, duration))
                             break  # First passing celebrity sample is enough
                         try:

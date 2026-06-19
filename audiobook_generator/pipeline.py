@@ -213,8 +213,11 @@ def score_strings_pop(
             last_valid_token = i_tok
             break
 
-    postfix_present = postfix and len(postfix) > 0 and postfix in detected_string[-len(postfix):]
-    score = float(mean_score) - 0.5 * (not postfix_present)
+    if postfix:
+        postfix_present = postfix in detected_string[-len(postfix):]
+        score = float(mean_score) - 0.5 * (not postfix_present)
+    else:
+        score = float(mean_score)
 
     return score, last_valid_token
 

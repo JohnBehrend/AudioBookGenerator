@@ -360,6 +360,20 @@ def find_best_celebrity_video(
                     print(f"    [DEBUG] No results found for '{search_query}'")
                 return None, None, None
 
+            # Filter: celebrity name must appear in the video title
+            celeb_name = celebrity.split()[0].lower()  # First word for matching
+            filtered = [
+                info for info in info_list
+                if celeb_name in info.get('title', '').lower()
+            ]
+            if filtered:
+                if verbose:
+                    print(f"    [DEBUG] Filtered to {len(filtered)} videos with '{celebrity}' in title (from {len(info_list)})")
+                info_list = filtered
+            else:
+                if verbose:
+                    print(f"    [DEBUG] No videos with '{celebrity}' in title, using all {len(info_list)} results")
+
             if verbose:
                 print(f"    [DEBUG] Found {len(info_list)} videos")
 

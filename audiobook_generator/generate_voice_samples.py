@@ -552,6 +552,15 @@ def generate_voice_samples(
         no_celeb_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=gen_engine, engine=engine, use_celebrity_voices=False) if chars_no_celebrity else None
         max_tokens = 2048
 
+        def save_voices_map():
+            """Persist voices_map.json with all completed characters."""
+            voices_map = {}
+            for cn, vp in generated.items():
+                voices_map[cn] = os.path.basename(vp)
+            voices_map_path = os.path.join(output_dir, "voices_map.json")
+            with open(voices_map_path, "w", encoding="utf-8") as f:
+                json.dump(voices_map, f, indent=2)
+
         try:
             for i, (char_name, char_desc) in enumerate(descriptions.items()):
                 if verbose:
@@ -574,6 +583,7 @@ def generate_voice_samples(
                         test_path = os.path.join(output_dir, f"{char_name}{ext}")
                         if os.path.exists(test_path):
                             generated[char_name] = test_path
+                            save_voices_map()
                             if verbose:
                                 print(f"    Found existing voice: {test_path}")
                             voice_found = True
@@ -683,6 +693,7 @@ def generate_voice_samples(
                     final_path = os.path.join(output_dir, f"{char_name}.wav")
                     shutil.copy2(best_file, final_path)
                     generated[char_name] = final_path
+                    save_voices_map()
                     if verbose:
                         print(f"    Best: sample {best_att}, {best_score}/{len(ref_words)} words ({best_dur:.1f}s): {final_path}")
                         print(f"    [DEBUG] Final voice file: {final_path}")
@@ -695,6 +706,7 @@ def generate_voice_samples(
                         final_path = os.path.join(output_dir, f"{char_name}.wav")
                         shutil.copy2(first_file, final_path)
                         generated[char_name] = final_path
+                        save_voices_map()
                         if verbose:
                             print(f"    All samples failed ChunkFormer but picking first: sample {first_num}, {first_matches}/{len(ref_words)} words ({first_dur:.1f}s): {final_path}")
                             print(f"    [DEBUG] Final voice file: {final_path}")
@@ -739,6 +751,7 @@ def generate_voice_samples(
                 voice_path = os.path.join(output_dir, f"{char_name}.wav")
                 if os.path.exists(voice_path):
                     generated[char_name] = voice_path
+                    save_voices_map()
                     continue
                 _found = False
                 for sample_num in range(1, max_attempts + 1):
@@ -764,6 +777,7 @@ def generate_voice_samples(
                             if matches >= len(ref_words) * 0.8:
                                 shutil.copy2(output_file, voice_path)
                                 generated[char_name] = voice_path
+                                save_voices_map()
                                 if verbose:
                                     print(f"    [FALLBACK] {char_name}: succeeded (sample {sample_num}, {matches}/{len(ref_words)} words)")
                                 _found = True
@@ -796,6 +810,7 @@ def generate_voice_samples(
                     voice_path = os.path.join(output_dir, f"{char_name}.wav")
                     if os.path.exists(voice_path):
                         generated[char_name] = voice_path
+                        save_voices_map()
                         continue
                     failed_count += 1
                     try:
@@ -812,6 +827,7 @@ def generate_voice_samples(
                         _fallback_mapper.cleanup_engines()
                         if _success and os.path.exists(voice_path):
                             generated[char_name] = voice_path
+                            save_voices_map()
                             if verbose:
                                 print(f"    Generated via {fallback_engine_name}")
                         else:
@@ -838,6 +854,7 @@ def generate_voice_samples(
                 try:
                     shutil.copy2(narrator_path, voice_path)
                     generated[char_name] = voice_path
+                    save_voices_map()
                     if verbose:
                         print(f"[FALLBACK] {char_name} -> narrator.wav")
                 except Exception:
@@ -854,16 +871,8 @@ def generate_voice_samples(
             if verbose:
                 print(f"\n[WARN] Could not generate voices for {len(fallback_failed)} characters, narrator used as fallback: {', '.join(fallback_failed[:10])}{'...' if len(fallback_failed) > 10 else ''}")
 
-        # Write final voices_map.json with only character entries (not sample entries)
-        import json as json_mod
-        voices_map = {}
-        for char_name, voice_path in generated.items():
-            voices_map[char_name] = os.path.basename(voice_path)
-        voices_map_path = os.path.join(output_dir, "voices_map.json")
-        with open(voices_map_path, "w", encoding="utf-8") as f:
-            json_mod.dump(voices_map, f, indent=2)
         if verbose:
-            print(f"\nGenerated voices_map.json with {len(voices_map)} character entries")
+            print(f"\nGenerated voices_map.json with {len(generated)} character entries")
 
         return f"Successfully generated {len(generated)} voice sample(s).", generated
 

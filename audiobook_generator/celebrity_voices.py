@@ -372,7 +372,8 @@ def find_best_celebrity_video(
                 info_list = filtered
             else:
                 if verbose:
-                    print(f"    [DEBUG] No videos with '{celebrity}' in title, using all {len(info_list)} results")
+                    print(f"    [DEBUG] No videos with '{celebrity}' in title, returning None to try next query")
+                return None, None, None
 
             if verbose:
                 print(f"    [DEBUG] Found {len(info_list)} videos")

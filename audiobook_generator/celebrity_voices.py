@@ -1548,9 +1548,10 @@ def find_and_extract_video_segment(
     file_prefix: str,
     max_duration: int = 300,
     whisper_model: Any = None,
+    max_segments: int = 3,
     verbose: bool = False,
 ) -> Tuple[Optional[str], Optional[str]]:
-    """Download one video, transcribe once, LLM evaluates and picks segment, extract to WAV.
+    """Download one video, transcribe once, LLM evaluates and picks segments, extract to WAV.
 
     Single transcription is used for both LLM evaluation and segment extraction.
 
@@ -1564,6 +1565,7 @@ def find_and_extract_video_segment(
         file_prefix: Prefix for output filenames
         max_duration: Max duration for downloaded clip
         whisper_model: WhisperModel for transcription
+        max_segments: Maximum number of segments to extract from this video
         verbose: Print debug output
 
     Returns:
@@ -1656,15 +1658,16 @@ def find_and_extract_video_segment(
                         seg for seg in segments
                         if isinstance(seg, dict) and all(k in seg for k in ['start', 'end', 'text'])
                         and (seg['end'] - seg['start']) >= 2.0
-                    ][:1]
+                    ][:max_segments]
 
                     if valid_segments:
-                        seg = valid_segments[0]
-                        seg_path = Path(output_dir) / f"{file_prefix}_segment.wav"
-                        if _extract_segment_from_audio(audio_path, seg['start'], seg['end'], str(seg_path)):
-                            if verbose:
-                                print(f"    [DEBUG] Extracted LLM-identified segment: {seg_path}")
-                            return str(seg_path), audio_path
+                        for seg_idx, seg in enumerate(valid_segments):
+                            seg_path = Path(output_dir) / f"{file_prefix}_segment{seg_idx}.wav"
+                            if _extract_segment_from_audio(audio_path, seg['start'], seg['end'], str(seg_path)):
+                                if verbose:
+                                    print(f"    [DEBUG] Extracted LLM-identified segment {seg_idx}: {seg_path}")
+                        # Return first segment path; caller will find all segments by glob
+                        return str(Path(output_dir) / f"{file_prefix}_segment0.wav"), audio_path
 
     # Fallback: silence detection
     segments = extract_speech_segments(
@@ -1874,7 +1877,7 @@ def build_celebrity_voice(
     ]
 
     static_text = DEFAULTS.get("static_voice_text", "")
-    all_refs = []
+    all_segments = []
 
     for vid_idx in range(max_videos):
         query = search_queries[vid_idx % len(search_queries)]
@@ -1883,7 +1886,7 @@ def build_celebrity_voice(
         if verbose:
             print(f"    [DEBUG] Video {vid_idx+1}/{max_videos}: query='{query}'")
 
-        # Step 1: Download and extract segment
+        # Step 1: Download and extract segments
         segment_path, audio_source = find_and_extract_video_segment(
             client=client,
             model=model,
@@ -1902,66 +1905,83 @@ def build_celebrity_voice(
                 print(f"    [DEBUG] Failed to extract segment for video {vid_idx+1}")
             continue
 
-        # Step 2: Validate segment
-        is_valid, reason = validate_celebrity_segment(
-            segment_path=segment_path,
-            description=description,
-            chunkformer_model=chunkformer_model,
-            verbose=verbose,
-        )
+        # Collect all segments from this video
+        video_segments = []
+        seg_dir = Path(output_dir)
+        for seg_file in sorted(seg_dir.glob(f"{file_prefix}_segment*.wav")):
+            if seg_file.exists():
+                video_segments.append(str(seg_file))
 
-        if not is_valid:
-            if verbose:
-                print(f"    [DEBUG] Segment validation failed: {reason}")
-            all_refs.append((segment_path, audio_source))
-            continue
+        if not video_segments:
+            video_segments = [segment_path]
 
-        # Step 3: Generate reference
-        if tts_engine:
-            ref_path, duration = generate_celebrity_reference(
-                segment_path=segment_path,
-                character=f"{base_character}_v{vid_idx}",
-                output_dir=output_dir,
-                engine=tts_engine,
-                static_text=static_text,
+        if verbose:
+            print(f"    [DEBUG] Found {len(video_segments)} segments from video {vid_idx+1}")
+
+        # Try each segment: validate, generate reference, return on first pass
+        for seg_idx, seg_path in enumerate(video_segments):
+            # Step 2: Validate segment
+            is_valid, reason = validate_celebrity_segment(
+                segment_path=seg_path,
+                description=description,
+                chunkformer_model=chunkformer_model,
                 verbose=verbose,
             )
 
-            if ref_path:
+            if not is_valid:
                 if verbose:
-                    print(f"    [DEBUG] Video {vid_idx+1}: reference generated, returning early")
+                    print(f"    [DEBUG] Segment {seg_idx} validation failed: {reason}")
+                all_segments.append(seg_path)
+                continue
+
+            # Step 3: Generate reference
+            if tts_engine:
+                ref_path, duration = generate_celebrity_reference(
+                    segment_path=seg_path,
+                    character=f"{base_character}_v{vid_idx}_s{seg_idx}",
+                    output_dir=output_dir,
+                    engine=tts_engine,
+                    static_text=static_text,
+                    verbose=verbose,
+                )
+
+                if ref_path:
+                    if verbose:
+                        print(f"    [DEBUG] Video {vid_idx+1} segment {seg_idx}: reference generated, returning early")
+                    metadata = {
+                        "character": character,
+                        "celebrity": celebrity,
+                        "reason": match.get("reason", ""),
+                        "search_query": query,
+                        "segment": seg_path,
+                        "audio_source": audio_source,
+                    }
+                    return ref_path, metadata
+                else:
+                    if verbose:
+                        print(f"    [DEBUG] Reference generation failed for video {vid_idx+1} segment {seg_idx}")
+                    all_segments.append(seg_path)
+                    continue
+            else:
+                # No TTS engine, return segment directly
+                if verbose:
+                    print(f"    [DEBUG] No TTS engine, returning segment directly")
                 metadata = {
                     "character": character,
                     "celebrity": celebrity,
                     "reason": match.get("reason", ""),
                     "search_query": query,
-                    "segment": segment_path,
+                    "segment": seg_path,
                     "audio_source": audio_source,
                 }
-                return ref_path, metadata
-            else:
-                if verbose:
-                    print(f"    [DEBUG] Reference generation failed for video {vid_idx+1}")
-                all_refs.append((segment_path, audio_source))
-                continue
-        else:
-            # No TTS engine, return segment directly
-            if verbose:
-                print(f"    [DEBUG] No TTS engine, returning segment directly")
-            metadata = {
-                "character": character,
-                "celebrity": celebrity,
-                "reason": match.get("reason", ""),
-                "search_query": query,
-                "segment": segment_path,
-                "audio_source": audio_source,
-            }
-            return segment_path, metadata
+                return seg_path, metadata
 
+            all_segments.append(seg_path)
 
     # All videos failed — return first segment if available
-    if all_refs:
-        seg_path, audio_src = all_refs[0]
+    if all_segments:
+        seg_path = all_segments[0]
+        audio_src = None
         if tts_engine:
             ref_path, duration = generate_celebrity_reference(
                 segment_path=seg_path,

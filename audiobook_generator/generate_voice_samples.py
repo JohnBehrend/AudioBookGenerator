@@ -632,11 +632,9 @@ def generate_voice_samples(
                             print(f"    [DEBUG] Voice file size: {os.path.getsize(output_file) if os.path.exists(output_file) else 'N/A'} bytes")
 
                         # Validate immediately after generation
-                        # Skip Whisper validation for celebrity voice samples - they're YouTube clips
-                        # that won't contain the static voice text
-                        if use_celebrity_voices and output_file and ("segment_" in output_file or "celebrity_voice" in output_file):
+                        if use_celebrity_voices and output_file and ("_ref.wav" in output_file or "_fallback" in output_file):
                             if verbose:
-                                print(f"    Sample {sample_num}: Skipping Whisper validation for celebrity voice")
+                                print(f"    Sample {sample_num}: Celebrity reference generated, skipping Whisper validation")
                             candidates.append((99, output_file, sample_num, duration))
                             break  # First passing celebrity sample is enough
                         try:

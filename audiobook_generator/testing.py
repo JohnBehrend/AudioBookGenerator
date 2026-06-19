@@ -193,8 +193,9 @@ class MockTTSEngine:
         text: str,
         voice_path: Optional[str],
         output_path: str,
-        device: str,
+        device: str = "cpu",
         verbose: bool = False,
+        **kwargs,
     ) -> bool:
         """Mock line generation - writes silence audio.
 
@@ -204,6 +205,7 @@ class MockTTSEngine:
             output_path: Where to write the output audio
             device: Device string (ignored)
             verbose: Print verbose output
+            **kwargs: Additional arguments (ref_text, validation_model, etc.)
 
         Returns:
             generate_success value
@@ -213,9 +215,12 @@ class MockTTSEngine:
             "voice_path": voice_path,
             "output_path": output_path,
             "device": device,
+            "kwargs": kwargs,
         }
 
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        out_dir = os.path.dirname(output_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
 
         num_samples = int(self.sample_rate * self.duration)
         audio = np.zeros(num_samples, dtype=np.float32)

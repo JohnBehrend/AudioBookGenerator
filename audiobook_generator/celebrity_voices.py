@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yt_dlp
 
-from .config import LLM_SETTINGS
+from .config import DEFAULTS, LLM_SETTINGS
 
 
 # Module-level cache for celebrity audio downloads to avoid duplicate YouTube requests
@@ -179,10 +179,11 @@ def download_celebrity_audio(
     # Try subtitle-based video selection first
     selected_url = None
     best_segment = None
+    existing_audio = None
     if client and model and celebrity:
         if verbose:
             print(f"    [DEBUG] Trying subtitle-based video selection...")
-        selected_url, best_segment = find_best_celebrity_video(
+        selected_url, best_segment, existing_audio = find_best_celebrity_video(
             client=client,
             model=model,
             search_query=search_query,
@@ -197,44 +198,56 @@ def download_celebrity_audio(
                 print(f"    [DEBUG] Selected video via subtitles: {selected_url}")
             if best_segment:
                 print(f"    [DEBUG] Best segment: [{best_segment['start']:.1f}s-{best_segment['end']:.1f}s]")
+            if existing_audio:
+                if verbose:
+                    print(f"    [DEBUG] Reusing existing audio: {existing_audio}")
         else:
             if verbose:
                 print(f"    [DEBUG] Subtitle selection failed, falling back to direct download")
 
-    # Download audio (either from selected URL or direct search)
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "extractaudio": True,
-        "audioformat": "mp3",
-        "audioquality": 5,
-        "outtmpl": str(output_file.with_suffix(".mp3")),
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "socket_timeout": 30,
-        "retries": 2,
-    }
+    # Use existing audio from video selection, or download fresh
+    if existing_audio and os.path.exists(existing_audio):
+        # Reuse the audio file from find_best_celebrity_video
+        shutil.copy2(existing_audio, str(output_file))
+        try:
+            os.unlink(existing_audio)
+        except Exception:
+            pass
+    else:
+        # Download audio (either from selected URL or direct search)
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "extractaudio": True,
+            "audioformat": "mp3",
+            "audioquality": 5,
+            "outtmpl": str(output_file.with_suffix(".mp3")),
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+            "socket_timeout": 30,
+            "retries": 2,
+        }
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            if selected_url:
-                # Download the selected video directly
-                ydl.download([selected_url])
-            else:
-                # Search YouTube for short clips
-                search_url = f"ytsearch1:{search_query} short"
-                info = ydl.extract_info(search_url, download=False)
-
-                if not info or "title" not in info:
-                    # Fallback: try without duration filter
-                    search_url = f"ytsearch1:{search_query}"
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                if selected_url:
+                    # Download the selected video directly
+                    ydl.download([selected_url])
+                else:
+                    # Search YouTube for short clips
+                    search_url = f"ytsearch1:{search_query} short"
                     info = ydl.extract_info(search_url, download=False)
 
-                if not info or "title" not in info:
-                    return None
+                    if not info or "title" not in info:
+                        # Fallback: try without duration filter
+                        search_url = f"ytsearch1:{search_query}"
+                        info = ydl.extract_info(search_url, download=False)
 
-                # Download
-                ydl.download([search_url])
+                    if not info or "title" not in info:
+                        return None
+
+                    # Download
+                    ydl.download([search_url])
 
             mp3_file = output_file.with_suffix(".mp3")
             if not mp3_file.exists():
@@ -249,21 +262,20 @@ def download_celebrity_audio(
 
             if not output_file.exists():
                 return None
+        except Exception as e:
+            print(f"  Failed to download audio: {e}")
+            if output_file.exists():
+                output_file.unlink()
+            return None
 
-            # Trim to max_duration
-            trim_audio(str(output_file), max_duration)
+    # Trim to max_duration
+    trim_audio(str(output_file), max_duration)
 
-            # Cache the result
-            _celebrity_audio_cache[cache_key] = str(output_file)
-            print(f"    [DEBUG] Cached celebrity audio: {cache_key} -> {output_file}")
+    # Cache the result
+    _celebrity_audio_cache[cache_key] = str(output_file)
+    print(f"    [DEBUG] Cached celebrity audio: {cache_key} -> {output_file}")
 
-            return str(output_file)
-
-    except Exception as e:
-        print(f"  Failed to download audio: {e}")
-        if output_file.exists():
-            output_file.unlink()
-        return None
+    return str(output_file)
 
 
 def find_best_celebrity_video(
@@ -275,12 +287,12 @@ def find_best_celebrity_video(
     output_dir: str = ".",
     max_results: int = 5,
     verbose: bool = False,
-) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+) -> Tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
     """Find the best YouTube video for a celebrity using Whisper transcription.
 
     Searches YouTube, downloads audio, transcribes with Whisper,
     uses LLM to determine which video likely has the celebrity speaking most clearly,
-    then returns the video URL and best segment timestamps for the best one.
+    then returns the video URL, best segment timestamps, and the downloaded audio path.
 
     Args:
         client: OpenAI client instance
@@ -293,8 +305,9 @@ def find_best_celebrity_video(
         verbose: Print debug output
 
     Returns:
-        Tuple of (url, best_segment_info) where best_segment_info contains
-        'start', 'end', 'text' keys, or (None, None) on failure
+        Tuple of (url, best_segment_info, audio_path) where best_segment_info contains
+        'start', 'end', 'text' keys, and audio_path is the downloaded WAV file for reuse.
+        Returns (None, None, None) on failure.
     """
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -325,7 +338,7 @@ def find_best_celebrity_video(
             if not info_dict:
                 if verbose:
                     print(f"    [DEBUG] No results found for '{search_query}'")
-                return None, None
+                return None, None, None
 
             # Extract entries from search result dict
             info_list = []
@@ -340,13 +353,14 @@ def find_best_celebrity_video(
             if not info_list:
                 if verbose:
                     print(f"    [DEBUG] No results found for '{search_query}'")
-                return None, None
+                return None, None, None
 
             if verbose:
                 print(f"    [DEBUG] Found {len(info_list)} videos")
 
             # Download audio and transcribe with Whisper, stopping early when LLM approves
             candidate_videos = []
+            best_audio_path = None
             for idx, info in enumerate(info_list):
                 title = info.get('title', 'Unknown')
                 duration = info.get('duration', 0)
@@ -397,9 +411,10 @@ def find_best_celebrity_video(
                                     candidate_videos[-1]['best_segment'] = best_segment
                                 if verbose:
                                     print(f"    [DEBUG] LLM approved this video, stopping early")
-                                return candidate_videos[-1]['url'], best_segment
+                                best_audio_path = audio_path
+                                return candidate_videos[-1]['url'], best_segment, best_audio_path
                 
-                # Clean up audio file after transcription
+                # Clean up audio file after transcription (only for non-selected videos)
                 if audio_path and Path(audio_path).exists():
                     try:
                         os.unlink(audio_path)
@@ -409,7 +424,7 @@ def find_best_celebrity_video(
             if not candidate_videos:
                 if verbose:
                     print(f"    [DEBUG] No videos with transcriptions found")
-                return None, None
+                return None, None, None
 
             # If no video was approved early, use LLM to select the best from all candidates
             if verbose:
@@ -426,17 +441,17 @@ def find_best_celebrity_video(
             if best_video:
                 if verbose:
                     print(f"    [DEBUG] Best video selected: {best_video['title'][:60]} - {best_video['url']}")
-                return best_video['url'], best_video.get('best_segment')
+                return best_video['url'], best_video.get('best_segment'), best_audio_path
             else:
                 if verbose:
                     print(f"    [DEBUG] LLM failed to select best video, returning first with transcription")
                 first = candidate_videos[0] if candidate_videos else None
-                return (first['url'], first.get('best_segment')) if first else (None, None)
+                return (first['url'], first.get('best_segment'), best_audio_path) if first else (None, None, None)
 
     except Exception as e:
         if verbose:
             print(f"    [DEBUG] Error finding best video: {e}")
-        return None, None
+        return None, None, None
 
 
 def _download_and_parse_subtitles(
@@ -550,7 +565,7 @@ def _download_audio_for_transcription(
     info: Dict[str, Any],
     output_dir: Path,
     file_prefix: str = "",
-    max_duration: int = 30,
+    max_duration: int = 300,
 ) -> Optional[str]:
     """Download audio from a YouTube video for transcription.
 
@@ -1465,25 +1480,242 @@ def identify_celebrity_segments(
         return []
 
 
+def _extract_segment_from_audio(
+    audio_path: str,
+    start: float,
+    end: float,
+    output_path: str,
+) -> bool:
+    """Extract a segment from an audio file using ffmpeg.
+
+    Args:
+        audio_path: Path to source audio file
+        start: Start time in seconds
+        end: End time in seconds
+        output_path: Path to write extracted segment
+
+    Returns:
+        True if extraction succeeded, False otherwise
+    """
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", audio_path, "-ss", str(start),
+             "-to", str(end), "-q:a", "0", output_path],
+            capture_output=True, timeout=30,
+        )
+        return Path(output_path).exists()
+    except Exception:
+        return False
+
+
+def find_and_extract_video_segment(
+    client: Any,
+    model: str,
+    search_query: str,
+    celebrity: str,
+    description: str,
+    output_dir: str,
+    file_prefix: str,
+    max_duration: int = 300,
+    whisper_model: Any = None,
+    verbose: bool = False,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Download one video, transcribe, LLM picks best segment, extract to WAV.
+
+    Args:
+        client: OpenAI client instance
+        model: Model name
+        search_query: YouTube search query
+        celebrity: Celebrity name
+        description: Character voice description
+        output_dir: Directory to save files
+        file_prefix: Prefix for output filenames
+        max_duration: Max duration for downloaded clip
+        whisper_model: WhisperModel for transcription
+        verbose: Print debug output
+
+    Returns:
+        Tuple of (segment_path, audio_source_path) or (None, None) on failure
+    """
+    audio_path = download_celebrity_audio(
+        search_query=search_query,
+        output_dir=output_dir,
+        max_duration=max_duration,
+        file_prefix=file_prefix,
+        client=client,
+        model=model,
+        celebrity=celebrity,
+        description=description,
+        verbose=verbose,
+    )
+
+    if not audio_path:
+        return None, None
+
+    # Try Whisper+LLM segment identification first
+    if whisper_model:
+        llm_segments = identify_celebrity_segments(
+            client=client,
+            model=model,
+            celebrity=celebrity,
+            description=description,
+            audio_path=audio_path,
+            whisper_model=whisper_model,
+            max_segments=1,
+            verbose=verbose,
+        )
+
+        if llm_segments:
+            seg = llm_segments[0]
+            seg_path = Path(output_dir) / f"{file_prefix}_segment.wav"
+            if _extract_segment_from_audio(audio_path, seg['start'], seg['end'], str(seg_path)):
+                if verbose:
+                    print(f"    [DEBUG] Extracted LLM-identified segment: {seg_path}")
+                return str(seg_path), audio_path
+
+    # Fallback: silence detection
+    segments = extract_speech_segments(
+        audio_path=audio_path,
+        output_dir=output_dir,
+        file_prefix=file_prefix,
+        max_segments=1,
+    )
+
+    if segments:
+        seg_path = Path(output_dir) / f"{file_prefix}_segment.wav"
+        shutil.copy2(segments[0], seg_path)
+        for s in segments:
+            try:
+                os.unlink(s)
+            except OSError:
+                pass
+        return str(seg_path), audio_path
+
+    return None, None
+
+
+def validate_celebrity_segment(
+    segment_path: str,
+    description: str,
+    chunkformer_model: Any = None,
+    verbose: bool = False,
+) -> Tuple[bool, str]:
+    """Validate a celebrity voice segment against the character description.
+
+    Uses ChunkFormer for gender/age validation.
+
+    Args:
+        segment_path: Path to the segment WAV file
+        description: Character voice description
+        chunkformer_model: Loaded ChunkFormer model (optional)
+        verbose: Print debug output
+
+    Returns:
+        Tuple of (is_valid, reason)
+    """
+    if not Path(segment_path).exists():
+        return False, "Segment file does not exist"
+
+    file_size = Path(segment_path).stat().st_size
+    if file_size < 1000:
+        return False, f"File too small ({file_size} bytes)"
+
+    if chunkformer_model:
+        try:
+            result = chunkformer_model.classify_audio(audio_path=segment_path)
+            predicted_gender = result["gender"]["label"]
+            gender_prob = result["gender"]["prob"]
+
+            desc_lower = description.lower()
+            expected_gender = "female" if any(w in desc_lower for w in ["female", "woman", "women", "girl"]) else ("male" if any(w in desc_lower for w in ["male", "man", "men", "boy"]) else None)
+
+            GENDER_CONFIDENCE_THRESHOLD = 0.7
+            if expected_gender is not None and predicted_gender != expected_gender:
+                if gender_prob >= GENDER_CONFIDENCE_THRESHOLD:
+                    return False, f"Gender mismatch: expected {expected_gender}, got {predicted_gender} (conf: {gender_prob:.2f})"
+                elif verbose:
+                    print(f"    [DEBUG] Gender mismatch ignored (conf: {gender_prob:.2f} < {GENDER_CONFIDENCE_THRESHOLD})")
+        except Exception as e:
+            if verbose:
+                print(f"    [DEBUG] ChunkFormer validation error: {e}")
+
+    return True, "Validation passed"
+
+
+def generate_celebrity_reference(
+    segment_path: str,
+    character: str,
+    output_dir: str,
+    engine: Any,
+    static_text: str,
+    verbose: bool = False,
+) -> Tuple[Optional[str], float]:
+    """Generate a TTS reference WAV using a celebrity segment as voice reference.
+
+    Args:
+        segment_path: Path to celebrity segment WAV
+        character: Character name
+        output_dir: Directory to save output
+        engine: TTS engine instance
+        static_text: Text to synthesize
+        verbose: Print debug output
+
+    Returns:
+        Tuple of (reference_path, duration_seconds) or (None, 0.0) on failure
+    """
+    ref_path = Path(output_dir) / f"{character}_ref.wav"
+
+    try:
+        success = engine.generate_line(
+            text=static_text,
+            voice_path=segment_path,
+            output_path=str(ref_path),
+            verbose=verbose,
+            ref_text="",
+        )
+
+        if not success or not ref_path.exists():
+            return None, 0.0
+
+        file_size = ref_path.stat().st_size
+        duration = file_size / (24000 * 2)
+
+        if duration < 2.0 or duration > 60.0:
+            if verbose:
+                print(f"    [DEBUG] Reference duration {duration:.1f}s outside range")
+            return None, 0.0
+
+        return str(ref_path), duration
+    except Exception as e:
+        if verbose:
+            print(f"    [DEBUG] Reference generation error: {e}")
+        return None, 0.0
+
+
 def build_celebrity_voice(
     client: Any,
     model: str,
     character: str,
     description: str,
     output_dir: str,
-    max_duration: int = 30,
+    max_duration: int = 300,
     pre_matched_celebrity: Optional[str] = None,
-    num_samples: int = 3,
-    segments_per_sample: int = 3,
+    max_videos: int = 3,
     whisper_model: Any = None,
+    chunkformer_model: Any = None,
+    tts_engine: Any = None,
+    verbose: bool = False,
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-    """Full pipeline: match celebrity, download audio, extract segments.
+    """Full pipeline: match celebrity, download videos, validate per-video, early exit.
 
-    Simplified flow:
-    1. Download 3 videos (different search queries for diversity)
-    2. For each video, identify up to 3 segments using Whisper+LLM
-    3. Extract each segment as a separate WAV file
-    4. Return list of all segments for reference generation
+    Flow:
+    1. Match celebrity (or use pre-matched)
+    2. For each video (up to max_videos):
+       a. Download video, extract best segment
+       b. Validate segment with ChunkFormer
+       c. Generate TTS reference from segment
+       d. If valid, return immediately
+    3. If all fail, return first generated reference anyway
 
     Args:
         client: OpenAI client instance
@@ -1492,20 +1724,22 @@ def build_celebrity_voice(
         description: Character voice description
         output_dir: Directory to save voice files
         max_duration: Max duration for downloaded clip
-        pre_matched_celebrity: Optional pre-matched celebrity name (skips LLM matching)
-        num_samples: Number of different audio samples to download
-        segments_per_sample: Number of segments to extract from each sample
-        whisper_model: Optional WhisperModel for celebrity speech identification
+        pre_matched_celebrity: Optional pre-matched celebrity name
+        max_videos: Maximum number of videos to try
+        whisper_model: WhisperModel for transcription
+        chunkformer_model: ChunkFormer model for validation
+        tts_engine: TTS engine for reference generation
+        verbose: Print debug output
 
     Returns:
-        Tuple of (best_voice_path, metadata) or (None, None) on failure
+        Tuple of (best_reference_path, metadata) or (None, None) on failure
     """
-    # Strip .sampleN suffix from character name for search queries and file names
     base_character = re.sub(r'\.sample\d+$', '', character)
 
-    # Match celebrity - use pre-matched if available
+    # Match celebrity
     if pre_matched_celebrity:
-        print(f"    [DEBUG] Using pre-matched celebrity: {pre_matched_celebrity}")
+        if verbose:
+            print(f"    [DEBUG] Using pre-matched celebrity: {pre_matched_celebrity}")
         try:
             desc_obj = json.loads(description) if isinstance(description, str) else description
             style = desc_obj.get("style", "") if isinstance(desc_obj, dict) else ""
@@ -1519,17 +1753,19 @@ def build_celebrity_voice(
             "search_query": f"{pre_matched_celebrity} {style} dialogue",
         }
     else:
-        print(f"    [DEBUG] No pre-matched celebrity - calling LLM to match for '{character}'")
+        if verbose:
+            print(f"    [DEBUG] Calling LLM to match celebrity for '{character}'")
         match = match_celebrity(client, model, character, description)
         if not match:
             return None, None
 
     celebrity = match["celebrity"]
-    search_query = match["search_query"]
-    print(f"    [DEBUG] Celebrity matched: {celebrity}")
-    print(f"    [DEBUG] Search query: {search_query}")
+    base_query = match["search_query"]
 
-    # Generate alternative search queries for diversity
+    if verbose:
+        print(f"    [DEBUG] Celebrity matched: {celebrity}")
+
+    # Build diverse search queries
     try:
         desc_obj = json.loads(description) if isinstance(description, str) else description
         style = desc_obj.get("style", "") if isinstance(desc_obj, dict) else ""
@@ -1538,111 +1774,132 @@ def build_celebrity_voice(
         style = ""
         gender = ""
 
-    # Build queries that focus on emotional/dialogue scenes
     search_queries = [
         f"{celebrity} {style} dialogue",
         f"{celebrity} emotional scene",
         f"{celebrity} {gender} speech",
     ]
 
-    # Download audio samples and extract segments
-    # Each sample is a video; each sample has up to 3 segments
-    all_segments = []  # List of paths to extracted segment WAV files
-    audio_sources = []
+    static_text = DEFAULTS.get("static_voice_text", "")
+    all_refs = []
 
-    for sample_idx in range(num_samples):
-        query = search_queries[sample_idx % len(search_queries)]
-        file_prefix = f"{base_character}_{sample_idx}"
+    for vid_idx in range(max_videos):
+        query = search_queries[vid_idx % len(search_queries)]
+        file_prefix = f"{base_character}_v{vid_idx}"
 
-        print(f"    [DEBUG] Sample {sample_idx + 1}/{num_samples}: Downloading with query '{query}'")
+        if verbose:
+            print(f"    [DEBUG] Video {vid_idx+1}/{max_videos}: query='{query}'")
 
-        audio_path = download_celebrity_audio(
-            search_query=query,
-            output_dir=output_dir,
-            max_duration=max_duration,
-            file_prefix=file_prefix,
+        # Step 1: Download and extract segment
+        segment_path, audio_source = find_and_extract_video_segment(
             client=client,
             model=model,
+            search_query=query,
             celebrity=celebrity,
             description=description,
-            verbose=True,
+            output_dir=output_dir,
+            file_prefix=file_prefix,
+            max_duration=max_duration,
+            whisper_model=whisper_model,
+            verbose=verbose,
         )
 
-        if not audio_path:
-            print(f"    [DEBUG] Failed to download audio for sample {sample_idx + 1}")
+        if not segment_path:
+            if verbose:
+                print(f"    [DEBUG] Failed to extract segment for video {vid_idx+1}")
             continue
 
-        audio_sources.append(audio_path)
+        # Step 2: Validate segment
+        is_valid, reason = validate_celebrity_segment(
+            segment_path=segment_path,
+            description=description,
+            chunkformer_model=chunkformer_model,
+            verbose=verbose,
+        )
 
-        # Identify celebrity speech segments using Whisper+LLM
-        if whisper_model:
-            print(f"    [DEBUG] Using Whisper+LLM to identify celebrity speech segments...")
-            llm_segments = identify_celebrity_segments(
-                client=client,
-                model=model,
-                celebrity=celebrity,
-                description=description,
-                audio_path=audio_path,
-                whisper_model=whisper_model,
-                max_segments=segments_per_sample,
-                verbose=True,
-            )
+        if not is_valid:
+            if verbose:
+                print(f"    [DEBUG] Segment validation failed: {reason}")
+            all_refs.append((segment_path, audio_source))
+            continue
 
-            if llm_segments:
-                print(f"    [DEBUG] LLM identified {len(llm_segments)} celebrity speech segments")
-                # Extract LLM-identified segments using ffmpeg
-                out_path = Path(output_dir)
-                out_path.mkdir(parents=True, exist_ok=True)
-
-                for seg_idx, seg in enumerate(llm_segments):
-                    seg_path = out_path / f"{file_prefix}_seg{seg_idx}.wav"
-                    start = seg['start']
-                    end = seg['end']
-
-                    try:
-                        subprocess.run(
-                            ["ffmpeg", "-y", "-i", audio_path, "-ss", str(start),
-                             "-to", str(end), "-q:a", "0", str(seg_path)],
-                            capture_output=True, timeout=30,
-                        )
-                        if seg_path.exists():
-                            all_segments.append(str(seg_path))
-                    except Exception as e:
-                        print(f"      [DEBUG] Error extracting segment: {e}")
-            else:
-                print(f"    [DEBUG] No celebrity speech segments found, trying silence detection")
-
-        # Fallback: extract speech segments using silence detection
-        if not any(f"{file_prefix}_seg" in s for s in all_segments):
-            segments = extract_speech_segments(
-                audio_path=audio_path,
+        # Step 3: Generate reference
+        if tts_engine:
+            ref_path, duration = generate_celebrity_reference(
+                segment_path=segment_path,
+                character=f"{base_character}_v{vid_idx}",
                 output_dir=output_dir,
-                file_prefix=file_prefix,
-                max_segments=segments_per_sample,
+                engine=tts_engine,
+                static_text=static_text,
+                verbose=verbose,
             )
 
-            if segments:
-                print(f"    [DEBUG] Extracted {len(segments)} segments via silence detection for sample {sample_idx + 1}")
-                all_segments.extend(segments)
+            if ref_path:
+                if verbose:
+                    print(f"    [DEBUG] Video {vid_idx+1}: reference generated, returning early")
+                metadata = {
+                    "character": character,
+                    "celebrity": celebrity,
+                    "reason": match.get("reason", ""),
+                    "search_query": query,
+                    "segment": segment_path,
+                    "audio_source": audio_source,
+                }
+                return ref_path, metadata
             else:
-                print(f"    [DEBUG] No segments extracted for sample {sample_idx + 1}")
+                if verbose:
+                    print(f"    [DEBUG] Reference generation failed for video {vid_idx+1}")
+                all_refs.append((segment_path, audio_source))
                 continue
+        else:
+            # No TTS engine, return segment directly
+            if verbose:
+                print(f"    [DEBUG] No TTS engine, returning segment directly")
+            metadata = {
+                "character": character,
+                "celebrity": celebrity,
+                "reason": match.get("reason", ""),
+                "search_query": query,
+                "segment": segment_path,
+                "audio_source": audio_source,
+            }
+            return segment_path, metadata
 
-    if not all_segments:
-        return None, None
 
-    print(f"    [DEBUG] Total segments collected: {len(all_segments)}")
+    # All videos failed — return first segment if available
+    if all_refs:
+        seg_path, audio_src = all_refs[0]
+        if tts_engine:
+            ref_path, duration = generate_celebrity_reference(
+                segment_path=seg_path,
+                character=f"{base_character}_fallback",
+                output_dir=output_dir,
+                engine=tts_engine,
+                static_text=static_text,
+                verbose=verbose,
+            )
+            if ref_path:
+                metadata = {
+                    "character": character,
+                    "celebrity": celebrity,
+                    "reason": match.get("reason", ""),
+                    "search_query": search_queries[0],
+                    "segment": seg_path,
+                    "audio_source": audio_src,
+                }
+                return ref_path, metadata
 
-    metadata = {
-        "character": character,
-        "celebrity": celebrity,
-        "reason": match.get("reason", ""),
-        "search_query": search_query,
-        "audio_sources": audio_sources,
-        "segments": all_segments,
-    }
+        metadata = {
+            "character": character,
+            "celebrity": celebrity,
+            "reason": match.get("reason", ""),
+            "search_query": search_queries[0],
+            "segment": seg_path,
+            "audio_source": audio_src,
+        }
+        return seg_path, metadata
 
-    return all_segments[0] if all_segments else None, metadata
+    return None, None
 
 
 def match_all_celebrities(

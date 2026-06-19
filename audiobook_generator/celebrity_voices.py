@@ -398,11 +398,11 @@ def find_best_celebrity_video(
                 )
                 
                 if audio_path:
-                    # Transcribe with Whisper
+                    # Transcribe full audio with Whisper (reuse for segment extraction later)
                     whisper_text = _transcribe_with_whisper(
                         audio_path=audio_path,
                         whisper_model=None,
-                        max_duration=30,  # Only transcribe first 30 seconds
+                        max_duration=0,  # Transcribe full audio
                     )
                     
                     if whisper_text:
@@ -1550,7 +1550,9 @@ def find_and_extract_video_segment(
     whisper_model: Any = None,
     verbose: bool = False,
 ) -> Tuple[Optional[str], Optional[str]]:
-    """Download one video, transcribe, LLM picks best segment, extract to WAV.
+    """Download one video, transcribe once, LLM evaluates and picks segment, extract to WAV.
+
+    Single transcription is used for both LLM evaluation and segment extraction.
 
     Args:
         client: OpenAI client instance
@@ -1582,26 +1584,87 @@ def find_and_extract_video_segment(
     if not audio_path:
         return None, None
 
-    # Try Whisper+LLM segment identification first
+    # Transcribe once, reuse for both LLM evaluation and segment extraction
     if whisper_model:
-        llm_segments = identify_celebrity_segments(
-            client=client,
-            model=model,
-            celebrity=celebrity,
-            description=description,
-            audio_path=audio_path,
-            whisper_model=whisper_model,
-            max_segments=1,
-            verbose=verbose,
-        )
+        try:
+            from .utils import transcribe_audio_with_whisper
+            transcribed_text, start_times, end_times = transcribe_audio_with_whisper(whisper_model, audio_path)
+        except Exception as e:
+            if verbose:
+                print(f"    [DEBUG] Transcription failed: {e}")
+            transcribed_text = None
 
-        if llm_segments:
-            seg = llm_segments[0]
-            seg_path = Path(output_dir) / f"{file_prefix}_segment.wav"
-            if _extract_segment_from_audio(audio_path, seg['start'], seg['end'], str(seg_path)):
-                if verbose:
-                    print(f"    [DEBUG] Extracted LLM-identified segment: {seg_path}")
-                return str(seg_path), audio_path
+        if transcribed_text:
+            if verbose:
+                print(f"    [DEBUG] Transcribed {len(transcribed_text)} chars (single pass)")
+
+            # Build timestamped transcription for LLM
+            sentences = []
+            current_words = []
+            current_start = None
+            current_end = None
+            for i, (word, start, end) in enumerate(zip(transcribed_text.split(), start_times, end_times)):
+                if current_start is None:
+                    current_start = start
+                current_end = end
+                current_words.append(word)
+                if word.endswith(('.', '!', '?', ';')) or i == len(start_times) - 1:
+                    sentences.append({
+                        'start': round(current_start, 2),
+                        'end': round(current_end, 2),
+                        'text': ' '.join(current_words),
+                    })
+                    current_words = []
+                    current_start = None
+                    current_end = None
+
+            timestamped_lines = [f"[{s['start']:.1f}s-{s['end']:.1f}s] {s['text']}" for s in sentences]
+            timestamped_text = '\n'.join(timestamped_lines)
+
+            # Ask LLM to identify the best segment
+            prompt = CELEBRITY_SPEECH_SEGMENT_PROMPT.format(
+                celebrity=celebrity,
+                description=description,
+                transcription=timestamped_text,
+            )
+
+            def _llm_call():
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": "Analyze the transcription and identify the best segment spoken by the celebrity."},
+                    ],
+                )
+                return response.choices[0].message.content
+
+            raw = _retry_llm_call(_llm_call, max_retries=3, backoff=2.0, verbose=verbose)
+            if raw:
+                start_idx = raw.find("[")
+                end_idx = raw.rfind("]") + 1
+                if start_idx >= 0 and end_idx > start_idx:
+                    try:
+                        segments = json.loads(raw[start_idx:end_idx])
+                    except json.JSONDecodeError:
+                        cleaned = re.sub(r',\s*]', ']', raw[start_idx:end_idx])
+                        try:
+                            segments = json.loads(cleaned)
+                        except json.JSONDecodeError:
+                            segments = []
+
+                    valid_segments = [
+                        seg for seg in segments
+                        if isinstance(seg, dict) and all(k in seg for k in ['start', 'end', 'text'])
+                        and (seg['end'] - seg['start']) >= 2.0
+                    ][:1]
+
+                    if valid_segments:
+                        seg = valid_segments[0]
+                        seg_path = Path(output_dir) / f"{file_prefix}_segment.wav"
+                        if _extract_segment_from_audio(audio_path, seg['start'], seg['end'], str(seg_path)):
+                            if verbose:
+                                print(f"    [DEBUG] Extracted LLM-identified segment: {seg_path}")
+                            return str(seg_path), audio_path
 
     # Fallback: silence detection
     segments = extract_speech_segments(

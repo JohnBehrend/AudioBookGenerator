@@ -1861,6 +1861,23 @@ def build_celebrity_voice(
     if verbose:
         print(f"    [DEBUG] Celebrity matched: {celebrity}")
 
+    # Check celebrity_voices_archive for pre-existing voice
+    archive_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "celebrity_voices_archive")
+    safe_name = re.sub(r'[^a-zA-Z0-9 _-]', '', celebrity).strip().replace(' ', '_').lower()
+    archived_path = os.path.join(archive_dir, f'{safe_name}.wav')
+    if os.path.exists(archived_path):
+        if verbose:
+            print(f"    [ARCHIVE] Found pre-existing celebrity voice: {archived_path}")
+        final_path = os.path.join(output_dir, f"{base_character}.wav")
+        shutil.copy2(archived_path, final_path)
+        metadata = {
+            "celebrity": celebrity,
+            "source": "archive",
+            "archive_path": archived_path,
+            "output_path": final_path,
+        }
+        return final_path, metadata
+
     # Build diverse search queries
     try:
         desc_obj = json.loads(description) if isinstance(description, str) else description

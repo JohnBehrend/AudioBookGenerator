@@ -1788,6 +1788,30 @@ def generate_celebrity_reference(
         return None, 0.0
 
 
+def _save_to_archive(celebrity: str, wav_path: str, verbose: bool = False) -> None:
+    """Save a celebrity voice to the archive for future reuse."""
+    archive_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "celebrity_voices_archive")
+    os.makedirs(archive_dir, exist_ok=True)
+    safe_name = re.sub(r'[^a-zA-Z0-9 _-]', '', celebrity).strip().replace(' ', '_').lower()
+    dest = os.path.join(archive_dir, f'{safe_name}.wav')
+    if not os.path.exists(dest):
+        shutil.copy2(wav_path, dest)
+        if verbose:
+            print(f"    [ARCHIVE] Saved new celebrity voice: {dest}")
+        # Also update celebrity_map.json
+        map_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "celebrity_map.json")
+        try:
+            celeb_map = {}
+            if os.path.exists(map_path):
+                with open(map_path) as f:
+                    celeb_map = json.load(f)
+            celeb_map[celebrity] = f'{safe_name}.wav'
+            with open(map_path, 'w') as f:
+                json.dump(celeb_map, f, indent=2)
+        except Exception:
+            pass
+
+
 def build_celebrity_voice(
     client: Any,
     model: str,
@@ -1988,6 +2012,7 @@ def build_celebrity_voice(
                 "audio_source": best_audio,
                 "alternatives": [r[0] for r in video_refs[1:]],
             }
+            _save_to_archive(celebrity, best_ref, verbose=verbose)
             return best_ref, metadata
         else:
             for seg_path in video_segments:
@@ -2015,6 +2040,7 @@ def build_celebrity_voice(
                     "segment": seg_path,
                     "audio_source": audio_src,
                 }
+                _save_to_archive(celebrity, ref_path, verbose=verbose)
                 return ref_path, metadata
 
         metadata = {
@@ -2025,6 +2051,7 @@ def build_celebrity_voice(
             "segment": seg_path,
             "audio_source": audio_src,
         }
+        _save_to_archive(celebrity, seg_path, verbose=verbose)
         return seg_path, metadata
 
     return None, None

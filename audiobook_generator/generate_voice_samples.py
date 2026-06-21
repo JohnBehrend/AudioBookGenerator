@@ -5,6 +5,7 @@ Module to generate voice samples for audiobook characters.
 import json
 import os
 import re
+import subprocess
 import sys
 import shutil
 import traceback
@@ -18,6 +19,50 @@ from .utils import get_validation_client
 
 # Import VoiceMapper for centralized TTS management
 from .voice_mapper import VoiceMapper
+
+
+def _normalize_loudness(wav_path: str) -> None:
+    """Normalize a WAV file to -23 LUFS using two-pass EBU R128 loudness normalization.
+
+    Args:
+        wav_path: Path to the WAV file to normalize (modified in place)
+    """
+    try:
+        r = subprocess.run(
+            ['ffmpeg', '-i', wav_path, '-af', 'loudnorm=I=-23:TP=-2:LRA=7:print_format=summary', '-f', 'null', '-'],
+            capture_output=True, text=True
+        )
+        measured = {}
+        for line in r.stderr.split('\n'):
+            m = re.search(r'Input Integrated:\s+([+\-\d.]+)', line)
+            if m: measured['I'] = m.group(1)
+            m = re.search(r'Input True Peak:\s+([+\-\d.]+)', line)
+            if m: measured['TP'] = m.group(1)
+            m = re.search(r'Input LRA:\s+([+\-\d.]+)', line)
+            if m: measured['LRA'] = m.group(1)
+            m = re.search(r'Input Threshold:\s+([+\-\d.]+)', line)
+            if m: measured['thresh'] = m.group(1)
+            m = re.search(r'Target Offset:\s+([+\-\d.]+)', line)
+            if m: measured['offset'] = m.group(1)
+        if len(measured) >= 5:
+            tmp = wav_path + '.loudnorm.tmp'
+            af = (f'loudnorm=I=-23:TP=-2:LRA=7:'
+                  f'measured_I={measured["I"]}:measured_TP={measured["TP"]}'
+                  f':measured_LRA={measured["LRA"]}:measured_thresh={measured["thresh"]}'
+                  f':offset={measured["offset"]}:linear=true')
+            result = subprocess.run(
+                ['ffmpeg', '-y', '-i', wav_path, '-af', af, '-ar', '44100', '-ac', '1', tmp],
+                capture_output=True
+            )
+            if result.returncode == 0:
+                shutil.move(tmp, wav_path)
+            else:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+    except Exception:
+        pass
 
 
 def load_character_descriptions(descriptions_file: str) -> Dict[str, str]:
@@ -339,6 +384,7 @@ def generate_voice_samples(
                     _matches = _word_match_count(ref_words, _transcribed.lower())
                     if _matches >= len(ref_words) * 0.8:
                         shutil.copy2(voice_path, dest_path)
+                        _normalize_loudness(dest_path)
                         if verbose:
                             print(f"  Copied {voice_path} -> {dest_path} (already correct text)")
                         _seed_verified = True
@@ -395,6 +441,7 @@ def generate_voice_samples(
                         _candidates.sort(key=lambda x: x[0], reverse=True)
                         _best_score, _best_path, _best_att = _candidates[0]
                         shutil.copy2(_best_path, dest_path)
+                        _normalize_loudness(dest_path)
                         if verbose:
                             print(f"  Cloned {voice_path} -> {dest_path} (best: sample {_best_att}, {_best_score}/{len(ref_words)} words)")
                     else:
@@ -463,6 +510,7 @@ def generate_voice_samples(
                                     _fallback_candidates.sort(key=lambda x: x[0], reverse=True)
                                     _best_score, _best_path, _best_att = _fallback_candidates[0]
                                     shutil.copy2(_best_path, dest_path)
+                                    _normalize_loudness(dest_path)
                                     _clone_success = True
                                     if verbose:
                                         print(f"  Cloned via {_fallback_engine_name} (best: sample {_best_att}, {_best_score}/{len(ref_words)} words)")
@@ -481,6 +529,7 @@ def generate_voice_samples(
                                 _all_best_attempts.sort(key=lambda x: x[0], reverse=True)
                                 _best_score, _best_path, _best_att = _all_best_attempts[0]
                                 shutil.copy2(_best_path, dest_path)
+                                _normalize_loudness(dest_path)
                                 if verbose:
                                     print(f"  Cloned {voice_path} -> {dest_path} (best: sample {_best_att}, {_best_score}/{len(ref_words)} words — below threshold but accepted)")
                                 # Clean up all fallback temp files except winner
@@ -703,6 +752,7 @@ def generate_voice_samples(
                     best_score, best_file, best_att, best_dur = candidates[0]
                     final_path = os.path.join(output_dir, f"{char_name}.wav")
                     shutil.copy2(best_file, final_path)
+                    _normalize_loudness(final_path)
                     generated[char_name] = final_path
                     save_voices_map()
                     if verbose:
@@ -716,6 +766,7 @@ def generate_voice_samples(
                         first_matches, first_file, first_num, first_dur = all_attempts[0]
                         final_path = os.path.join(output_dir, f"{char_name}.wav")
                         shutil.copy2(first_file, final_path)
+                        _normalize_loudness(final_path)
                         generated[char_name] = final_path
                         save_voices_map()
                         if verbose:
@@ -787,6 +838,7 @@ def generate_voice_samples(
                             matches = _word_match_count(ref_words, transcribed.lower())
                             if matches >= len(ref_words) * 0.8:
                                 shutil.copy2(output_file, voice_path)
+                                _normalize_loudness(voice_path)
                                 generated[char_name] = voice_path
                                 save_voices_map()
                                 if verbose:
@@ -864,6 +916,7 @@ def generate_voice_samples(
             elif narrator_exists:
                 try:
                     shutil.copy2(narrator_path, voice_path)
+                    _normalize_loudness(voice_path)
                     generated[char_name] = voice_path
                     save_voices_map()
                     if verbose:

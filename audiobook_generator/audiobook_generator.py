@@ -524,7 +524,7 @@ def generate_audiobook_from_chapters(
                 voice_basename = os.path.basename(path)
                 voice_path = os.path.join(output_dir, voice_basename)
             voice_mapper.add_voice_path(voice, voice_path)
-        short_text_postfix = DEFAULTS["short_text_postfix"]
+        short_text_postfix = DEFAULTS["short_text_postfix"] if enable_postfix else ""
 
         # Resolve max_retries: use provided value, fall back to config
         if max_retries is None:
@@ -1775,6 +1775,7 @@ def main():
     parser.add_argument("--gpus", nargs="+", default=None, help="GPU devices to use (e.g., --gpus cuda:0 cuda:1)")
     parser.add_argument("--skip-chunkformer", action="store_true", help="Skip ChunkFormer voice validation (gender/emotion/dialect/age classification)")
     parser.add_argument("--celebrity-voices", action="store_true", help="Use celebrity voice references from YouTube instead of generating synthetic voices")
+    parser.add_argument("--no-postfix", action="store_true", help="Disable short text postfix (sets postfix to empty string)")
     parser.add_argument("--desc-concurrency", type=int, default=1, help="Number of concurrent workers for character description generation (default: 1 for correct celebrity dedup)")
 
     args = parser.parse_args()
@@ -1962,6 +1963,7 @@ def main():
                 celebrity_voices=args.celebrity_voices,
                 llm_model=args.model,
                 desc_concurrency=args.desc_concurrency,
+                enable_postfix=not args.no_postfix,
             )
             print(result)
         else:
@@ -2093,6 +2095,7 @@ def main():
                     whisper_concurrency=args.whisper_concurrency,
                     whisper_fast=args.whisper_fast,
                     gpus=args.gpus,
+                    enable_postfix=not args.no_postfix,
                 )
                 print(status)
                 print(f"Done! Generated {processed} chapters.")

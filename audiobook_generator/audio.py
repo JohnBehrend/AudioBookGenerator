@@ -630,7 +630,8 @@ Respond with ONLY the JSON object, no other text."""
                 }
             ],
             temperature=0.3,
-            max_tokens=300
+            max_tokens=300,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
 
         response_text = response.choices[0].message.content.strip()

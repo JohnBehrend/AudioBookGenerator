@@ -295,7 +295,8 @@ class VoiceMapper:
                         ]
                     }
                 ],
-                max_tokens=512
+                max_tokens=512,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
 
             result = response.choices[0].message.content.strip()
@@ -411,7 +412,8 @@ class VoiceMapper:
                         ]
                     }
                 ],
-                max_tokens=256
+                max_tokens=256,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
 
             result = response.choices[0].message.content.strip()

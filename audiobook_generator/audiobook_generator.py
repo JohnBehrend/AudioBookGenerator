@@ -1339,11 +1339,18 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 else:
                     resolved_seed_characters[char_name] = os.path.join(seed_voice_map_dir, voice_path)
             seed_characters = resolved_seed_characters
-            # Merge seed voices into state.voice_map
+            # Copy seed voice files to output directory and merge into state.voice_map
+            copied = 0
             for char_name, voice_path in seed_characters.items():
-                state.voice_map[char_name] = voice_path
+                if os.path.exists(voice_path):
+                    dest = os.path.join(output_dir, os.path.basename(voice_path))
+                    shutil.copy2(voice_path, dest)
+                    state.voice_map[char_name] = os.path.basename(voice_path)
+                    copied += 1
+                else:
+                    state.voice_map[char_name] = voice_path
             if verbose:
-                print(f"[SEED] Loaded {len(seed_characters)} seeded characters from {seed_voice_map}")
+                print(f"[SEED] Loaded {len(seed_characters)} seeded characters from {seed_voice_map} ({copied} copied to output_dir)")
         else:
             if verbose:
                 print(f"[SEED] No characters found in seed file: {seed_voice_map}")

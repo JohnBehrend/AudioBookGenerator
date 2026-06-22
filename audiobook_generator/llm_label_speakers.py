@@ -849,6 +849,7 @@ def label_speakers(
                     model=model or LLM_SETTINGS["default_model"],
                     messages=messages,
                     temperature=0.7,
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                 ).choices[0].message
             except Exception as e:
                 error_msg = str(e)

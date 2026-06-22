@@ -103,6 +103,7 @@ def match_celebrity(
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             raw = response.choices[0].message.content
             if not raw:
@@ -1056,6 +1057,7 @@ Example:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": f"Select the best video for {celebrity} from these {len(candidate_videos)} options:\n\n{videos_text}"},
             ],
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         return response.choices[0].message.content
 
@@ -1138,6 +1140,7 @@ Example:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": f"Is this video good enough for {celebrity}'s voice? Find the best segment."},
             ],
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         return response.choices[0].message.content
 
@@ -1466,6 +1469,7 @@ def identify_celebrity_segments(
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": "Analyze the transcription and identify which segments are spoken by the celebrity."},
                 ],
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             return response.choices[0].message.content
 
@@ -1638,6 +1642,7 @@ def find_and_extract_video_segment(
                         {"role": "system", "content": prompt},
                         {"role": "user", "content": "Analyze the transcription and identify the best segment spoken by the celebrity."},
                     ],
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                 )
                 return response.choices[0].message.content
 

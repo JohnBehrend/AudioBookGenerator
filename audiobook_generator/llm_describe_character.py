@@ -116,7 +116,8 @@ Format:
 RULES:
 - ONE gender, ONE age, ONE pitch, ONE accent (or omit), 1-3 style traits
 - "description" MUST be natural language
-- "celebrity_voice" MUST be a real celebrity name (NOT fictional characters)
+- "celebrity_voice" MUST be a real celebrity name (NOT empty, NOT fictional characters, NOT omitted)
+- Every character MUST have a celebrity_voice value. Never leave it blank.
 - MAKE SIMILAR CHARACTERS DISTINCT: Different pitch and style for characters with same gender/age
 - Your entire response is the JSON object. Nothing else.
 
@@ -645,6 +646,7 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             raw = response.choices[0].message.content
             # Validate universal JSON format
@@ -679,7 +681,8 @@ def describe_all_characters(client: OpenAI, model: str, characters: List[str], c
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=messages
+            messages=messages,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         content = response.choices[0].message.content
         # Try to parse JSON from response

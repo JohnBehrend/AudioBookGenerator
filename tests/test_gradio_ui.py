@@ -26,7 +26,7 @@ class TestPipelineStateMachine:
     """The 5-stage state machine driven by files present on disk."""
 
     def _state(self, tmp):
-        return PipelineState(str(tmp), temp_dir=str(tmp))
+        return PipelineState(str(tmp))
 
     def test_initial_when_no_files(self, temp_dir):
         assert self._state(temp_dir).get_pipeline_state() == "initial"
@@ -46,17 +46,25 @@ class TestPipelineStateMachine:
         (temp_dir / "characters_descriptions.json").write_text(json.dumps({}))
         assert self._state(temp_dir).get_pipeline_state() == "characters_described"
 
-    def test_voice_samples_complete_when_wavs_exist(self, temp_dir):
+    def test_voice_samples_complete_when_all_described_chars_have_voices(self, temp_dir):
         (temp_dir / "chapter_0.txt").touch()
         (temp_dir / "chapter_0.map.json").write_text(json.dumps([{}, {}]))
-        (temp_dir / "characters_descriptions.json").write_text(json.dumps({}))
+        (temp_dir / "characters_descriptions.json").write_text(json.dumps({"jane": "d"}))
         (temp_dir / "jane.wav").touch()
         assert self._state(temp_dir).get_pipeline_state() == "voice_samples_complete"
+
+    def test_partial_voices_is_not_complete(self, temp_dir):
+        """A described character without a voice must not report Stage 4 done."""
+        (temp_dir / "chapter_0.txt").touch()
+        (temp_dir / "chapter_0.map.json").write_text(json.dumps([{}, {}]))
+        (temp_dir / "characters_descriptions.json").write_text(json.dumps({"jane": "d", "elizabeth": "d"}))
+        (temp_dir / "jane.wav").touch()
+        assert self._state(temp_dir).get_pipeline_state() == "characters_described"
 
     def test_audiobook_complete_when_mp3s_exist(self, temp_dir):
         (temp_dir / "chapter_0.txt").touch()
         (temp_dir / "chapter_0.map.json").write_text(json.dumps([{}, {}]))
-        (temp_dir / "characters_descriptions.json").write_text(json.dumps({}))
+        (temp_dir / "characters_descriptions.json").write_text(json.dumps({"jane": "d"}))
         (temp_dir / "jane.wav").touch()
         (temp_dir / "chapter_0.mp3").touch()
         assert self._state(temp_dir).get_pipeline_state() == "audiobook_complete"
@@ -102,7 +110,7 @@ class TestGenerateTTsAudioMissingVoices:
         (temp_dir / "chapter_0.map.json").write_text(json.dumps([{}, {}]))
         (temp_dir / "characters_descriptions.json").write_text(json.dumps(descriptions))
         (temp_dir / "voices_map.json").write_text(json.dumps(voices_map))
-        return PipelineState(str(temp_dir), temp_dir=str(temp_dir))
+        return PipelineState(str(temp_dir))
 
     def test_reports_missing_voices_recoverably(self, temp_dir):
         """A described character without a voice should surface an error message."""

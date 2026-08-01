@@ -1148,13 +1148,12 @@ def assemble_audiobook_m4b(output_dir: str, verbose: bool = False,
 class PipelineState:
     """Manages state for the audiobook pipeline."""
 
-    def __init__(self, output_dir: str, temp_dir: str = None, voice_engine: str = None):
+    def __init__(self, output_dir: str, voice_engine: str = None):
+        # Single flattened working directory holds all pipeline artifacts
+        # (chapter txts, maps, descriptions, voices, mp3s). Keeping output_dir
+        # and chapters_dir the same removes the mixed-directory state bugs.
         self.output_dir = Path(output_dir)
-        # Use temp_dir for intermediates if provided, otherwise use output_dir
-        if temp_dir:
-            self.chapters_dir = Path(temp_dir)
-        else:
-            self.chapters_dir = self.output_dir
+        self.chapters_dir = self.output_dir
         self.chapters_dir.mkdir(parents=True, exist_ok=True)
         self.pipeline_state = None
         self.chapters = None
@@ -1229,9 +1228,18 @@ class PipelineState:
         if not descriptions_file.exists():
             return "labels_complete"
 
-        # Check for Stage 4 completion (voice samples)
-        wav_files = list(self.chapters_dir.glob("*.wav"))
-        if not wav_files:
+        # Check for Stage 4 completion (voice samples): every described
+        # character must have a generated voice file. A single narrator.wav or
+        # a partial set does NOT count as complete.
+        wav_stems = {f.stem.lower().replace(" ", "") for f in self.chapters_dir.glob("*.wav")}
+        try:
+            described_stems = {
+                c.lower().replace(" ", "")
+                for c in json.loads(descriptions_file.read_text())
+            }
+        except Exception:
+            described_stems = set()
+        if not described_stems or not described_stems.issubset(wav_stems):
             return "characters_described"
 
         # Check for Stage 5 completion (final audiobook)
@@ -1297,16 +1305,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     if llm_model:
         LLM_SETTINGS["default_model"] = llm_model
 
-    # Use temp directory only when output_dir is the default; otherwise use output_dir directly
-    import tempfile
-    use_temp = output_dir == "chapters"
-    if use_temp:
-        temp_dir = tempfile.mkdtemp(prefix="audiobook_")
-        if verbose:
-            print(f"[TEMP] Using temp directory: {temp_dir}")
-        state = PipelineState(output_dir, temp_dir=temp_dir)
-    else:
-        state = PipelineState(output_dir)
+    # Single flattened working directory holds all stage artifacts.
+    state = PipelineState(output_dir)
 
     if resume:
         # Detect current state and load existing data
@@ -1445,7 +1445,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         # Build list of chapters to label (skip already-labeled if resuming)
         chapters_to_label = []
         for i, chapter_file in enumerate(chapter_files):
-            map_file = state.chapters_dir / f"chapter_{i:02d}.map.json"
+            map_file = state.chapters_dir / f"chapter_{i}.map.json"
             if resume and map_file.exists():
                 if verbose:
                     print(f"[STAGE 2] Skipping chapter {i} - already labeled")
@@ -1461,7 +1461,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {}
                 for i, chapter_file in chapters_to_label:
-                    map_file = state.chapters_dir / f"chapter_{i:02d}.map.json"
+                    map_file = state.chapters_dir / f"chapter_{i}.map.json"
                     handler.update((i + 1) / num_chapters, desc=f"Labeling chapter {i + 1}/{num_chapters}")
                     future = executor.submit(
                         label_speakers,
@@ -1662,20 +1662,6 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         if verbose:
             print(error_msg)
         return error_msg
-    finally:
-        if use_temp:
-            # Copy final outputs to user's output_dir and clean up temp
-            if verbose:
-                print(f"[CLEANUP] Copying final outputs to {output_dir}")
-            Path(output_dir).mkdir(parents=True, exist_ok=True)
-            for pattern in ["chapter_*.mp3", "*.m4b"]:
-                for f in glob.glob(os.path.join(temp_dir, pattern)):
-                    shutil.copy2(f, Path(output_dir))
-                    if verbose:
-                        print(f"[CLEANUP] Copied {os.path.basename(f)} to {output_dir}")
-            if verbose:
-                print(f"[CLEANUP] Removing temp directory: {temp_dir}")
-            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 # ============================================================================

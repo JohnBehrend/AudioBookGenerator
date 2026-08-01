@@ -12,7 +12,6 @@ from audiobook_generator.utils import (
     load_json_file,
     copy_mp3_files_to_chapters,
     get_character_wav_file,
-    build_voices_map,
     load_duplicate_replacement_map,
     load_seed_characters,
     normalize_character_name,
@@ -245,42 +244,6 @@ class TestGetCharacterWavFile:
         """Test that None is returned for missing file."""
         result = get_character_wav_file("nonexistent", temp_dir)
         assert result is None
-
-
-class TestBuildVoicesMap:
-    """Tests for build_voices_map function."""
-
-    def test_maps_each_character_to_its_file(self, temp_dir):
-        """Should map each described character to its generated voice file."""
-        (temp_dir / "jane.wav").touch()
-        (temp_dir / "elizabeth.wav").touch()
-
-        voices = build_voices_map(
-            {"narrator": "d", "jane": "d", "elizabeth": "d"}, temp_dir
-        )
-
-        assert voices == {"jane": "jane.wav", "elizabeth": "elizabeth.wav"}
-
-    def test_falls_back_to_narrator_when_missing(self, temp_dir):
-        """A character without a file should fall back to the narrator voice."""
-        (temp_dir / "narrator.wav").touch()
-
-        voices = build_voices_map({"jane": "d", "elizabeth": "d"}, temp_dir)
-
-        assert voices == {"jane": "narrator.wav", "elizabeth": "narrator.wav"}
-
-    def test_seed_characters_take_precedence(self, temp_dir):
-        """Seed voice mappings should win over generated file resolution."""
-        (temp_dir / "jane.wav").touch()
-
-        voices = build_voices_map(
-            {"jane": "d", "elizabeth": "d"},
-            temp_dir,
-            seed_characters={"jane": "/seed/jane.wav"},
-        )
-
-        assert voices["jane"] == "jane.wav"  # basename of the seed path
-        assert "elizabeth" not in voices  # no file and no narrator fallback
 
 
 class TestLoadDuplicateReplacementMap:

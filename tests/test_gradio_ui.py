@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 from audiobook_generator.gradio_ui import (
     PipelineState,
     parse_epub_to_file,
+    generate_tts_audio,
     get_all_character_wav_files,
     create_or_get_pipeline_state,
     BUTTON_STATES,
@@ -92,6 +93,41 @@ class TestParseEpubToFile:
         log, state = parse_epub_to_file(None, None, progress=MagicMock())
         assert "Error" in log
         assert state is None
+
+
+class TestGenerateTTsAudioMissingVoices:
+    """Stage 5 should mirror the CLI's missing-voice check, but recoverably."""
+
+    def _state(self, temp_dir, descriptions, voices_map):
+        (temp_dir / "chapter_0.map.json").write_text(json.dumps([{}, {}]))
+        (temp_dir / "characters_descriptions.json").write_text(json.dumps(descriptions))
+        (temp_dir / "voices_map.json").write_text(json.dumps(voices_map))
+        return PipelineState(str(temp_dir), temp_dir=str(temp_dir))
+
+    def test_reports_missing_voices_recoverably(self, temp_dir):
+        """A described character without a voice should surface an error message."""
+        state = self._state(temp_dir, {"jane": "d", "elizabeth": "d"}, {"jane": "jane.wav"})
+
+        with patch("audiobook_generator.gradio_ui.get_chapters_dir", return_value=temp_dir):
+            log, out_state = generate_tts_audio(state, "", None, progress=MagicMock())
+
+        assert "missing voice samples" in log
+        assert "elizabeth" in log
+        assert out_state is state
+
+    def test_proceeds_when_all_voices_present(self, temp_dir):
+        """No missing-voice message when every described character has a voice."""
+        state = self._state(
+            temp_dir,
+            {"jane": "d", "elizabeth": "d"},
+            {"jane": "jane.wav", "elizabeth": "elizabeth.wav"},
+        )
+
+        with patch("audiobook_generator.gradio_ui.get_chapters_dir", return_value=temp_dir):
+            log, out_state = generate_tts_audio(state, "", None, progress=MagicMock())
+
+        assert "missing voice samples" not in log
+        assert out_state is state
 
 
 class TestGetAllCharacterWavFiles:

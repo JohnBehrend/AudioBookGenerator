@@ -60,7 +60,6 @@ from .utils import (
     load_json_file,
     get_character_wav_file,
     load_seed_characters,
-    build_voices_map,
     load_duplicate_replacement_map,
     get_chapter_map_files,
     parse_map_file,
@@ -596,17 +595,30 @@ def generate_tts_audio(
             log_output += "\ncharacters_descriptions.json not found. Please run Stage 3 (Describe Characters) first."
             return log_output, pipeline_state
 
-        # Load character descriptions as voices_map
         with open(descriptions_file, "r", encoding="utf-8") as f:
-            descriptions = json.load(f)
+            expected_characters = json.load(f)
 
         # Load seed voices if provided
         seed_characters = load_seed_characters(seed_voice_map)
         if seed_characters:
             progress(0, desc=f"Loaded {len(seed_characters)} seeded voices from seed voice map")
 
-        # Resolve each character to its voice file via the shared helper
-        voices_map = build_voices_map(descriptions, chapters_dir, seed_characters)
+        # Resolve the voices_map the same way the CLI does: load voices_map.json
+        # (or default to <character>.wav), then let seed voices override.
+        pipeline_state.load_voice_map()
+        voices_map = dict(pipeline_state.voice_map)
+        for char_name, voice_path in (seed_characters or {}).items():
+            voices_map[char_name] = os.path.basename(voice_path)
+
+        # Mirror the CLI's missing-voice check, but report it so the user can recover.
+        missing_voices = set(expected_characters) - set(voices_map)
+        if missing_voices:
+            missing_list = ", ".join(sorted(missing_voices))
+            log_output += (f"\n[ERROR] {len(missing_voices)} character(s) missing voice samples: "
+                           f"{missing_list}. Please run Stage 4 (Generate Voices) to generate them.")
+            progress(1.0, desc=f"Missing voices for: {missing_list}")
+            return log_output, pipeline_state
+
         progress(0.5, desc=f"Prepared voices for {len(voices_map)} characters. (temp: {chapters_dir.parent})")
         if not voices_map:
             log_output += "\nNo voice samples found. Please run Stage 4 (Generate Voices) first."

@@ -60,6 +60,8 @@ from .utils import (
     load_json_file,
     get_character_wav_file,
     load_seed_characters,
+    build_voices_map,
+    load_duplicate_replacement_map,
     get_chapter_map_files,
     parse_map_file,
     count_lines_per_character,
@@ -94,14 +96,6 @@ def get_characters_descriptions_file() -> Optional[Path]:
     if not chapters_dir:
         return None
     return chapters_dir / "characters_descriptions.json"
-
-
-def get_duplicate_replacement_map_file() -> Optional[Path]:
-    """Get the path to duplicate_replacement_map.json in the temp directory."""
-    chapters_dir = get_chapters_dir()
-    if not chapters_dir:
-        return None
-    return chapters_dir / "duplicate_replacement_map.json"
 
 
 def get_description_metadata_file() -> Optional[Path]:
@@ -608,26 +602,11 @@ def generate_tts_audio(
 
         # Load seed voices if provided
         seed_characters = load_seed_characters(seed_voice_map)
-
-        voices_map = {}
         if seed_characters:
-            for char_name, voice_path in seed_characters.items():
-                voices_map[char_name] = os.path.basename(voice_path)
             progress(0, desc=f"Loaded {len(seed_characters)} seeded voices from seed voice map")
 
-        for char_name in descriptions.keys():
-            progress(0, desc=f"Finding voice sample for character: {char_name}... (temp: {chapters_dir.parent})")
-            if char_name in voices_map:
-                continue
-            wav_path = get_character_wav_file(char_name, chapters_dir)
-            if wav_path and os.path.exists(wav_path):
-                # Store relative path (basename) to avoid issues with temp directory paths
-                voices_map[char_name] = os.path.basename(wav_path)
-            else:
-                # Use a default narrator voice if no sample found
-                narrator_path = get_character_wav_file("narrator", chapters_dir)
-                if narrator_path and os.path.exists(narrator_path):
-                    voices_map[char_name] = os.path.basename(narrator_path)
+        # Resolve each character to its voice file via the shared helper
+        voices_map = build_voices_map(descriptions, chapters_dir, seed_characters)
         progress(0.5, desc=f"Prepared voices for {len(voices_map)} characters. (temp: {chapters_dir.parent})")
         if not voices_map:
             log_output += "\nNo voice samples found. Please run Stage 4 (Generate Voices) first."
@@ -666,13 +645,9 @@ def generate_tts_audio(
         verbose = True
 
         # Load duplicate replacement map if available (from Stage 3)
-        duplicate_replacement_map = {}
-        dup_map_file = get_duplicate_replacement_map_file()
-        if dup_map_file and dup_map_file.exists():
-            with open(dup_map_file, "r", encoding="utf-8") as f:
-                duplicate_replacement_map = json.load(f)
-            if verbose and duplicate_replacement_map:
-                log_output += f"\n[DUPLICATE MAP] Loaded {len(duplicate_replacement_map)} replacements from duplicate_replacement_map.json"
+        duplicate_replacement_map = load_duplicate_replacement_map(chapters_dir)
+        if verbose and duplicate_replacement_map:
+            log_output += f"\n[DUPLICATE MAP] Loaded {len(duplicate_replacement_map)} replacements from duplicate_replacement_map.json"
 
         status, processed = generate_audiobook_from_chapters(
             chapters=chapters,

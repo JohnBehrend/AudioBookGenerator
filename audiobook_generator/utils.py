@@ -676,6 +676,59 @@ def get_character_wav_file(character_name: str, chapters_dir: Path) -> Optional[
     return None
 
 
+def build_voices_map(
+    character_descriptions: Dict[str, str],
+    chapters_dir: Union[Path, str],
+    seed_characters: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Build a voices_map (character -> relative voice file) for TTS generation.
+
+    Shared by the Gradio and CLI paths: starts from any seed voices, then
+    resolves each character to its generated voice file in ``chapters_dir``,
+    falling back to the narrator voice when a character has no file.
+
+    Args:
+        character_descriptions: Dict mapping character names to descriptions
+        chapters_dir: Directory containing generated voice files
+        seed_characters: Optional dict of seed character -> voice path
+
+    Returns:
+        Dict mapping each character to a voice file basename
+    """
+    voices_map: Dict[str, str] = {}
+    if seed_characters:
+        for char_name, voice_path in seed_characters.items():
+            voices_map[char_name] = os.path.basename(voice_path)
+
+    for char_name in character_descriptions:
+        if char_name in voices_map:
+            continue
+        wav_path = get_character_wav_file(char_name, chapters_dir)
+        if wav_path and os.path.exists(wav_path):
+            voices_map[char_name] = os.path.basename(wav_path)
+        else:
+            narrator_path = get_character_wav_file("narrator", chapters_dir)
+            if narrator_path and os.path.exists(narrator_path):
+                voices_map[char_name] = os.path.basename(narrator_path)
+    return voices_map
+
+
+def load_duplicate_replacement_map(output_dir: Union[str, Path]) -> Dict[str, str]:
+    """Load the duplicate-replacement map from ``duplicate_replacement_map.json``.
+
+    Shared by the Gradio and CLI paths.
+
+    Args:
+        output_dir: Directory that may contain the replacement map file
+
+    Returns:
+        Dict of duplicate name -> canonical name (empty dict if absent)
+    """
+    replacement_map_file = os.path.join(str(output_dir), "duplicate_replacement_map.json")
+    loaded = load_json_file(replacement_map_file)
+    return loaded if isinstance(loaded, dict) else {}
+
+
 def load_seed_characters(seed_voice_map: Optional[Union[str, Dict]]) -> Optional[Dict[str, str]]:
     """Load seed characters from a voices_map.json file.
 

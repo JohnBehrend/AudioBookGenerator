@@ -1,8 +1,7 @@
 """Tests for generate_tts_for_line() in audiobook_generator.py."""
 
-import os
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from audiobook_generator.testing import MockTTSEngine
 from audiobook_generator.audiobook_generator import TTSConfig
@@ -113,7 +112,7 @@ class TestGenerateTTSForLineVoicePath:
                             tts_config=TTSConfig(device="cpu", tts_engine="moss", output_dir=str(temp_dir), validation_model=None, short_text_postfix=""),
                         )
 
-        assert result[0] is False or result[0] is True
+        assert len(result) == 2
         assert isinstance(result[1], float)
         # get_voice_path may be called multiple times due to retry logic
         mapper.get_voice_path.assert_called_with("narrator")
@@ -139,7 +138,7 @@ class TestGenerateTTSForLineVoicePath:
                             voice_path="/explicit/path.wav",
                         )
 
-        assert result[0] is False or result[0] is True
+        assert len(result) == 2
         mapper.get_voice_path.assert_not_called()
 
 

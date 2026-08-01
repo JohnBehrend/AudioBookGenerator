@@ -336,55 +336,77 @@ class TestBuildCharacterContext:
 class TestGetDescriptionPrompt:
     """Tests for _get_description_prompt function."""
 
-    def test_function_exists(self):
-        """Test that _get_description_prompt function exists and is callable."""
-        assert callable(_get_description_prompt)
+    def test_universal_format_is_engine_independent(self):
+        """The description prompt is shared across all TTS engines."""
+        prompt = _get_description_prompt(None)
+        assert isinstance(prompt, str)
+        assert len(prompt) > 0
+        assert _get_description_prompt("omni") == prompt
+        assert _get_description_prompt("dramabox") == prompt
 
 
 class TestDescribeCharacter:
     """Tests for describe_character function."""
 
-    def test_function_exists(self):
-        """Test that describe_character function exists and is callable."""
-        assert callable(describe_character)
+    def test_returns_universal_json(self, mock_llm_client):
+        """Should return the validated universal JSON string."""
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": '{"gender": "female", "age": "young adult", "pitch": "moderate", "accent": "", "style": "", "celebrity_voice": ""}',
+        })
+        result = describe_character(mock_llm_client, "model", "jane", "context")
+        parsed = json.loads(result)
+        assert parsed["gender"] == "female"
+        assert parsed["age"] == "young adult"
+
+    def test_retries_then_errors_on_invalid_output(self, mock_llm_client):
+        """Invalid LLM output should be retried and eventually return an error."""
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": '{"gender": "unknown"}',
+        })
+        result = describe_character(mock_llm_client, "model", "jane", "context", max_retries=3)
+        assert "Failed to generate valid description" in result
 
 
 class TestDescribeAllCharacters:
     """Tests for describe_all_characters function."""
 
-    def test_function_exists(self):
-        """Test that describe_all_characters function exists and is callable."""
-        assert callable(describe_all_characters)
+    def test_parses_descriptions_for_all_characters(self, mock_llm_client):
+        """Should return the parsed per-character descriptions dict."""
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": '{"jane": "a gentle voice", "elizabeth": "a witty voice"}',
+        })
+        result = describe_all_characters(mock_llm_client, "model", ["jane", "elizabeth"], "context")
+        assert result == {"jane": "a gentle voice", "elizabeth": "a witty voice"}
 
 
 class TestDescribeCharactersShared:
     """Tests for describe_characters_shared function."""
 
-    def test_function_exists(self):
-        """Test that describe_characters_shared function exists and is callable."""
-        assert callable(describe_characters_shared)
-
-    def test_returns_descriptions_dict(self, temp_dir):
-        """Test that function returns character descriptions.
-
-        Note: This test verifies the function can be called, actual description
-        generation requires LLM with proper prompts which are not available.
-        """
-        characters = ["narrator"]
-        chapter_texts = []
-        chapter_files = []
-
-        from audiobook_generator.utils import get_characters_from_map_files
-        result = get_characters_from_map_files(temp_dir)
-        assert isinstance(result, list)
+    def test_returns_descriptions_and_writes_output_files(self, temp_dir, mock_llm_client):
+        """Should describe characters and persist the standard output files."""
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": '{"gender": "female", "age": "young adult", "pitch": "moderate", "accent": "", "style": "", "celebrity_voice": ""}',
+        })
+        result = describe_characters_shared(
+            characters=["jane"],
+            chapter_texts=[],
+            chapter_files=[],
+            output_dir=str(temp_dir),
+            client=mock_llm_client,
+            model="model",
+        )
+        assert set(result) == {"jane"}
+        assert json.loads(result["jane"])["gender"] == "female"
+        assert (temp_dir / "characters_descriptions.json").exists()
+        assert (temp_dir / "duplicate_replacement_map.json").exists()
 
 
 class TestDescribeCharacters:
     """Tests for main describe_characters function."""
-
-    def test_function_exists(self):
-        """Test that describe_characters function exists and is callable."""
-        assert callable(describe_characters)
 
     def test_loads_characters_file(self, temp_dir, mock_llm_client):
         """Test that characters are loaded from characters.json file."""

@@ -3,8 +3,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 class TestTTSEngine:
     """Test TTSEngine base class."""
@@ -138,8 +136,30 @@ class TestVoiceSample:
         assert output_file is None
         assert duration == 0
 
-    def test_build_voice_clone_prompt_exists(self):
-        """Test that build_voice_clone_prompt exists."""
+    def test_build_voice_clone_prompt_delegates_to_worker(self):
+        """Test that build_voice_clone_prompt requests the prompt from the worker."""
+        import sys
+
         from tts.voice_sample import build_voice_clone_prompt
-        
-        assert callable(build_voice_clone_prompt)
+
+        mock_worker = MagicMock()
+        mock_worker.request.return_value = {"voice_clone_prompt": "PROMPT"}
+        mock_sf = MagicMock()
+        mock_sf.read.return_value = ("audio", 22050)
+        mock_torch = MagicMock()
+        mock_torch.from_numpy.return_value = "tensor"
+
+        with patch.dict(sys.modules, {"soundfile": mock_sf, "torch": mock_torch}), \
+             patch("tts.voice_sample.EngineWorker", return_value=mock_worker):
+            result = build_voice_clone_prompt(
+                Path("/tmp/engine"), "cuda:0", "/tmp/voice.wav", ref_text="hello"
+            )
+
+        assert result == "PROMPT"
+        mock_worker.request.assert_called_once_with(
+            "build_voice_clone_prompt",
+            voice_path="/tmp/voice.wav",
+            ref_text="hello",
+            device="cuda:0",
+        )
+        mock_worker.shutdown.assert_called_once()

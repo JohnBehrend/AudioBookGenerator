@@ -1,6 +1,5 @@
 """Tests for describe_voice.py CLI script."""
 
-import os
 import sys
 import pytest
 from pathlib import Path
@@ -79,12 +78,6 @@ class TestDescribeVoiceCLI:
 
 class TestDescribeVoiceIntegration:
     """Integration tests for describe_voice functionality."""
-
-    def test_describe_voice_method_exists(self):
-        """Test that describe_voice_with_llm method exists on VoiceMapper."""
-        from audiobook_generator.voice_mapper import VoiceMapper
-        assert hasattr(VoiceMapper, 'describe_voice_with_llm')
-        assert callable(VoiceMapper.describe_voice_with_llm)
 
     def test_describe_voice_signature(self):
         """Test that describe_voice_with_llm has correct signature."""

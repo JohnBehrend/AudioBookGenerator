@@ -8,14 +8,17 @@ helpers, and the button-gating tables.
 """
 
 import json
+from unittest.mock import MagicMock, patch
 
 from audiobook_generator.gradio_ui import (
     PipelineState,
+    parse_epub_to_file,
     get_all_character_wav_files,
     create_or_get_pipeline_state,
     BUTTON_STATES,
     STATE_LABELS,
 )
+from audiobook_generator.parse_chapter import ChapterObj
 
 
 class TestPipelineStateMachine:
@@ -56,6 +59,39 @@ class TestPipelineStateMachine:
         (temp_dir / "jane.wav").touch()
         (temp_dir / "chapter_0.mp3").touch()
         assert self._state(temp_dir).get_pipeline_state() == "audiobook_complete"
+
+
+class TestParseEpubToFile:
+    def test_parses_and_writes_chapters_via_shared_writer(self, temp_dir, tmp_path_factory):
+        """Stage 1 should write chapters with the shared writer, not hand-rolled code."""
+        # The uploaded EPUB lives outside the chapters dir (Stage 1 wipes chapters_dir).
+        epub_dir = tmp_path_factory.mktemp("epub_upload")
+        epub = epub_dir / "book.epub"
+        epub.write_text("fake epub")
+        epub_file = MagicMock()
+        epub_file.name = str(epub)
+
+        chapters = [
+            [ChapterObj(False, "Narrator text", 1),
+             ChapterObj(True, '"Hi," said Jane.', 2)],
+        ]
+
+        with patch("audiobook_generator.gradio_ui.get_chapters_dir", return_value=temp_dir), \
+             patch("audiobook_generator.gradio_ui.parse_chapter.parse_epub_to_chapters", return_value=chapters):
+            log, state = parse_epub_to_file(epub_file, None, progress=MagicMock())
+
+        assert state is not None
+        assert state.pipeline_state == "epub_parsed"
+        chapter_file = temp_dir / "chapter_0.txt"
+        assert chapter_file.exists()
+        content = chapter_file.read_text()
+        assert "Line 1: Narrator text" in content
+        assert '"Hi," said Jane.' in content
+
+    def test_returns_error_when_no_epub(self, temp_dir):
+        log, state = parse_epub_to_file(None, None, progress=MagicMock())
+        assert "Error" in log
+        assert state is None
 
 
 class TestGetAllCharacterWavFiles:

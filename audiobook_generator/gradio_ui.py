@@ -190,27 +190,8 @@ def parse_epub_to_file(
         total_chapters = len(chapters)
         progress(0, desc=f"Parsing {total_chapters} chapters with {total_lines} lines... (temp: {chapters_dir.parent})")
 
-        # Save each chapter as a text file with progress updates
-        lines_processed = 0
-        for i, chapter in enumerate(chapters):
-            chapter_line_count = len(chapter)
-            for j, cobj in enumerate(chapter):
-                lines_processed += 1
-                progress(
-                    lines_processed / total_lines,
-                    desc=f"Parsing chapter {i + 1}/{total_chapters}: line {lines_processed}/{total_lines}... (temp: {chapters_dir.parent})"
-                )
-
-            output_file = chapters_dir / f"chapter_{i}.txt"
-            with open(output_file, "w", encoding="utf-8") as f:
-                for cobj in chapter:
-                    f.write(f"Line {cobj.line_num}: ")
-                    if cobj.has_quotes:
-                        f.write('"')
-                    f.write(cobj.text)
-                    if cobj.has_quotes:
-                        f.write('"')
-                    f.write("\n")
+        # Reuse the shared chapter writer (same code path as CLI run_full_pipeline)
+        parse_chapter.write_chapters_to_txt(chapters, str(chapters_dir))
 
         progress(1.0, desc=f"Successfully parsed {total_chapters} chapters with {total_lines} lines. (temp: {chapters_dir.parent})")
         state.pipeline_state = "epub_parsed"

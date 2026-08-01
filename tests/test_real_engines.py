@@ -29,6 +29,7 @@ import torch
 import torchaudio
 
 from tts import get_engine, list_engines
+from audiobook_generator.config import DEFAULTS
 
 
 def dbg(msg: str) -> None:
@@ -63,7 +64,9 @@ TEST_TEXT = "Hello, world."
 OPTIONAL_ENGINES = set()
 
 # Engines that are clone-only (no voice sample generation from description)
-CLONE_ONLY_ENGINES = {"echo-tts", "miso-tts"}
+# zonos2 (Zyphra Zonos) is a zero-shot cloning TTS: it can only speak given a
+# reference/seed voice, not synthesize a novel voice from a text description.
+CLONE_ONLY_ENGINES = {"echo-tts", "miso-tts", "zonos2"}
 
 # Persistent output directory for generated test voices
 _TEST_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "voice_test" / "test_voices"
@@ -139,6 +142,7 @@ def voice_refs(available_engines: dict, output_dir: Path, device: str):
                     output_dir=output_dir / engine_name,
                     device=device,
                     verbose=False,
+                    static_voice_text=DEFAULTS["static_voice_text"],
                 )
                 if success:
                     refs[engine_name] = ref_path
@@ -193,6 +197,7 @@ class TestRealGeneration:
             output_dir=output_dir / engine_name,
             device=device,
             verbose=False,
+            static_voice_text=DEFAULTS["static_voice_text"],
         )
 
         assert success, f"{engine_name} failed to generate voice sample"
@@ -253,6 +258,8 @@ class TestRealGeneration:
         """Verify engine can generate multiple samples without re-initialization."""
         if engine_name in OPTIONAL_ENGINES:
             pytest.skip(f"Optional engine {engine_name} requires special setup")
+        if engine_name in CLONE_ONLY_ENGINES:
+            pytest.skip(f"Clone-only engine {engine_name} does not support voice sample generation")
         if engine_name not in available_engines:
             pytest.skip(f"Failed to initialize {engine_name}")
 
@@ -263,6 +270,7 @@ class TestRealGeneration:
             output_dir=output_dir / engine_name,
             device=device,
             verbose=False,
+            static_voice_text=DEFAULTS["static_voice_text"],
         )
         assert success, f"{engine_name} batch gen failed for hero"
         assert Path(output_file).exists(), f"{engine_name} batch output missing for hero"

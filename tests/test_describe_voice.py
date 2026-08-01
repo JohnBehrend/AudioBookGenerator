@@ -6,9 +6,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-import numpy as np
-import torch
-import torchaudio
+from audiobook_generator.testing import write_silence_wav
 
 
 class TestDescribeVoiceCLI:
@@ -24,8 +22,7 @@ class TestDescribeVoiceCLI:
     def test_creates_wav_file(self, temp_dir):
         """Test that a WAV file is created for testing."""
         voice_file = temp_dir / "test_voice.wav"
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
         assert voice_file.exists()
 
     def test_missing_file_error(self, temp_dir, capsys):
@@ -39,8 +36,7 @@ class TestDescribeVoiceCLI:
     def test_verbose_flag(self, temp_dir, capsys):
         """Test that verbose flag is passed correctly."""
         voice_file = temp_dir / "test_voice.wav"
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
 
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -61,8 +57,7 @@ class TestDescribeVoiceCLI:
     def test_default_endpoint(self, temp_dir):
         """Test that default endpoint is used."""
         voice_file = temp_dir / "test_voice.wav"
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
 
         mock_client = MagicMock()
         mock_response = MagicMock()

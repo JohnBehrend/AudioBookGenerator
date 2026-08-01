@@ -24,6 +24,14 @@ from .config import DEFAULTS, LLM_SETTINGS
 _celebrity_audio_cache: Dict[str, str] = {}
 
 
+def _archive_dir() -> str:
+    """Return the directory used to persist celebrity voice references.
+
+    Resolved relative to this module so it works regardless of CWD.
+    """
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "celebrity_voices_archive")
+
+
 def _retry_llm_call(func: Callable, max_retries: int = 3, backoff: float = 1.0, verbose: bool = False) -> Any:
     """Retry an LLM call with exponential backoff on connection errors.
 
@@ -1795,7 +1803,7 @@ def generate_celebrity_reference(
 
 def _save_to_archive(celebrity: str, wav_path: str, verbose: bool = False) -> None:
     """Save a celebrity voice to the archive for future reuse."""
-    archive_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "celebrity_voices_archive")
+    archive_dir = _archive_dir()
     os.makedirs(archive_dir, exist_ok=True)
     safe_name = re.sub(r'[^a-zA-Z0-9 _-]', '', celebrity).strip().replace(' ', '_').lower()
     dest = os.path.join(archive_dir, f'{safe_name}.wav')
@@ -1891,7 +1899,7 @@ def build_celebrity_voice(
         print(f"    [DEBUG] Celebrity matched: {celebrity}")
 
     # Check celebrity_voices_archive for pre-existing voice
-    archive_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "celebrity_voices_archive")
+    archive_dir = _archive_dir()
     safe_name = re.sub(r'[^a-zA-Z0-9 _-]', '', celebrity).strip().replace(' ', '_').lower()
     archived_path = os.path.join(archive_dir, f'{safe_name}.wav')
     if os.path.exists(archived_path):

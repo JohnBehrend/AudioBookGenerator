@@ -16,6 +16,7 @@ from audiobook_generator.celebrity_voices import (
     match_celebrity,
     _retry_llm_call,
 )
+from audiobook_generator.testing import write_silence_wav
 
 
 class TestExtractSegmentFromAudio:
@@ -33,12 +34,8 @@ class TestExtractSegmentFromAudio:
 
     def test_returns_false_for_missing_ffmpeg(self, temp_dir):
         """Test that missing ffmpeg returns False."""
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(22050, dtype=np.float32)
         input_path = temp_dir / "input.wav"
-        torchaudio.save(str(input_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(input_path, 22050, 1)
 
         with patch("audiobook_generator.celebrity_voices.subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError("ffmpeg not found")
@@ -52,12 +49,8 @@ class TestExtractSegmentFromAudio:
 
     def test_returns_true_on_success(self, temp_dir):
         """Test that successful extraction returns True."""
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(int(22050 * 10), dtype=np.float32)
         input_path = temp_dir / "input.wav"
-        torchaudio.save(str(input_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(input_path, 22050, 10)
 
         with patch("audiobook_generator.celebrity_voices.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock()
@@ -113,13 +106,8 @@ class TestFindAndExtractVideoSegment:
 
     def test_falls_back_to_silence_detection(self, temp_dir, mock_llm_client):
         """Test that silence detection is used when Whisper+LLM fails."""
-        import numpy as np
-        import torch
-        import torchaudio
-
         audio_path = temp_dir / "downloaded.wav"
-        audio = np.zeros(int(22050 * 10), dtype=np.float32)
-        torchaudio.save(str(audio_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(audio_path, 22050, 10)
 
         with patch("audiobook_generator.celebrity_voices.download_celebrity_audio") as mock_dl, \
              patch("audiobook_generator.celebrity_voices.identify_celebrity_segments") as mock_id, \
@@ -171,12 +159,8 @@ class TestValidateCelebritySegment:
 
     def test_passes_without_chunkformer(self, temp_dir):
         """Test that validation passes when no ChunkFormer is provided."""
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
         seg_path = temp_dir / "segment.wav"
-        torchaudio.save(str(seg_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg_path, 22050, 3)
 
         is_valid, reason = validate_celebrity_segment(
             str(seg_path),
@@ -187,12 +171,8 @@ class TestValidateCelebritySegment:
 
     def test_chunkformer_gender_mismatch(self, temp_dir):
         """Test that gender mismatch is detected by ChunkFormer."""
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
         seg_path = temp_dir / "segment.wav"
-        torchaudio.save(str(seg_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg_path, 22050, 3)
 
         mock_cf = MagicMock()
         mock_cf.classify_audio.return_value = {
@@ -211,12 +191,8 @@ class TestValidateCelebritySegment:
 
     def test_chunkformer_low_confidence_ignored(self, temp_dir):
         """Test that low-confidence mismatch is ignored."""
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
         seg_path = temp_dir / "segment.wav"
-        torchaudio.save(str(seg_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg_path, 22050, 3)
 
         mock_cf = MagicMock()
         mock_cf.classify_audio.return_value = {
@@ -234,12 +210,8 @@ class TestValidateCelebritySegment:
 
     def test_chunkformer_match_passes(self, temp_dir):
         """Test that matching gender passes validation."""
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
         seg_path = temp_dir / "segment.wav"
-        torchaudio.save(str(seg_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg_path, 22050, 3)
 
         mock_cf = MagicMock()
         mock_cf.classify_audio.return_value = {
@@ -261,12 +233,8 @@ class TestGenerateCelebrityReference:
 
     def test_returns_none_on_engine_failure(self, temp_dir, mock_tts_engine_failure):
         """Test that engine failure returns (None, 0.0)."""
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
         seg_path = temp_dir / "segment.wav"
-        torchaudio.save(str(seg_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg_path, 22050, 3)
 
         ref, dur = generate_celebrity_reference(
             segment_path=str(seg_path),
@@ -281,12 +249,8 @@ class TestGenerateCelebrityReference:
     def test_returns_path_on_success(self, temp_dir):
         """Test that successful generation returns path and duration."""
         from audiobook_generator.testing import MockTTSEngine
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
         seg_path = temp_dir / "segment.wav"
-        torchaudio.save(str(seg_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg_path, 22050, 3)
 
         # Use 5s duration so output file is large enough to pass 2s threshold
         long_engine = MockTTSEngine(duration=5.0, sample_rate=22050)
@@ -302,12 +266,8 @@ class TestGenerateCelebrityReference:
 
     def test_returns_none_for_too_short_reference(self, temp_dir):
         """Test that too-short reference returns (None, 0.0)."""
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
         seg_path = temp_dir / "segment.wav"
-        torchaudio.save(str(seg_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg_path, 22050, 3)
 
         short_engine = MagicMock()
         short_engine.generate_line.return_value = True
@@ -353,13 +313,9 @@ class TestBuildCelebrityVoice:
     def test_uses_pre_matched_celebrity(self, temp_dir, mock_llm_client):
         """Test that pre-matched celebrity skips LLM matching."""
         from audiobook_generator.testing import MockTTSEngine
-        import numpy as np
-        import torch
-        import torchaudio
 
         seg_path = temp_dir / "test_char_v0_segment.wav"
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
-        torchaudio.save(str(seg_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg_path, 22050, 3)
 
         long_engine = MockTTSEngine(duration=5.0, sample_rate=22050)
         with patch("audiobook_generator.celebrity_voices.find_and_extract_video_segment") as mock_find, \
@@ -382,13 +338,8 @@ class TestBuildCelebrityVoice:
 
     def test_exits_early_on_first_valid_video(self, temp_dir, mock_llm_client, mock_tts_engine):
         """Test that valid first video returns immediately."""
-        import numpy as np
-        import torch
-        import torchaudio
-
         seg_path = temp_dir / "test_char_v0_segment.wav"
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
-        torchaudio.save(str(seg_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg_path, 22050, 3)
 
         with patch("audiobook_generator.celebrity_voices.match_celebrity") as mock_match, \
              patch("audiobook_generator.celebrity_voices.find_and_extract_video_segment") as mock_find, \
@@ -420,15 +371,10 @@ class TestBuildCelebrityVoice:
 
     def test_falls_back_to_next_video_on_validation_failure(self, temp_dir, mock_llm_client, mock_tts_engine):
         """Test that failed validation tries next video."""
-        import numpy as np
-        import torch
-        import torchaudio
-
         seg1 = temp_dir / "test_char_v0_segment.wav"
         seg2 = temp_dir / "test_char_v1_segment.wav"
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
-        torchaudio.save(str(seg1), torch.from_numpy(audio), 22050)
-        torchaudio.save(str(seg2), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg1, 22050, 3)
+        write_silence_wav(seg2, 22050, 3)
 
         with patch("audiobook_generator.celebrity_voices.match_celebrity") as mock_match, \
              patch("audiobook_generator.celebrity_voices.find_and_extract_video_segment") as mock_find, \
@@ -467,15 +413,10 @@ class TestBuildCelebrityVoice:
 
     def test_falls_back_to_first_when_all_fail(self, temp_dir, mock_llm_client, mock_tts_engine):
         """Test that all failures returns first segment."""
-        import numpy as np
-        import torch
-        import torchaudio
-
         seg1 = temp_dir / "test_char_v0_segment.wav"
         seg2 = temp_dir / "test_char_v1_segment.wav"
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
-        torchaudio.save(str(seg1), torch.from_numpy(audio), 22050)
-        torchaudio.save(str(seg2), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg1, 22050, 3)
+        write_silence_wav(seg2, 22050, 3)
 
         with patch("audiobook_generator.celebrity_voices.match_celebrity") as mock_match, \
              patch("audiobook_generator.celebrity_voices.find_and_extract_video_segment") as mock_find, \
@@ -534,13 +475,8 @@ class TestBuildCelebrityVoice:
 
     def test_returns_segment_directly_without_tts_engine(self, temp_dir, mock_llm_client):
         """Test that segment is returned directly when no TTS engine."""
-        import numpy as np
-        import torch
-        import torchaudio
-
         seg_path = temp_dir / "test_char_v0_segment.wav"
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
-        torchaudio.save(str(seg_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg_path, 22050, 3)
 
         with patch("audiobook_generator.celebrity_voices.match_celebrity") as mock_match, \
              patch("audiobook_generator.celebrity_voices.find_and_extract_video_segment") as mock_find, \
@@ -569,13 +505,8 @@ class TestBuildCelebrityVoice:
 
     def test_metadata_contains_required_fields(self, temp_dir, mock_llm_client, mock_tts_engine):
         """Test that metadata dict contains all required fields."""
-        import numpy as np
-        import torch
-        import torchaudio
-
         seg_path = temp_dir / "test_char_v0_segment.wav"
-        audio = np.zeros(int(22050 * 3), dtype=np.float32)
-        torchaudio.save(str(seg_path), torch.from_numpy(audio), 22050)
+        write_silence_wav(seg_path, 22050, 3)
 
         with patch("audiobook_generator.celebrity_voices.match_celebrity") as mock_match, \
              patch("audiobook_generator.celebrity_voices.find_and_extract_video_segment") as mock_find, \

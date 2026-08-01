@@ -1,11 +1,8 @@
 """Shared pytest fixtures for audiobook_generator tests."""
 
-import json
-import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import pytest
 
@@ -30,23 +27,36 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     """Register custom markers."""
-    config.addinivalue_line("markers", "slow: mark test as slow (requires --run-slow)")
+    config.addinivalue_line(
+        "markers",
+        "slow: slow integration tests requiring real models/GPU (skip unless --run-slow)",
+    )
+    config.addinivalue_line(
+        "markers",
+        "generate: tests that generate real audio (skip unless --run-generate)",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip slow tests unless --run-slow is passed. Skip generation tests unless --run-generate."""
+    """Gate slow/generate tests by marker rather than by filename.
+
+    This is the single source of truth for which tests need a live TTS model:
+    any test marked ``slow`` is skipped unless ``--run-slow`` is passed, and any
+    test marked ``generate`` is skipped unless ``--run-generate`` is passed.
+    Gating on markers (instead of hardcoding a filename) keeps the policy in one
+    place and prevents new real-engine tests from silently running by default.
+    """
     run_slow = config.getoption("--run-slow")
     run_generate = config.getoption("--run-generate")
 
+    skip_slow = pytest.mark.skip(reason="requires --run-slow to run")
+    skip_gen = pytest.mark.skip(reason="requires --run-generate to run")
+
     for item in items:
-        if item.fspath.basename == "test_real_engines.py":
-            if not run_slow:
-                item.add_marker(pytest.mark.skip(reason="requires --run-slow to run"))
-            elif "TestRealGeneration" in item.cls.__name__ if item.cls else False:
-                if not run_generate:
-                    item.add_marker(pytest.mark.skip(
-                        reason="requires --run-slow --run-generate to run"
-                    ))
+        if "generate" in item.keywords and not run_generate:
+            item.add_marker(skip_gen)
+        elif "slow" in item.keywords and not run_slow:
+            item.add_marker(skip_slow)
 
 from audiobook_generator.testing import MockLLMClient, MockTTSEngine
 from audiobook_generator.parse_chapter import ChapterObj, get_chapter_objs
@@ -57,6 +67,21 @@ def temp_dir():
     """Provide a temporary directory that's cleaned up after the test."""
     with tempfile.TemporaryDirectory(prefix="abg_test_") as d:
         yield Path(d)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_celebrity_archive(monkeypatch, tmp_path_factory):
+    """Redirect the celebrity voice archive to a temp dir for test isolation.
+
+    Prevents tests from reading/writing the real repo-level archive, which would
+    otherwise cause test pollution (e.g. a cached "test_celebrity.wav" making
+    build_celebrity_voice return early and never invoke the mocked pipeline).
+    """
+    archive_dir = tmp_path_factory.mktemp("celebrity_archive")
+    monkeypatch.setattr(
+        "audiobook_generator.celebrity_voices._archive_dir",
+        lambda: str(archive_dir),
+    )
 
 
 @pytest.fixture
@@ -113,24 +138,6 @@ Elizabeth smiled at her sister. "It will be fine."
 
 
 @pytest.fixture
-def sample_map_json():
-    """Sample character_map and line_map in list format."""
-    return [
-        {"1": "narrator", "2": "jane", "3": "elizabeth"},
-        {"2": 2, "4": 2, "6": 3, "8": 3, "10": 2}
-    ]
-
-
-@pytest.fixture
-def sample_map_dict():
-    """Sample map in dict format."""
-    return {
-        "character_map": {"1": "narrator", "2": "jane", "3": "elizabeth"},
-        "line_map": {"2": 2, "4": 2, "6": 3, "8": 3, "10": 2}
-    }
-
-
-@pytest.fixture
 def mock_llm_client():
     """Mock LLM client for testing without a running LLM server."""
     return MockLLMClient()
@@ -159,57 +166,6 @@ def sample_character_descriptions():
 
 
 @pytest.fixture
-def sample_voice_map():
-    """Sample voice map mapping characters to voice file paths."""
-    return {
-        "narrator": "narrator.wav",
-        "jane": "jane.wav",
-        "elizabeth": "elizabeth.wav",
-    }
-
-
-@pytest.fixture
-def sample_chapters_with_maps(temp_dir, sample_chapter_objs, sample_map_json):
-    """Create sample chapter files with map files in temp directory."""
-    chapters_dir = temp_dir / "chapters"
-    chapters_dir.mkdir(parents=True, exist_ok=True)
-
-    chapters = [
-        get_chapter_objs('''"I cannot believe it," said Jane.
-"This is wonderful news," she added.
-Elizabeth smiled at her sister.'''),
-        get_chapter_objs('''"We must go to London," said Jane.
-"It will be a grand adventure," Elizabeth replied.'''),
-    ]
-
-    for i, chapter in enumerate(chapters):
-        chapter_file = chapters_dir / f"chapter_{i}.txt"
-        with open(chapter_file, "w", encoding="utf-8") as f:
-            for cobj in chapter:
-                f.write(f"Line {cobj.line_num}: ")
-                if cobj.has_quotes:
-                    f.write('"')
-                f.write(cobj.text)
-                if cobj.has_quotes:
-                    f.write('"')
-                f.write("\n")
-
-    map_data = [
-        {"1": "narrator", "2": "jane", "3": "elizabeth"},
-        {"2": 2, "4": 2, "6": 3}
-    ]
-    map_file = chapters_dir / "chapter_0.map.json"
-    with open(map_file, "w", encoding="utf-8") as f:
-        json.dump(map_data, f)
-
-    return {
-        "dir": chapters_dir,
-        "chapters": chapters,
-        "map_data": map_data,
-    }
-
-
-@pytest.fixture
 def sample_epub_path():
     """Path to the sample EPUB file in voice_test directory."""
     path = Path(__file__).resolve().parent.parent / "voice_test" / "test_pride_and_prejudice.epub"
@@ -219,23 +175,47 @@ def sample_epub_path():
 
 
 @pytest.fixture
-def voices_map_with_files(temp_dir, mock_tts_engine):
-    """Create sample voice files and return a voice map."""
-    voices = {
+def sample_voices_map():
+    """Sample voices map mapping characters to voice file paths."""
+    return {
         "narrator": "narrator.wav",
         "jane": "jane.wav",
         "elizabeth": "elizabeth.wav",
     }
 
-    for voice_file in voices.values():
-        voice_path = temp_dir / voice_file
-        import numpy as np
-        import torch
-        audio = np.zeros(int(mock_tts_engine.sample_rate * 1.0), dtype=np.float32)
-        import torchaudio
-        torchaudio.save(str(voice_path), torch.from_numpy(audio), mock_tts_engine.sample_rate)
 
+@pytest.fixture
+def sample_chapters():
+    """Sample chapter objects used by audiobook pipeline tests."""
+    return [
+        [
+            ChapterObj(False, "Narrator text", 1),
+            ChapterObj(True, '"Hello there," said Jane.', 2),
+            ChapterObj(False, "Narrator continues.", 3),
+        ],
+        [
+            ChapterObj(True, '"Good morning," Elizabeth replied.', 1),
+            ChapterObj(False, "The room was silent.", 2),
+        ],
+    ]
+
+
+@pytest.fixture
+def sample_chapter_maps():
+    """Sample chapter speaker/line maps used by audiobook pipeline tests."""
     return {
-        "dir": temp_dir,
-        "map": voices,
+        0: ({"1": "narrator", "2": "jane"}, {"2": 2}),
+        1: ({"1": "elizabeth"}, {"1": 1}),
     }
+
+
+@pytest.fixture
+def mock_voice_mapper():
+    """VoiceMapper whose engine and voice paths resolve without a real TTS engine."""
+    from unittest.mock import MagicMock
+    from audiobook_generator.testing import MockTTSEngine
+
+    mapper = MagicMock()
+    mapper.get_voice_path.return_value = "/tmp/test_voice.wav"
+    mapper.get_engine.return_value = MockTTSEngine()
+    return mapper

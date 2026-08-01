@@ -2,9 +2,6 @@
 
 import json
 import os
-import tempfile
-import pytest
-from pathlib import Path
 
 from audiobook_generator.utils import (
     ProgressHandler,
@@ -27,6 +24,7 @@ from audiobook_generator.utils import (
     classify_gender_statistical,
     detect_gender_from_audio,
 )
+from audiobook_generator.testing import write_silence_wav
 
 
 class TestProgressHandler:
@@ -511,13 +509,8 @@ class TestDetectGenderFromAudio:
 
     def test_with_silence_audio(self, temp_dir, mock_tts_engine):
         """Test gender detection with silence audio."""
-        import numpy as np
-        import torch
-        import torchaudio
-
         voice_file = temp_dir / "test_voice.wav"
-        audio = np.zeros(int(mock_tts_engine.sample_rate * 1.0), dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), mock_tts_engine.sample_rate)
+        write_silence_wav(voice_file, mock_tts_engine.sample_rate, 1.0)
 
         gender, confidence, reason = detect_gender_from_audio(str(voice_file), use_ttest=False, verbose=False)
 

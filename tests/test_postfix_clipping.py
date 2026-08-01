@@ -325,6 +325,8 @@ class TestEngineInterfaceContract:
 class TestRealVoiceGeneration:
     """Integration tests that actually generate voice samples with real engines."""
 
+    @pytest.mark.slow
+    @pytest.mark.generate
     @pytest.mark.skipif(
         not any(Path(__file__).resolve().parent.parent / "engines" / eng / "main.py"
                  for eng in ["omni", "dramabox"]),
@@ -357,6 +359,8 @@ class TestRealVoiceGeneration:
         assert info.samplerate == 24000, f"Expected 24kHz sample rate, got {info.samplerate}"
         assert info.frames > 0, "WAV should have audio frames"
 
+    @pytest.mark.slow
+    @pytest.mark.generate
     @pytest.mark.skipif(
         not Path(__file__).resolve().parent.parent / "engines" / "dramabox" / "main.py",
         reason="Dramabox engine not available"

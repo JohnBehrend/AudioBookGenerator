@@ -4,12 +4,129 @@
 import os
 import json
 import numpy as np
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Optional, Tuple
 from unittest.mock import MagicMock
 
 import torch
 import torchaudio
+
+
+def write_silence_wav(path, sample_rate: int = 22050, duration: float = 1.0) -> Path:
+    """Write a WAV file containing silence, for tests.
+
+    Replaces the repeated ``np.zeros`` + ``torchaudio.save`` boilerplate scattered
+    across the test suite.
+
+    Args:
+        path: Output path (str or Path)
+        sample_rate: Sample rate in Hz
+        duration: Duration in seconds
+
+    Returns:
+        The output path as a Path object
+    """
+    audio = np.zeros(int(sample_rate * duration), dtype=np.float32)
+    torchaudio.save(str(path), torch.from_numpy(audio), sample_rate)
+    return Path(path)
+
+
+VOICE_FILE_NAMES = ("narrator.wav", "jane.wav", "elizabeth.wav")
+
+
+def create_voice_files(voice_dir, sample_rate: int = 22050, duration: float = 1.0) -> Path:
+    """Create dummy WAV voice files (narrator/jane/elizabeth) in ``voice_dir``.
+
+    Args:
+        voice_dir: Directory to write voice files into (created if needed)
+        sample_rate: Sample rate in Hz
+        duration: Duration in seconds
+
+    Returns:
+        The voice_dir as a Path object
+    """
+    voice_dir = Path(voice_dir)
+    voice_dir.mkdir(parents=True, exist_ok=True)
+    for name in VOICE_FILE_NAMES:
+        write_silence_wav(voice_dir / name, sample_rate, duration)
+    return voice_dir
+
+
+@contextmanager
+def patch_audiobook_pipeline(
+    *,
+    output_dir: Optional[str] = None,
+    exists: Any = False,
+    glob_wavs: Optional[list] = None,
+    voice_path: Optional[str] = "/tmp/test_voice.wav",
+    create_voices: bool = False,
+    patch_join: bool = True,
+    patch_rename: bool = False,
+):
+    """Patch all dependencies of ``generate_audiobook_from_chapters``.
+
+    Centralizes the deep mock harness previously duplicated across several test
+    files, so refactors of the pipeline break one fixture instead of N copies.
+
+    Args:
+        output_dir: Directory passed as ``output_dir`` to the pipeline (needed
+            only when ``create_voices`` is True).
+        exists: Return value or side_effect for ``os.path.exists``.
+        glob_wavs: List returned by ``glob.glob`` (defaults to one wav path).
+        voice_path: Value returned by ``VoiceMapper.get_voice_path``.
+        create_voices: If True, write dummy voice files into ``output_dir``.
+        patch_join: Whether to patch ``os.path.join`` with the real one.
+        patch_rename: Whether to also patch ``os.rename``.
+
+    Yields:
+        The mocked ``generate_tts_for_line``.
+    """
+    from contextlib import ExitStack
+    from unittest.mock import MagicMock, patch
+
+    from audiobook_generator import audiobook_generator as abg
+
+    if create_voices:
+        if not output_dir:
+            raise ValueError("output_dir is required when create_voices=True")
+        create_voice_files(output_dir)
+
+    glob_default = ["/tmp/chapter_00.0002.wav"] if glob_wavs is None else glob_wavs
+
+    with patch.object(abg, "setup_validation_model") as mock_validation:
+        mock_validation.return_value = MagicMock()
+        with patch.object(abg, "get_validation_client"):
+            with patch.object(abg, "VoiceMapper") as mock_mapper_cls:
+                mock_mapper_cls.return_value = MagicMock()
+                mock_mapper_cls.return_value.add_voice_path.return_value = None
+                mock_mapper_cls.return_value.get_voice_path.return_value = voice_path
+                with patch.object(abg, "generate_tts_for_line") as mock_tts:
+                    mock_tts.return_value = (True, 0.95)
+                    with patch.object(abg, "_validate_and_clip_audio", return_value=(0.95, None)):
+                        with patch.object(abg, "get_non_silent_audio_from_wavs") as mock_wavs:
+                            mock_wavs.return_value = MagicMock()
+                            with patch.object(abg.glob, "glob", return_value=glob_default):
+                                with patch.object(abg, "ProgressHandler"):
+                                    with patch.object(abg.os, "makedirs"):
+                                        with patch.object(abg.os, "unlink"):
+                                            with ExitStack() as stack:
+                                                if callable(exists):
+                                                    stack.enter_context(
+                                                        patch.object(abg.os.path, "exists", side_effect=exists)
+                                                    )
+                                                else:
+                                                    stack.enter_context(
+                                                        patch.object(abg.os.path, "exists", return_value=exists)
+                                                    )
+                                                stack.enter_context(patch.object(abg.gc, "collect"))
+                                                if patch_join:
+                                                    stack.enter_context(
+                                                        patch.object(abg.os.path, "join", side_effect=os.path.join)
+                                                    )
+                                                if patch_rename:
+                                                    stack.enter_context(patch.object(abg.os, "rename"))
+                                                yield mock_tts
 
 
 class MockLLMClient:

@@ -1,7 +1,6 @@
 """Tests for audio quality improvements: Whisper transcription and clipping."""
 
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from audiobook_generator.pipeline import (
     score_strings_pop,
@@ -14,6 +13,7 @@ from audiobook_generator.utils import (
     distill_string,
     transcribe_audio_for_ref_text,
 )
+from audiobook_generator.testing import write_silence_wav
 
 
 class TestDistillString:
@@ -378,9 +378,6 @@ class TestCropToRefText:
         """Test that crop starts at first ref word, not at prefix garbage."""
         import tempfile
         import os
-        import numpy as np
-        import torch
-        import torchaudio
 
         from audiobook_generator.audio import crop_to_ref_text
 
@@ -391,8 +388,7 @@ class TestCropToRefText:
 
             sample_rate = 22050
             duration = 5.0
-            audio = np.zeros(int(sample_rate * duration), dtype=np.float32)
-            torchaudio.save(audio_path, torch.from_numpy(audio), sample_rate)
+            write_silence_wav(audio_path, sample_rate, duration)
 
             # Simulate transcription with prefix garbage before ref words
             # "garbage" "noise" then "after" "all" "these" "years" (ref words)
@@ -414,9 +410,6 @@ class TestCropToRefText:
         """Test that start buffer is small (200ms) to avoid prefix."""
         import tempfile
         import os
-        import numpy as np
-        import torch
-        import torchaudio
 
         from audiobook_generator.audio import crop_to_ref_text
 
@@ -426,8 +419,7 @@ class TestCropToRefText:
 
             sample_rate = 22050
             duration = 5.0
-            audio = np.zeros(int(sample_rate * duration), dtype=np.float32)
-            torchaudio.save(audio_path, torch.from_numpy(audio), sample_rate)
+            write_silence_wav(audio_path, sample_rate, duration)
 
             # First word is a ref word
             transcribed_words = ["after", "all", "these", "years"]
@@ -454,9 +446,6 @@ class TestCropToRefText:
         """Test that crop returns False when not enough ref words match."""
         import tempfile
         import os
-        import numpy as np
-        import torch
-        import torchaudio
 
         from audiobook_generator.audio import crop_to_ref_text
 
@@ -466,8 +455,7 @@ class TestCropToRefText:
 
             sample_rate = 22050
             duration = 5.0
-            audio = np.zeros(int(sample_rate * duration), dtype=np.float32)
-            torchaudio.save(audio_path, torch.from_numpy(audio), sample_rate)
+            write_silence_wav(audio_path, sample_rate, duration)
 
             # Only 2 ref words match (need at least 3)
             transcribed_words = ["garbage", "noise", "after", "all", "garbage2"]
@@ -487,9 +475,6 @@ class TestCropToRefText:
         """Test realistic case: TTS prefix garbage followed by ref words."""
         import tempfile
         import os
-        import numpy as np
-        import torch
-        import torchaudio
 
         from audiobook_generator.audio import crop_to_ref_text
 
@@ -499,8 +484,7 @@ class TestCropToRefText:
 
             sample_rate = 22050
             duration = 10.0
-            audio = np.zeros(int(sample_rate * duration), dtype=np.float32)
-            torchaudio.save(audio_path, torch.from_numpy(audio), sample_rate)
+            write_silence_wav(audio_path, sample_rate, duration)
 
             # Simulate: prefix garbage -> ref words -> postfix garbage
             transcribed_words = [

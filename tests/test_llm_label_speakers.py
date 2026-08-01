@@ -1,7 +1,6 @@
 """Tests for llm_label_speakers module."""
 
 import json
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -426,76 +425,70 @@ class TestLabelSpeakersIntegration:
         assert isinstance(status, str)
         assert isinstance(char_map, dict)
 
-    def test_authentication_error_handled(self, temp_dir, sample_chapter_objs):
+    def test_authentication_error_handled(self, temp_dir, sample_chapter_objs, mock_llm_client):
         """Test that 401 authentication errors are caught and reported gracefully."""
         from audiobook_generator.llm_label_speakers import label_speakers
         from audiobook_generator.parse_chapter import write_chapters_to_txt
-        from audiobook_generator.testing import MockLLMClient
 
         chapters = [sample_chapter_objs]
         write_chapters_to_txt(chapters, str(temp_dir))
 
         chapter_file = temp_dir / "chapter_0.txt"
 
-        mock_client = MockLLMClient()
-        mock_client.set_exception(Exception("Error code: 401, Message: Authentication failed"))
+        mock_llm_client.set_exception(Exception("Error code: 401, Message: Authentication failed"))
 
         status, char_map, line_map = label_speakers(
             txt_file=str(chapter_file),
             api_key="bad-key",
             port="1234",
             num_attempts=1,
-            client=mock_client
+            client=mock_llm_client
         )
 
         assert isinstance(char_map, dict)
         assert isinstance(line_map, dict)
 
-    def test_rate_limit_error_handled(self, temp_dir, sample_chapter_objs):
+    def test_rate_limit_error_handled(self, temp_dir, sample_chapter_objs, mock_llm_client):
         """Test that 429 rate limit errors are caught and reported gracefully."""
         from audiobook_generator.llm_label_speakers import label_speakers
         from audiobook_generator.parse_chapter import write_chapters_to_txt
-        from audiobook_generator.testing import MockLLMClient
 
         chapters = [sample_chapter_objs]
         write_chapters_to_txt(chapters, str(temp_dir))
 
         chapter_file = temp_dir / "chapter_0.txt"
 
-        mock_client = MockLLMClient()
-        mock_client.set_exception(Exception("Error code: 429, Message: Rate limit exceeded"))
+        mock_llm_client.set_exception(Exception("Error code: 429, Message: Rate limit exceeded"))
 
         status, char_map, line_map = label_speakers(
             txt_file=str(chapter_file),
             api_key="mock-key",
             port="1234",
             num_attempts=1,
-            client=mock_client
+            client=mock_llm_client
         )
 
         assert isinstance(char_map, dict)
         assert isinstance(line_map, dict)
 
-    def test_timeout_error_handled(self, temp_dir, sample_chapter_objs):
+    def test_timeout_error_handled(self, temp_dir, sample_chapter_objs, mock_llm_client):
         """Test that timeout errors are caught and reported gracefully."""
         from audiobook_generator.llm_label_speakers import label_speakers
         from audiobook_generator.parse_chapter import write_chapters_to_txt
-        from audiobook_generator.testing import MockLLMClient
 
         chapters = [sample_chapter_objs]
         write_chapters_to_txt(chapters, str(temp_dir))
 
         chapter_file = temp_dir / "chapter_0.txt"
 
-        mock_client = MockLLMClient()
-        mock_client.set_exception(Exception("Timeout: Request timed out"))
+        mock_llm_client.set_exception(Exception("Timeout: Request timed out"))
 
         status, char_map, line_map = label_speakers(
             txt_file=str(chapter_file),
             api_key="mock-key",
             port="1234",
             num_attempts=1,
-            client=mock_client
+            client=mock_llm_client
         )
 
         assert isinstance(char_map, dict)
@@ -505,25 +498,23 @@ class TestLabelSpeakersIntegration:
         """Test that a failed first attempt followed by a successful second attempt works."""
         from audiobook_generator.llm_label_speakers import label_speakers
         from audiobook_generator.parse_chapter import write_chapters_to_txt
-        from audiobook_generator.testing import MockLLMClient
 
         chapters = [sample_chapter_objs]
         write_chapters_to_txt(chapters, str(temp_dir))
 
         chapter_file = temp_dir / "chapter_0.txt"
 
-        mock_client = MockLLMClient()
-        mock_client.set_responses([
+        mock_llm_client.set_responses([
             {"role": "assistant", "content": '{"speaker_map": {"1": "narrator"}, "attributions": {}}'},
         ])
-        mock_client.set_exception(Exception("Error code: 401, Message: Authentication failed"))
+        mock_llm_client.set_exception(Exception("Error code: 401, Message: Authentication failed"))
 
         status, char_map, line_map = label_speakers(
             txt_file=str(chapter_file),
             api_key="mock-key",
             port="1234",
             num_attempts=2,
-            client=mock_client
+            client=mock_llm_client
         )
 
         assert isinstance(char_map, dict)

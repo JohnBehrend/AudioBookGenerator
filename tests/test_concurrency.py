@@ -1,77 +1,16 @@
 """Tests for concurrency, multi-GPU WorkerPool, and thread-safe generation."""
 
 import os
-import tempfile
 import threading
-from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
-import pytest
-
-from audiobook_generator.testing import MockTTSEngine
+from audiobook_generator.testing import create_voice_files, patch_audiobook_pipeline
 from audiobook_generator.audiobook_generator import TTSConfig, generate_tts_for_line
-from audiobook_generator.parse_chapter import ChapterObj
 
 
 # ============================================================================
 # FIXTURES
 # ============================================================================
-
-@pytest.fixture
-def temp_dir():
-    with tempfile.TemporaryDirectory(prefix="abg_concurrency_test_") as d:
-        yield Path(d)
-
-
-@pytest.fixture
-def mock_voice_mapper():
-    mapper = MagicMock()
-    mapper.get_voice_path.return_value = "/tmp/test_voice.wav"
-    mapper.get_engine.return_value = MockTTSEngine()
-    return mapper
-
-
-@pytest.fixture
-def sample_chapters():
-    chapter1 = [
-        ChapterObj(False, "Narrator text", 1),
-        ChapterObj(True, '"Hello," said Jane.', 2),
-        ChapterObj(False, "Narrator continues.", 3),
-    ]
-    chapter2 = [
-        ChapterObj(True, '"Good morning," Elizabeth replied.', 1),
-        ChapterObj(False, "The room was silent.", 2),
-    ]
-    return [chapter1, chapter2]
-
-
-@pytest.fixture
-def sample_chapter_maps():
-    return {
-        0: ({"1": "narrator", "2": "jane"}, {"2": 2}),
-        1: ({"1": "elizabeth"}, {"1": 1}),
-    }
-
-
-@pytest.fixture
-def sample_voices_map():
-    return {
-        "narrator": "narrator.wav",
-        "jane": "jane.wav",
-        "elizabeth": "elizabeth.wav",
-    }
-
-
-def _create_voice_files(temp_dir):
-    """Create dummy WAV voice files in temp_dir."""
-    import numpy as np
-    import torch
-    import torchaudio
-    for name in ["narrator.wav", "jane.wav", "elizabeth.wav"]:
-        voice_path = temp_dir / name
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_path), torch.from_numpy(audio), 22050)
-
 
 def _exists_side_effect(path):
     """Return True for voice wav files and all wavs except mp3."""
@@ -82,34 +21,15 @@ def _exists_side_effect(path):
 
 
 def _patch_all(temp_dir):
-    """Return a context manager that patches all dependencies for generate_audiobook_from_chapters."""
-    from contextlib import contextmanager
-
-    @contextmanager
-    def _patches():
-        _create_voice_files(temp_dir)
-        mock_mapper = MagicMock()
-        mock_mapper.add_voice_path.return_value = None
-        mock_mapper.get_voice_path.return_value = "/tmp/test_voice.wav"
-        mock_mapper.get_engine.return_value = MagicMock()
-        with patch("audiobook_generator.audiobook_generator.setup_validation_model", return_value=MagicMock()):
-            with patch("audiobook_generator.audiobook_generator.get_validation_client"):
-                with patch("audiobook_generator.audiobook_generator.VoiceMapper", return_value=mock_mapper):
-                    with patch("audiobook_generator.audiobook_generator.generate_tts_for_line") as mock_tts:
-                        mock_tts.return_value = (True, 0.95)
-                        with patch("audiobook_generator.audiobook_generator._validate_and_clip_audio", return_value=(0.95, None)):
-                            with patch("audiobook_generator.audiobook_generator.get_non_silent_audio_from_wavs") as mock_wavs:
-                                mock_audio = MagicMock()
-                                mock_wavs.return_value = mock_audio
-                                with patch("audiobook_generator.audiobook_generator.glob.glob", return_value=[]):
-                                    with patch("audiobook_generator.audiobook_generator.ProgressHandler"):
-                                        with patch("audiobook_generator.audiobook_generator.os.path.exists", side_effect=_exists_side_effect):
-                                            with patch("audiobook_generator.audiobook_generator.os.makedirs"):
-                                                with patch("audiobook_generator.audiobook_generator.os.unlink"):
-                                                    with patch("audiobook_generator.audiobook_generator.os.rename"):
-                                                        with patch("audiobook_generator.audiobook_generator.gc.collect"):
-                                                            yield mock_tts
-    return _patches()
+    """Context manager patching generate_audiobook_from_chapters' dependencies."""
+    return patch_audiobook_pipeline(
+        output_dir=str(temp_dir),
+        create_voices=True,
+        exists=_exists_side_effect,
+        glob_wavs=[],
+        patch_join=False,
+        patch_rename=True,
+    )
 
 
 # ============================================================================
@@ -360,7 +280,7 @@ class TestMultiGPUIntegration:
         """WorkerPool should be passed through TTSConfig.engine."""
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
-        _create_voice_files(temp_dir)
+        create_voice_files(temp_dir)
         captured_config = None
 
         def capture_config(*args, **kwargs):
@@ -403,7 +323,7 @@ class TestMultiGPUIntegration:
         """4 GPUs should create pool with all 4 devices."""
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
-        _create_voice_files(temp_dir)
+        create_voice_files(temp_dir)
         with _patch_all(temp_dir) as mock_tts:
             with patch("audiobook_generator.audiobook_generator.VoiceMapper") as mock_mapper:
                 mock_mapper.return_value = MagicMock()
@@ -435,7 +355,7 @@ class TestCombinedConcurrencyAndMultiGPU:
         """concurrency=2 + gpus=[cuda:0, cuda:1] should use both."""
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
-        _create_voice_files(temp_dir)
+        create_voice_files(temp_dir)
         with _patch_all(temp_dir) as mock_tts:
             with patch("audiobook_generator.audiobook_generator.VoiceMapper") as mock_mapper:
                 mock_mapper.return_value = MagicMock()
@@ -460,7 +380,7 @@ class TestCombinedConcurrencyAndMultiGPU:
         """4 GPUs + concurrency=2 should create pool with 4 workers."""
         from audiobook_generator.audiobook_generator import generate_audiobook_from_chapters
 
-        _create_voice_files(temp_dir)
+        create_voice_files(temp_dir)
         with _patch_all(temp_dir) as mock_tts:
             with patch("audiobook_generator.audiobook_generator.VoiceMapper") as mock_mapper:
                 mock_mapper.return_value = MagicMock()

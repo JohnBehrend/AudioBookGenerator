@@ -155,6 +155,7 @@ def voice_refs(available_engines: dict, output_dir: Path, device: str):
 class TestEngineStartup:
     """Verify each engine can initialize and its worker responds."""
 
+    @pytest.mark.slow
     @pytest.mark.parametrize("engine_name", list_engines())
     def test_engine_initializes(self, engine_name: str, available_engines: dict):
         """Engine must appear in available_engines (worker sent 'ready')."""
@@ -173,6 +174,8 @@ class TestEngineStartup:
 class TestRealGeneration:
     """Generate actual audio and verify output."""
 
+    @pytest.mark.slow
+    @pytest.mark.generate
     @pytest.mark.parametrize("engine_name", list_engines())
     def test_generate_voice_sample(self, engine_name: str, available_engines: dict, device: str, output_dir: Path):
         """Generate a voice sample and verify valid audio output."""
@@ -204,6 +207,8 @@ class TestRealGeneration:
         assert waveform.size > 0, f"{engine_name} audio has no samples"
         assert sr > 0, f"{engine_name} invalid sample rate"
 
+    @pytest.mark.slow
+    @pytest.mark.generate
     @pytest.mark.parametrize("engine_name", list_engines())
     def test_generate_line_with_voice_ref(self, engine_name: str, available_engines: dict, voice_refs: dict, device: str, output_dir: Path):
         """Generate a line of audio using a voice reference."""
@@ -241,6 +246,8 @@ class TestRealGeneration:
         sr, waveform = load_audio(output_path)
         assert waveform.size > 0, f"{engine_name} line audio has no samples"
 
+    @pytest.mark.slow
+    @pytest.mark.generate
     @pytest.mark.parametrize("engine_name", list_engines())
     def test_multiple_generations_same_engine(self, engine_name: str, available_engines: dict, device: str, output_dir: Path):
         """Verify engine can generate multiple samples without re-initialization."""
@@ -260,6 +267,8 @@ class TestRealGeneration:
         assert success, f"{engine_name} batch gen failed for hero"
         assert Path(output_file).exists(), f"{engine_name} batch output missing for hero"
 
+    @pytest.mark.slow
+    @pytest.mark.generate
     @pytest.mark.parametrize("engine_name", list_engines())
     def test_audio_not_silent(self, engine_name: str, available_engines: dict, voice_refs: dict):
         """Generated audio should not be completely silent."""

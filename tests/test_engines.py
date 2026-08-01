@@ -39,15 +39,16 @@ class TestEngineRegistry:
 class TestTTSEngineBase:
     """Tests for TTSEngine base class."""
 
-    def test_base_class_is_abstract(self):
-        """TTSEngine should not be instantiable directly with engine_dir only (missing abstract methods)."""
+    def test_requires_engine_dir(self):
+        """TTSEngine requires an engine_dir (TypeError without it)."""
         with pytest.raises(TypeError):
             TTSEngine()
 
-    def test_base_class_has_abstract_methods(self):
-        """TTSEngine should have abstract methods."""
+    def test_base_class_delegates_to_worker(self):
+        """TTSEngine exposes the worker-facing API."""
         assert hasattr(TTSEngine, 'generate_voice_sample')
         assert hasattr(TTSEngine, 'generate_line')
+        assert hasattr(TTSEngine, 'shutdown_worker')
 
 
 class TestWorkerPool:

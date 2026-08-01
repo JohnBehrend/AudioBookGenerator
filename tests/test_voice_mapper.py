@@ -6,6 +6,7 @@ import pytest
 from unittest.mock import patch
 
 from audiobook_generator.voice_mapper import VoiceMapper
+from audiobook_generator.testing import write_silence_wav
 
 
 class TestVoiceMapperInit:
@@ -348,11 +349,7 @@ class TestValidateVoiceWithLLM:
     def test_with_mock_client(self, temp_dir, mock_tts_engine, mock_llm_client):
         """Test voice validation with mock client."""
         voice_file = temp_dir / "test_voice.wav"
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
 
         mock_llm_client.set_response({
             "role": "assistant",
@@ -373,11 +370,7 @@ class TestValidateVoiceWithLLM:
     def test_handles_json_error(self, temp_dir, mock_tts_engine, mock_llm_client):
         """Test handling of invalid JSON response."""
         voice_file = temp_dir / "test_voice.wav"
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
 
         mock_llm_client.set_response({
             "role": "assistant",
@@ -402,11 +395,7 @@ class TestDescribeVoiceWithLLM:
     def test_returns_description(self, temp_dir, mock_tts_engine, mock_llm_client):
         """Test that voice description is returned."""
         voice_file = temp_dir / "test_voice.wav"
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
 
         mock_llm_client.set_response({
             "role": "assistant",
@@ -428,11 +417,7 @@ class TestDescribeVoiceWithLLM:
     def test_strips_markdown(self, temp_dir, mock_tts_engine, mock_llm_client):
         """Test that markdown code blocks are stripped from response."""
         voice_file = temp_dir / "test_voice.wav"
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
 
         mock_llm_client.set_response({
             "role": "assistant",
@@ -453,11 +438,7 @@ class TestDescribeVoiceWithLLM:
     def test_strips_quotes(self, temp_dir, mock_tts_engine, mock_llm_client):
         """Test that quotes are stripped from response."""
         voice_file = temp_dir / "test_voice.wav"
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
 
         mock_llm_client.set_response({
             "role": "assistant",
@@ -477,11 +458,7 @@ class TestDescribeVoiceWithLLM:
     def test_returns_empty_on_error(self, temp_dir, mock_tts_engine, mock_llm_client):
         """Test that empty string is returned on API error."""
         voice_file = temp_dir / "test_voice.wav"
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
 
         def raise_error(*args, **kwargs):
             raise Exception("API Error")
@@ -500,11 +477,7 @@ class TestDescribeVoiceWithLLM:
     def test_sends_correct_request(self, temp_dir, mock_tts_engine, mock_llm_client):
         """Test that correct request is sent to the API."""
         voice_file = temp_dir / "test_voice.wav"
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
 
         mock_llm_client.set_response({
             "role": "assistant",
@@ -539,11 +512,7 @@ class TestDescribeVoiceWithLLM:
     def test_handles_relative_path(self, temp_dir, mock_tts_engine, mock_llm_client):
         """Test that relative path is converted to absolute for file URL."""
         voice_file = temp_dir / "test_voice.wav"
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
 
         mock_llm_client.set_response({
             "role": "assistant",
@@ -562,11 +531,7 @@ class TestDescribeVoiceWithLLM:
     def test_verbose_output(self, temp_dir, mock_tts_engine, mock_llm_client, capsys):
         """Test that verbose output is printed."""
         voice_file = temp_dir / "test_voice.wav"
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
 
         mock_llm_client.set_response({
             "role": "assistant",
@@ -586,11 +551,7 @@ class TestDescribeVoiceWithLLM:
     def test_with_default_model(self, temp_dir, mock_tts_engine, mock_llm_client):
         """Test that default model is used when not specified."""
         voice_file = temp_dir / "test_voice.wav"
-        import numpy as np
-        import torch
-        import torchaudio
-        audio = np.zeros(22050, dtype=np.float32)
-        torchaudio.save(str(voice_file), torch.from_numpy(audio), 22050)
+        write_silence_wav(voice_file, 22050, 1)
 
         mock_llm_client.set_response({
             "role": "assistant",

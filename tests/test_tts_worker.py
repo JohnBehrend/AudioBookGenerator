@@ -108,88 +108,82 @@ class TestFindPython:
 
 
 class TestProtocol:
-    """Test JSON protocol format."""
+    """Test the real EngineWorker JSON request/response wire protocol."""
 
-    def test_ready_message(self):
-        """Test ready message format."""
-        msg = {"type": "ready"}
-        assert msg["type"] == "ready"
+    @patch("tts.worker.subprocess.Popen")
+    def test_request_serializes_json_on_stdin(self, mock_popen):
+        """request() writes a JSON request with incrementing id and matches response by id."""
+        from tts.worker import EngineWorker
 
-    def test_request_format(self):
-        """Test request message format."""
-        req = {
-            "type": "request",
-            "id": 1,
-            "method": "generate_line",
-            "kwargs": {
-                "text": "Hello world",
-                "voice_path": "/path/to/voice.wav",
-                "output_path": "/path/to/output.wav",
-            }
-        }
+        mock_process = MagicMock()
+        # First line consumed by start() (ready), second by request() (response for id 1)
+        mock_process.stdout.readline.side_effect = [
+            '{"type": "ready"}\n',
+            '{"id": 1, "success": true, "output_file": "/tmp/out.wav"}\n',
+        ]
+        mock_process.poll.return_value = None
+        mock_popen.return_value = mock_process
+
+        with patch.object(EngineWorker, "_find_python", return_value="/usr/bin/python"):
+            worker = EngineWorker(Path("/tmp/test-engine"), device="cuda:0")
+            resp = worker.request(
+                "generate_line",
+                text="Hello world",
+                voice_path="/tmp/voice.wav",
+                output_path="/tmp/out.wav",
+            )
+
+        req = json.loads(mock_process.stdin.write.call_args_list[0][0][0])
         assert req["type"] == "request"
         assert req["id"] == 1
         assert req["method"] == "generate_line"
-        assert "text" in req["kwargs"]
-        assert "voice_path" in req["kwargs"]
-        assert "output_path" in req["kwargs"]
-
-    def test_response_format(self):
-        """Test response message format."""
-        resp_success = {"id": 1, "success": True}
-        resp_fail = {"id": 1, "success": False}
-        resp_error = {"id": 1, "error": "message", "traceback": "..."}
-        
-        assert resp_success["id"] == 1
-        assert resp_success["success"] is True
-        assert resp_fail["success"] is False
-        assert resp_error["error"] == "message"
-
-    def test_shutdown_message(self):
-        """Test shutdown message format."""
-        msg = {"type": "shutdown"}
-        assert msg["type"] == "shutdown"
-
-
-class TestProtocol:
-    """Test JSON protocol format."""
-
-    def test_ready_message(self):
-        """Test ready message format."""
-        msg = {"type": "ready"}
-        assert msg["type"] == "ready"
-
-    def test_request_format(self):
-        """Test request message format."""
-        req = {
-            "type": "request",
-            "id": 1,
-            "method": "generate_line",
-            "kwargs": {
-                "text": "Hello world",
-                "voice_path": "/path/to/voice.wav",
-                "output_path": "/path/to/output.wav",
-            }
+        assert req["kwargs"] == {
+            "text": "Hello world",
+            "voice_path": "/tmp/voice.wav",
+            "output_path": "/tmp/out.wav",
         }
-        assert req["type"] == "request"
-        assert req["id"] == 1
-        assert req["method"] == "generate_line"
-        assert "text" in req["kwargs"]
-        assert "voice_path" in req["kwargs"]
-        assert "output_path" in req["kwargs"]
 
-    def test_response_format(self):
-        """Test response message format."""
-        resp_success = {"id": 1, "success": True}
-        resp_fail = {"id": 1, "success": False}
-        resp_error = {"id": 1, "error": "message", "traceback": "..."}
-        
-        assert resp_success["id"] == 1
-        assert resp_success["success"] is True
-        assert resp_fail["success"] is False
-        assert resp_error["error"] == "message"
+        # Response is matched by request id and returned as-is
+        assert resp == {"id": 1, "success": True, "output_file": "/tmp/out.wav"}
+        mock_process.stdin.flush.assert_called_once()
 
-    def test_shutdown_message(self):
-        """Test shutdown message format."""
-        msg = {"type": "shutdown"}
-        assert msg["type"] == "shutdown"
+    @patch("tts.worker.subprocess.Popen")
+    def test_request_ignores_other_ids_and_increments(self, mock_popen):
+        """request() ignores responses with a different id and increments the request id."""
+        from tts.worker import EngineWorker
+
+        mock_process = MagicMock()
+        # ready, then an unrelated response (id=7), then the matching response (id=1)
+        mock_process.stdout.readline.side_effect = [
+            '{"type": "ready"}\n',
+            '{"id": 7, "success": false}\n',
+            '{"id": 1, "success": true}\n',
+        ]
+        mock_process.poll.return_value = None
+        mock_popen.return_value = mock_process
+
+        with patch.object(EngineWorker, "_find_python", return_value="/usr/bin/python"):
+            worker = EngineWorker(Path("/tmp/test-engine"), device="cuda:0")
+            resp = worker.request("generate_line", text="hi")
+
+        assert resp == {"id": 1, "success": True}
+        # Two requests would get distinct ids
+        assert worker._next_request_id() == 2
+
+    @patch("tts.worker.subprocess.Popen")
+    def test_shutdown_sends_shutdown_message(self, mock_popen):
+        """shutdown() writes a JSON shutdown message to the worker stdin."""
+        from tts.worker import EngineWorker
+
+        mock_process = MagicMock()
+        mock_process.poll.return_value = None
+        mock_process.wait.return_value = None
+        mock_popen.return_value = mock_process
+
+        with patch.object(EngineWorker, "_find_python", return_value="/usr/bin/python"):
+            worker = EngineWorker(Path("/tmp/test-engine"), device="cuda:0")
+            worker._process = mock_process
+            worker.shutdown()
+
+        msg = json.loads(mock_process.stdin.write.call_args_list[0][0][0])
+        assert msg == {"type": "shutdown"}

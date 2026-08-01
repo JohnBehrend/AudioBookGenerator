@@ -89,6 +89,24 @@ from .pipeline import (
 )
 
 
+def _set_seed(seed: int) -> None:
+    """Seed numpy and PyTorch RNGs deterministically.
+
+    Uses torch directly instead of ``transformers.set_seed``. Importing
+    ``set_seed`` from ``transformers`` inside worker threads is racy and
+    intermittently raises ``ImportError``, which killed the TTS worker thread and
+    silently dropped an audio line (hanging the concurrent pipeline's completion
+    loop).
+    """
+    import torch
+    import numpy as np
+
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 # ============================================================================
 # CONFIGURATION DATACLASSES
 # ============================================================================
@@ -413,10 +431,9 @@ def generate_tts_for_line(
     max_ratio = 0.0
     retries = 0
 
-    from transformers import set_seed
-    set_seed(42)
+    _set_seed(42)
     while should_retry(ratio, max_ratio, retries, MAX_RETRIES, MIN_RATIO_THRESHOLD):
-        set_seed(42 + retries)
+        _set_seed(42 + retries)
 
         output_path = _tts_generate_only(
             chapter_idx, line_idx, full_script, voice_name,
@@ -706,7 +723,7 @@ def generate_audiobook_from_chapters(
 
                 # Queues: work_queue -> TTS -> validation_queue -> Validator -> (finalize or retry back to work_queue)
                 work_queue: queue.Queue = queue.Queue()
-                validation_queue: queue.Queue = queue.Queue(maxsize=concurrency * 2)
+                validation_queue: queue.Queue = queue.Queue()
                 for item in work_items:
                     work_queue.put(item)
 
@@ -737,39 +754,49 @@ def generate_audiobook_from_chapters(
                                 continue
                             retry_num = state["retries"]
 
-                        from transformers import set_seed
-                        set_seed(42 + retry_num)
-
-                        full_script, _ = prepare_script_for_tts(item["text"], tts_config.short_text_postfix)
-                        output_path = generate_output_filename(tts_config.output_dir, item["chapter_idx"], item["line_idx"], is_final=False, thread_id=my_thread_id)
+                        _set_seed(42 + retry_num)
 
                         try:
-                            engine = tts_config.engine if tts_config.engine is not None else voice_mapper.get_engine()
-                            result = engine.generate_line(
-                                text=full_script,
-                                voice_path=item["voice_path"],
-                                output_path=output_path,
-                                device=tts_config.device,
-                                verbose=tts_config.verbose,
-                            )
-                            if not result:
+                            full_script, _ = prepare_script_for_tts(item["text"], tts_config.short_text_postfix)
+                            output_path = generate_output_filename(tts_config.output_dir, item["chapter_idx"], item["line_idx"], is_final=False, thread_id=my_thread_id)
+
+                            try:
+                                engine = tts_config.engine if tts_config.engine is not None else voice_mapper.get_engine()
+                                result = engine.generate_line(
+                                    text=full_script,
+                                    voice_path=item["voice_path"],
+                                    output_path=output_path,
+                                    device=tts_config.device,
+                                    verbose=tts_config.verbose,
+                                )
+                                if not result:
+                                    if tts_config.verbose:
+                                        print(f"    Engine reported failure for {output_path}")
+                                    with line_state_lock:
+                                        state["retries"] += 1
+                                    work_queue.task_done()
+                                    continue
+                            except Exception as e:
+                                print(f"    Engine generation failed: {e}")
                                 if tts_config.verbose:
-                                    print(f"    Engine reported failure for {output_path}")
+                                    traceback.print_exc()
                                 with line_state_lock:
                                     state["retries"] += 1
                                 work_queue.task_done()
                                 continue
+
+                            validation_queue.put((item, full_script, output_path, key))
+                            work_queue.task_done()
                         except Exception as e:
-                            print(f"    Engine generation failed: {e}")
+                            # Never let a worker exception silently drop a line,
+                            # which would leave completed_count short and hang the
+                            # completion loop below.
+                            print(f"    TTS worker error for chapter {item['chapter_idx']} line {item['line_idx']}: {e}")
                             if tts_config.verbose:
                                 traceback.print_exc()
-                            with line_state_lock:
-                                state["retries"] += 1
+                            with completed_lock:
+                                completed_count += 1
                             work_queue.task_done()
-                            continue
-
-                        validation_queue.put((item, full_script, output_path, key))
-                        work_queue.task_done()
 
                 def validator_worker():
                     nonlocal completed_count
@@ -851,11 +878,18 @@ def generate_audiobook_from_chapters(
                     t.start()
                     val_threads.append(t)
 
-                # Wait for all items to complete, then signal shutdown
+                # Wait for all items to complete, then signal shutdown.
+                # Guard with a timeout so an unexpected worker failure can never
+                # hang the pipeline forever (it would previously spin when a
+                # dropped line left completed_count short of total_items).
+                wait_deadline = time.monotonic() + max(300.0, total_items * 30.0)
                 while True:
                     with completed_lock:
                         if completed_count >= total_items:
                             break
+                    if time.monotonic() > wait_deadline:
+                        print(f"    [STREAM] Timed out waiting for {total_items - completed_count} of {total_items} lines; proceeding with cleanup.")
+                        break
                     time.sleep(0.5)
 
                 # Send sentinels and wait for clean shutdown
@@ -864,7 +898,7 @@ def generate_audiobook_from_chapters(
                 for _ in range(concurrency):
                     work_queue.put(None)
                 for _ in range(whisper_concurrency):
-                    validation_queue.put((None, None, None))
+                    validation_queue.put((None, None, None, None))
 
                 for t in tts_threads + val_threads:
                     t.join(timeout=10)

@@ -3,7 +3,6 @@
 import os
 import pytest
 from unittest.mock import MagicMock, patch, call
-import numpy as np
 
 from audiobook_generator.testing import MockTTSEngine
 from audiobook_generator.audiobook_generator import TTSConfig
@@ -12,15 +11,6 @@ from audiobook_generator.audiobook_generator import TTSConfig
 # ============================================================================
 # FIXTURES
 # ============================================================================
-
-@pytest.fixture
-def mock_voice_mapper():
-    """Create a mock VoiceMapper for testing."""
-    mapper = MagicMock()
-    mapper.get_voice_path.return_value = "/tmp/test_voice.wav"
-    mapper.get_engine.return_value = MockTTSEngine()
-    return mapper
-
 
 @pytest.fixture
 def mock_voice_mapper_no_voice():

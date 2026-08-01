@@ -287,6 +287,126 @@ class TestRealGeneration:
         )
 
 
+class TestRealWhisperValidation:
+    """Touch real generators for the validation and improvement loops.
+
+    Unlike the mocked Whisper tests elsewhere, these load the actual Whisper
+    model and transcribe genuinely generated TTS audio, then exercise the full
+    generate -> validate -> retry improvement loop end-to-end.
+
+    Requires --run-slow --run-generate and a CUDA GPU.
+    """
+
+    @pytest.fixture(scope="session")
+    def whisper_model(self, device: str):
+        """Load real Whisper on GPU, falling back to CPU when VRAM is exhausted.
+
+        Real TTS engines often consume most of the GPU, so the validation model
+        may not fit alongside them. CPU fallback keeps the real-inference tests
+        runnable without requiring dedicated VRAM for Whisper.
+        """
+        from audiobook_generator.audiobook_generator import setup_validation_model
+
+        try:
+            return setup_validation_model(device, fast=True)
+        except Exception as gpu_err:
+            dbg(f"Whisper GPU load failed ({gpu_err}), falling back to CPU")
+            try:
+                return setup_validation_model(device, cpu=True, fast=True)
+            except Exception as cpu_err:
+                pytest.skip(f"Could not load real Whisper model on GPU or CPU: {cpu_err}")
+
+    @pytest.mark.slow
+    @pytest.mark.generate
+    @pytest.mark.parametrize("engine_name", list_engines())
+    def test_real_whisper_transcribes_generated_line(
+        self, engine_name, available_engines, voice_refs, device, output_dir, whisper_model
+    ):
+        """Real Whisper must produce word-level transcription from real TTS audio.
+
+        This proves the real validation path (real TTS generation -> real Whisper
+        transcription with word timestamps) works end-to-end. Correctness of the
+        recovered words is enforced by the improvement-loop test below, since some
+        engines do not faithfully reproduce the requested text.
+        """
+        if engine_name in OPTIONAL_ENGINES:
+            pytest.skip(f"Optional engine {engine_name} requires special setup")
+        if engine_name not in available_engines:
+            pytest.skip(f"Failed to initialize {engine_name}")
+        if engine_name not in voice_refs:
+            pytest.skip(f"No voice reference generated for {engine_name}")
+
+        from audiobook_generator.utils import distill_string, transcribe_audio_with_whisper
+
+        engine = available_engines[engine_name]
+        output_path = str(output_dir / engine_name / "whisper_validation.wav")
+        success = engine.generate_line(
+            text=TEST_TEXT,
+            voice_path=voice_refs[engine_name],
+            output_path=output_path,
+            device=device,
+            validation_model=None,
+            verbose=False,
+        )
+        assert success, f"{engine_name} failed to generate line audio for whisper validation"
+
+        detected, start_times, end_times = transcribe_audio_with_whisper(whisper_model, output_path)
+        assert distill_string(detected), f"{engine_name}: real Whisper returned empty transcription"
+        assert len(start_times) == len(end_times) > 0, (
+            f"{engine_name}: real Whisper produced no word-level timestamps"
+        )
+
+    @pytest.mark.slow
+    @pytest.mark.generate
+    @pytest.mark.parametrize("engine_name", list_engines())
+    def test_improvement_loop_with_real_generators(
+        self, engine_name, available_engines, voice_refs, device, output_dir, whisper_model
+    ):
+        """Full generate->validate->retry loop with real TTS and real Whisper."""
+        if engine_name in OPTIONAL_ENGINES:
+            pytest.skip(f"Optional engine {engine_name} requires special setup")
+        if engine_name not in available_engines:
+            pytest.skip(f"Failed to initialize {engine_name}")
+        if engine_name not in voice_refs:
+            pytest.skip(f"No voice reference generated for {engine_name}")
+
+        from audiobook_generator.audiobook_generator import TTSConfig, generate_tts_for_line
+        from audiobook_generator.pipeline import generate_output_filename
+        from audiobook_generator.voice_mapper import VoiceMapper
+
+        loop_dir = output_dir / engine_name / "loop"
+        loop_dir.mkdir(parents=True, exist_ok=True)
+        mapper = VoiceMapper(output_dir=str(loop_dir), device=device, engine=available_engines[engine_name])
+        tts_config = TTSConfig(
+            device=device,
+            tts_engine=engine_name,
+            output_dir=str(loop_dir),
+            short_text_postfix="and also with you",
+            validation_model=whisper_model,
+            engine=available_engines[engine_name],
+            verbose=False,
+        )
+        chapter_idx, line_idx = 0, 1
+        success, ratio = generate_tts_for_line(
+            chapter_idx=chapter_idx,
+            line_idx=line_idx,
+            text=TEST_TEXT,
+            voice_name="narrator",
+            voice_mapper=mapper,
+            tts_config=tts_config,
+            voice_path=voice_refs[engine_name],
+        )
+        assert success, (
+            f"{engine_name}: real improvement loop failed to produce acceptable audio (ratio={ratio})"
+        )
+
+        final_path = generate_output_filename(tts_config.output_dir, chapter_idx, line_idx, is_final=True)
+        assert os.path.exists(final_path), f"{engine_name}: final audio not produced at {final_path}"
+        sr, waveform = load_audio(final_path)
+        assert waveform.size > 0, f"{engine_name}: improvement loop produced empty audio"
+        assert float(np.abs(waveform).mean()) > 0.001, f"{engine_name}: improvement loop produced silent audio"
+
+
 @pytest.fixture(scope="session", autouse=True)
 def shutdown_engines(available_engines: dict):
     """Shutdown all engine workers at the end of the test session."""

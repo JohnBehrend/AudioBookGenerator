@@ -105,6 +105,24 @@ def run_worker(device: str) -> None:
         cuda_idx = device.replace("cuda:", "") if device.startswith("cuda:") else "0"
         env["CUDA_VISIBLE_DEVICES"] = cuda_idx
 
+        # tvm_ffi picks the CUDA arch from `nvidia-smi`'s first *physical* GPU,
+        # which need not match the device this server actually runs on (e.g. the
+        # RTX 4090 is CUDA device 0 but physical GPU 2). Pin the arch so the
+        # JIT-compiled kernels target the real device (RTX 4090 -> sm_89).
+        try:
+            import torch
+
+            _prev = os.environ.get("CUDA_VISIBLE_DEVICES")
+            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_idx
+            cap = torch.cuda.get_device_capability(0)
+            env["TVM_FFI_CUDA_ARCH_LIST"] = f"{cap[0]}.{cap[1]}"
+            if _prev is None:
+                os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            else:
+                os.environ["CUDA_VISIBLE_DEVICES"] = _prev
+        except Exception:
+            pass
+
         stderr_path = tempfile.mktemp(suffix=".log", prefix="zonos2_stderr_")
 
         server_proc = subprocess.Popen(

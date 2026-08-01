@@ -48,20 +48,11 @@ from .llm_describe_character import describe_characters
 from .generate_voice_samples import generate_voice_samples as gen_voice_samples
 
 from .utils import (
-    get_chapters_dir,
-    get_temp_dir,
     cleanup_temp_dir,
-    load_temp_dir,
     save_temp_dir,
-    get_chapters_dir_from_saved,
     ProgressHandler,
-    copy_mp3_files_to_chapters,
     load_json_file as load_json,
-    get_character_wav_file,
-    load_seed_characters,
-    get_chapter_map_files,
     parse_map_file,
-    count_lines_per_character,
     transcribe_audio_with_whisper,
     distill_string,
     validate_audio_clean,
@@ -1935,209 +1926,39 @@ def main():
             verbose=args.verbose
         )
     else:
-        # Non-interactive pipeline run
-        import json
-        import glob
-        import shutil
+        # Non-interactive pipeline run (fresh or resume) via the unified path.
         import torch
-
-        from .parse_chapter import parse_epub_to_chapters, load_chapters_from_txt
-        from .llm_label_speakers import label_speakers
-        from .llm_describe_character import describe_characters as describe_chars
-        from .generate_voice_samples import generate_voice_samples as gen_voice_samples
-        from .config import DEFAULTS, LLM_SETTINGS
-        from .utils import (
-            get_chapters_dir, get_temp_dir, cleanup_temp_dir,
-            natural_sort_key, get_character_wav_file, load_seed_characters,
-            count_lines_per_character, ProgressHandler,
-        )
 
         output_dir = Path(args.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        if args.model:
-            LLM_SETTINGS["default_model"] = args.model
-        if args.api_key:
-            LLM_SETTINGS["api_key"] = args.api_key
-        if args.llm_port:
-            LLM_SETTINGS["port"] = int(args.llm_port)
-
         device = AUDIO_SETTINGS["default_device"] if torch.cuda.is_available() else "cpu"
 
-        if args.resume:
-            # Use run_full_pipeline for resume (has full stage-skipping logic)
-            result = run_full_pipeline(
-                epub_path=args.epub_file,
-                output_dir=str(output_dir),
-                max_chapters=args.max_chapters,
-                verbose=args.verbose,
-                api_key=args.api_key,
-                llm_port=args.llm_port,
-                voice_engine=args.voice_engine,
-                tts_engine=args.tts_engine,
-                device=device,
-                seed_voice_map=args.seed_voice_map,
-                num_llm_attempts=args.num_attempts,
-                resume=True,
-                whisper_cpu=args.whisper_cpu,
-                concurrency=args.concurrency,
-                gpus=args.gpus,
-                whisper_concurrency=args.whisper_concurrency,
-                whisper_fast=args.whisper_fast,
-                    use_chunkformer=not args.skip_chunkformer,
-                celebrity_voices=args.celebrity_voices,
-                llm_model=args.model,
-                desc_concurrency=args.desc_concurrency,
-                enable_postfix=not args.no_postfix,
-            )
-            print(result)
-        else:
-            # Use temp directory only when output_dir is the default
-            import tempfile
-            use_temp = str(output_dir) == "chapters"
-            if use_temp:
-                temp_dir = tempfile.mkdtemp(prefix="audiobook_")
-                if args.verbose:
-                    print(f"[TEMP] Using temp directory: {temp_dir}")
-                work_dir = Path(temp_dir)
-            else:
-                work_dir = output_dir
-
-            try:
-                # Stage 1: Parse EPUB
-                print(f"=== Stage 1: Parsing EPUB {args.epub_file} ===")
-                chapters = parse_epub_to_chapters(args.epub_file, max_chapters=args.max_chapters)
-                if not chapters:
-                    print("Error: No chapters found in EPUB file.")
-                    sys.exit(1)
-
-                for i, chapter in enumerate(chapters):
-                    output_file = work_dir / f"chapter_{i}.txt"
-                    with open(output_file, "w", encoding="utf-8") as f:
-                        for cobj in chapter:
-                            f.write(f"Line {cobj.line_num}: ")
-                            if cobj.has_quotes:
-                                f.write('"')
-                            f.write(cobj.text)
-                            if cobj.has_quotes:
-                                f.write('"')
-                            f.write("\n")
-                print(f"Parsed {len(chapters)} chapters")
-
-                # Stage 2: Label speakers
-                print("=== Stage 2: Labeling speakers ===")
-                all_characters = set()
-                for i in range(len(chapters)):
-                    chapter_file = work_dir / f"chapter_{i}.txt"
-                    result_msg, char_map, line_map = label_speakers(
-                        txt_file=chapter_file,
-                        num_attempts=args.num_attempts,
-                        verbose=args.verbose,
-                        seed_characters=load_seed_characters(args.seed_voice_map),
-                    )
-                    if char_map:
-                        all_characters.update(char_map.values())
-
-                if not all_characters or all_characters == {"narrator"}:
-                    print("No characters found after labeling. All LLM attempts may have failed.", file=sys.stderr)
-                    print("Aborting pipeline - cannot proceed without character data.", file=sys.stderr)
-                    return
-
-                # Stage 3: Describe characters
-                print("=== Stage 3: Describing characters ===")
-                result_msg, descriptions = describe_chars(
-                    output_dir=str(work_dir),
-                    chapters_dir=str(work_dir),
-                    verbose=args.verbose,
-                    seed_characters=load_seed_characters(args.seed_voice_map),
-                    progress_callback=None,
-                    voice_engine=args.voice_engine,
-                    max_concurrent=args.desc_concurrency,
-                )
-                print(result_msg)
-
-                if not descriptions:
-                    print("No character descriptions generated. Aborting pipeline.", file=sys.stderr)
-                    return
-
-                # Stage 4: Generate voice samples
-                print("=== Stage 4: Generating voice samples ===")
-                _all_engines = ["omni", "vox", "moss", "echo-tts", "dramabox"]
-                _fallback_engines = [e for e in _all_engines if e != args.tts_engine]
-
-                # Create LLM client for celebrity voices if enabled
-                llm_client = None
-                if args.celebrity_voices:
-                    from .utils import get_llm_client
-                    llm_client = get_llm_client(
-                        LLM_SETTINGS.get("api_key", ""),
-                        str(LLM_SETTINGS.get("port", 1234)),
-                    )
-                    model = LLM_SETTINGS.get("default_model", "coder-model")
-
-                result_msg, generated = gen_voice_samples(
-                    descriptions=descriptions,
-                    output_dir=str(work_dir),
-                    verbose=args.verbose,
-                    progress=None,
-                    seed_characters=load_seed_characters(args.seed_voice_map),
-                    voice_engine=args.tts_engine,
-                    validate=False,
-                    use_chunkformer=not args.skip_chunkformer,
-                    seed_clone_fallback_engines=_fallback_engines,
-                    use_celebrity_voices=args.celebrity_voices,
-                    llm_client=llm_client,
-                    llm_model=LLM_SETTINGS.get("default_model", "coder-model"),
-                )
-                print(result_msg)
-
-                # Stage 5: Generate audiobook
-                print("=== Stage 5: Generating audiobook ===")
-                chapter_maps = {}
-                for i in range(len(chapters)):
-                    map_file = work_dir / f"chapter_{i}.map.json"
-                    if map_file.exists():
-                        with open(map_file) as f:
-                            chapter_maps[i] = json.load(f)
-
-                voices_map = {}
-                for char in descriptions:
-                    wav_path = get_character_wav_file(char, str(work_dir))
-                    if wav_path and Path(wav_path).exists():
-                        voices_map[char] = Path(wav_path).name
-
-                status, processed = generate_audiobook_from_chapters(
-                    chapters=chapters,
-                    chapter_maps=chapter_maps,
-                    voices_map=voices_map,
-                    output_dir=str(work_dir),
-                    device=device,
-                    tts_engine=args.tts_engine,
-                    max_chapters=args.max_chapters,
-                    verbose=args.verbose,
-                    concurrency=args.concurrency,
-                    whisper_cpu=args.whisper_cpu,
-                    whisper_concurrency=args.whisper_concurrency,
-                    whisper_fast=args.whisper_fast,
-                    gpus=args.gpus,
-                    enable_postfix=not args.no_postfix,
-                )
-                print(status)
-                print(f"Done! Generated {processed} chapters.")
-
-            finally:
-                if use_temp:
-                    if args.verbose:
-                        print(f"[CLEANUP] Copying final outputs to {output_dir}")
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                    for pattern in ["chapter_*.mp3", "*.m4b"]:
-                        for f in glob.glob(os.path.join(temp_dir, pattern)):
-                            shutil.copy2(f, output_dir)
-                            if args.verbose:
-                                print(f"[CLEANUP] Copied {os.path.basename(f)} to {output_dir}")
-                    if args.verbose:
-                        print(f"[CLEANUP] Removing temp directory: {temp_dir}")
-                    shutil.rmtree(temp_dir, ignore_errors=True)
+        result = run_full_pipeline(
+            epub_path=args.epub_file,
+            output_dir=str(output_dir),
+            max_chapters=args.max_chapters,
+            verbose=args.verbose,
+            api_key=args.api_key,
+            llm_port=args.llm_port,
+            voice_engine=args.voice_engine,
+            tts_engine=args.tts_engine,
+            device=device,
+            seed_voice_map=args.seed_voice_map,
+            num_llm_attempts=args.num_attempts,
+            resume=bool(args.resume),
+            whisper_cpu=args.whisper_cpu,
+            concurrency=args.concurrency,
+            gpus=args.gpus,
+            whisper_concurrency=args.whisper_concurrency,
+            whisper_fast=args.whisper_fast,
+            use_chunkformer=not args.skip_chunkformer,
+            celebrity_voices=args.celebrity_voices,
+            llm_model=args.model,
+            desc_concurrency=args.desc_concurrency,
+            enable_postfix=not args.no_postfix,
+        )
+        print(result)
 
 
 if __name__ == "__main__":

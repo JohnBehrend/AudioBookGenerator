@@ -18,6 +18,21 @@ MIN_RATIO_THRESHOLD = 0.85
 MAX_RETRIES = 2
 
 
+def _normalize_clip_token(token: str) -> str:
+    """Lowercase a transcription token and strip punctuation for matching.
+
+    Whisper preserves case and punctuation (e.g. "And", "you.", "Bingley")
+    while input/postfix tokens are distilled (lowercase, punctuation removed).
+    This makes token matching in calculate_clip_points case/punctuation
+    insensitive so a capitalized or punctuated word isn't missed.
+    """
+    t = token.lower()
+    for ch in END_CHARACTERS:
+        t = t.replace(ch, "")
+    return t
+
+
+
 def normalize_script(text: str) -> str:
     """Normalize text for TTS generation.
 
@@ -251,6 +266,12 @@ def calculate_clip_points(
     if not segments or not start_times or not end_times:
         return None
 
+    # Whisper preserves case and punctuation (e.g. "And", "you.", "Bingley")
+    # while the input/postfix tokens are distilled (lowercase, punctuation
+    # removed). Normalize the transcription tokens the same way so matching
+    # doesn't fail on case/punctuation and clip the wrong part of the line.
+    norm_segments = [_normalize_clip_token(s) for s in segments]
+
     # Find start clip point: match a sequence of input tokens to avoid false matches
     clip_start_ms = 0
     start_found = False
@@ -258,7 +279,7 @@ def calculate_clip_points(
         # Find the first single-token match of any input word in the transcription.
         # This anchors the search so we don't accept windows that start too late.
         first_single_match = None
-        for i, seg in enumerate(segments):
+        for i, seg in enumerate(norm_segments):
             if seg in input_tokens[:5]:
                 first_single_match = i
                 break
@@ -271,9 +292,9 @@ def calculate_clip_points(
         for skip in range(min(3, len(input_tokens) - match_length + 1)):
             target = input_tokens[skip:skip + match_length]
             # Limit search to windows that start at or before the first single match
-            search_limit = (first_single_match + 1) if first_single_match is not None else len(segments) - match_length + 1
-            for i in range(min(search_limit, len(segments) - match_length + 1)):
-                window = segments[i:i + match_length]
+            search_limit = (first_single_match + 1) if first_single_match is not None else len(norm_segments) - match_length + 1
+            for i in range(min(search_limit, len(norm_segments) - match_length + 1)):
+                window = norm_segments[i:i + match_length]
                 matches = sum(1 for t, s in zip(target, window) if t == s)
                 if matches >= match_length - 1:
                     best_match_start = i
@@ -290,7 +311,7 @@ def calculate_clip_points(
         # Fallback: if sequence not found, match any of the first 5 input tokens
         if not start_found:
             fallback_tokens = input_tokens[:5]
-            for i, seg in enumerate(segments):
+            for i, seg in enumerate(norm_segments):
                 if seg in fallback_tokens:
                     clip_start_ms = max(0, int(start_times[i] * 1000) - 200)
                     start_found = True
@@ -301,10 +322,10 @@ def calculate_clip_points(
     # Find end clip point: before postfix or at last valid token
     clip_end_ms = None
 
-    if postfix_detect_token and postfix_detect_token in segments:
+    if postfix_detect_token and postfix_detect_token in norm_segments:
         try:
             # Find last occurrence of postfix token
-            postfix_start_index = len(segments) - 1 - segments[::-1].index(postfix_detect_token)
+            postfix_start_index = len(norm_segments) - 1 - norm_segments[::-1].index(postfix_detect_token)
 
             # Clip before the postfix starts
             if postfix_start_index == 0:
@@ -321,9 +342,9 @@ def calculate_clip_points(
         except (ValueError, IndexError):
             pass
 
-    if clip_end_ms is None and last_valid_token and last_valid_token in segments:
+    if clip_end_ms is None and last_valid_token and last_valid_token in norm_segments:
         try:
-            lastvalid_index = len(segments) - 1 - segments[::-1].index(last_valid_token)
+            lastvalid_index = len(norm_segments) - 1 - norm_segments[::-1].index(last_valid_token)
             clip_end_s = end_times[lastvalid_index]
             clip_end_ms = clip_end_s * 1000
 

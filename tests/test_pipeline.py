@@ -198,6 +198,28 @@ class TestCalculateClipPoints:
         start_clip, end_clip = result
         assert end_clip is not None
 
+    def test_case_punctuation_insensitive_matching(self):
+        """Postfix/prefix matching must ignore Whisper case & punctuation.
+
+        Whisper preserves case and punctuation ("And", "They", "are!") while
+        the input/postfix tokens are distilled (lowercase, punctuation removed).
+        Previously this caused the postfix token to be missed (or the wrong
+        occurrence matched), clipping the actual line content.
+        """
+        # Line "they are" + postfix; Whisper capitalized the postfix "And".
+        segments = ["They", "are!", "And", "also", "with", "you."]
+        start_times = [0.0, 0.42, 0.96, 1.16, 1.46, 1.68]
+        end_times = [0.42, 0.74, 1.16, 1.46, 1.68, 1.84]
+        input_tokens = ["they", "are", "and", "also", "with", "you"]
+
+        result = calculate_clip_points(
+            segments, start_times, end_times, "and", "you", input_tokens=input_tokens
+        )
+
+        # Content "They are" (0.42-0.74s) must be preserved: clip starts at the
+        # first content word and ends just before the postfix "And".
+        assert result == (0, 690.0)
+
     def test_last_valid_token_fallback(self):
         """Test fallback to last valid token when postfix not found."""
         segments = ["hello", "world", "missing"]

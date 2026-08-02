@@ -332,9 +332,13 @@ def calculate_clip_points(
                 # No content before postfix, clip to 0 so guard catches it
                 clip_end_s = 0.0
             else:
-                # Clip at the end of the last word before the postfix,
-                # minus a safety buffer because Whisper timestamps are ~50-100ms off
-                clip_end_s = end_times[postfix_start_index - 1] - 0.05
+                # Clip at the START of the postfix word. Whisper tends to
+                # UNDER-report the end time of the final content word, so
+                # clipping at (end - buffer) cut off that word's tail (e.g.
+                # "girls" losing its final 's'). The postfix word's start is a
+                # cleaner boundary (there is typically a pause before it) and
+                # keeps the full last content word.
+                clip_end_s = start_times[postfix_start_index]
             clip_end_ms = max(0, clip_end_s * 1000)
 
             if verbose:
@@ -370,6 +374,60 @@ def calculate_clip_points(
         return None
 
     return clip_start_ms, clip_end_ms
+
+
+def refine_clip_end_with_energy(
+    audio_path: str,
+    clip_end_ms: float,
+    silence_thresh_db: int = -40,
+    min_silence_ms: int = 100,
+    margin_ms: int = 20,
+) -> float:
+    """Refine the end clip point to the start of the postfix speech using energy.
+
+    The postfix is spoken after a brief pause following the last content word.
+    If the Whisper-derived clip end (the postfix word's start time) falls inside
+    such a silence gap, this clips at the END of that gap (minus a small margin),
+    i.e. at the start of the speech right after the silence. This keeps the full
+    last content word and its tail, and cuts the postfix at its actual audio
+    onset rather than at Whisper's (possibly inaccurate) word-start timestamp.
+
+    It only refines when clip_end lies within a detected silence, so it never
+    collapses the clip (it cannot grab leading silence).
+
+    Args:
+        audio_path: Path to the WAV file (must exist)
+        clip_end_ms: Rough end clip point (ms) from Whisper-based logic
+        silence_thresh_db: Silence threshold in dBFS
+        min_silence_ms: Minimum silence length (ms) to consider
+        margin_ms: Margin (ms) to stay before the postfix onset
+
+    Returns:
+        Refined clip end in ms, or the input clip_end_ms if no suitable pause
+        is found (or the clip would otherwise not improve).
+    """
+    import pydub
+
+    try:
+        audio = pydub.AudioSegment.from_wav(audio_path)
+    except Exception:
+        return clip_end_ms
+
+    total_ms = audio.duration_seconds * 1000
+    if clip_end_ms <= 0 or clip_end_ms >= total_ms:
+        return clip_end_ms
+
+    silences = pydub.silence.detect_silence(
+        audio, min_silence_len=min_silence_ms, silence_thresh=silence_thresh_db
+    )
+    # The pause immediately preceding the postfix is the silence whose span
+    # contains the postfix onset (clip_end_ms). Clip just before its end.
+    for start, end in silences:
+        if start < clip_end_ms <= end:
+            refined = int(end) - margin_ms
+            if refined > clip_end_ms:
+                return refined
+    return clip_end_ms
 
 
 def apply_audio_clipping(

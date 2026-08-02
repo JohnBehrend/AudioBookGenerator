@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from audiobook_generator.pipeline import (
     calculate_clip_points,
+    refine_clip_end_with_energy,
     prepare_script_for_tts,
     add_postfix,
 )
@@ -99,8 +100,14 @@ class TestValidateAndClipNoDoublePostfix:
 class TestClippingAccuracy:
     """Test that clipping removes postfix completely."""
 
-    def test_clip_at_last_word_before_postfix(self):
-        """Clip point should be at end of last word before postfix."""
+    def test_clip_at_start_of_postfix(self):
+        """Clip point should be at the start of the postfix word.
+
+        Clipping at the start of the postfix (rather than at the end of the
+        last content word minus a buffer) preserves the full final content word,
+        since Whisper under-reports the final word's end time and would otherwise
+        cut off its tail (e.g. the 's' in 'girls').
+        """
         segments = ["hello", "world", "and", "also", "with", "you"]
         start_times = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
         end_times = [0.4, 0.9, 1.4, 1.9, 2.4, 2.9]
@@ -108,11 +115,26 @@ class TestClippingAccuracy:
         result = calculate_clip_points(segments, start_times, end_times, "and", "world")
         assert result is not None
         start_clip, end_clip = result
-        # Should clip at end of "world" (0.9s) minus 50ms safety buffer = 850ms
-        assert end_clip == 850.0
+        # Postfix "and" starts at 1.0s -> clip there, keeping all of "world".
+        assert end_clip == 1000.0
+
+    def test_keeps_full_final_content_word_when_postfix_delayed(self):
+        """A pause before the postfix keeps the final word's tail intact."""
+        # Whisper reports "girls" ending early (1.0s) but the postfix "and"
+        # only starts later (1.6s); clipping must reach the postfix start.
+        segments = ["our", "girls", "and", "also", "with", "you"]
+        start_times = [0.0, 0.3, 1.6, 1.8, 2.0, 2.2]
+        end_times = [0.3, 1.0, 1.8, 2.0, 2.2, 2.4]
+
+        result = calculate_clip_points(segments, start_times, end_times, "and", "girls")
+        assert result is not None
+        _, end_clip = result
+        # Old logic: end of "girls" (1.0s) - 0.05 = 950ms (cut the 's').
+        # New logic: clip at start of postfix "and" = 1600ms (keeps full "girls").
+        assert end_clip == 1600.0
 
     def test_safety_buffer_prevents_residual_postfix(self):
-        """50ms safety buffer should account for Whisper timestamp inaccuracy."""
+        """Postfix start boundary should prevent residual postfix audio."""
         segments = ["hello", "world", "and", "also"]
         start_times = [0.0, 0.5, 1.0, 1.5]
         end_times = [0.4, 0.9, 1.4, 1.9]
@@ -120,8 +142,8 @@ class TestClippingAccuracy:
         result = calculate_clip_points(segments, start_times, end_times, "and", "world")
         assert result is not None
         _, end_clip = result
-        # 0.9s - 0.05s buffer = 850ms
-        assert end_clip == 850.0
+        # Postfix "and" starts at 1.0s -> clip there.
+        assert end_clip == 1000.0
 
     def test_postfix_at_start_clips_to_zero(self):
         """When postfix is the first token, clip_end should be 0."""
@@ -146,6 +168,49 @@ class TestClippingAccuracy:
         assert result is not None
         _, end_clip = result
         assert end_clip == 900.0
+
+
+class TestRefineClipEndWithEnergy:
+    """Tests for energy-based clip-end refinement."""
+
+    @staticmethod
+    def _make_wav(path, content_ms, silence_ms, postfix_ms):
+        """content tone -> silence -> postfix tone (16-bit mono)."""
+        import numpy as np
+        import wave
+        sr = 16000
+        def tone(ms):
+            t = np.arange(int(sr * ms / 1000))
+            return (0.3 * np.sin(2 * np.pi * 440 * t / sr) * 32767).astype(np.int16)
+        def silence(ms):
+            return np.zeros(int(sr * ms / 1000), dtype=np.int16)
+        data = np.concatenate([tone(content_ms), silence(silence_ms), tone(postfix_ms)])
+        with wave.open(str(path), "w") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sr)
+            wf.writeframes(data.tobytes())
+
+    def test_refines_when_clip_end_in_pause(self, tmp_path):
+        # content (0-1000ms), silence (1000-1400ms), postfix (1400-2000ms)
+        wav = tmp_path / "t.wav"
+        self._make_wav(wav, 1000, 400, 600)
+        # clip_end 1200 falls inside the pause -> refine to just before postfix onset
+        result = refine_clip_end_with_energy(str(wav), 1200)
+        # pause ends at 1400; minus 20ms margin = 1380
+        assert result == 1380
+
+    def test_no_refine_when_clip_end_in_speech(self, tmp_path):
+        # clip_end 500 is inside the content tone (no pause) -> unchanged
+        wav = tmp_path / "t.wav"
+        self._make_wav(wav, 1000, 400, 600)
+        assert refine_clip_end_with_energy(str(wav), 500) == 500
+
+    def test_no_refine_when_clip_end_in_trailing_postfix_speech(self, tmp_path):
+        # clip_end far past the pause (inside postfix tone) -> unchanged
+        wav = tmp_path / "t.wav"
+        self._make_wav(wav, 1000, 400, 600)
+        assert refine_clip_end_with_energy(str(wav), 1800) == 1800
 
 
 class TestInterLinePause:

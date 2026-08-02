@@ -217,8 +217,8 @@ class TestCalculateClipPoints:
         )
 
         # Content "They are" (0.42-0.74s) must be preserved: clip starts at the
-        # first content word and ends just before the postfix "And".
-        assert result == (0, 690.0)
+        # first content word and ends at the start of the postfix "And" (0.96s).
+        assert result == (0, 960.0)
 
     def test_last_valid_token_fallback(self):
         """Test fallback to last valid token when postfix not found."""

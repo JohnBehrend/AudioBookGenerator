@@ -70,6 +70,7 @@ from .pipeline import (
     score_strings_pop,
     calculate_clip_points,
     apply_audio_clipping,
+    refine_clip_end_with_energy,
     should_retry,
     generate_output_filename,
     get_temp_filenames,
@@ -356,6 +357,13 @@ def _validate_and_clip_audio(
             verbose=tts_config.verbose
         )
         if clip_points is not None:
+            start_ms, end_ms = clip_points
+            if end_ms is not None and end_ms > 0:
+                refined_end = refine_clip_end_with_energy(output_path, end_ms)
+                if refined_end != end_ms:
+                    if tts_config.verbose:
+                        print(f"  [Energy] refined clip end {end_ms}ms -> {refined_end}ms")
+                    clip_points = (start_ms, refined_end)
             apply_audio_clipping(output_path, clip_points, verbose=tts_config.verbose)
 
     return ratio, last_valid_token

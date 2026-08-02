@@ -2,13 +2,19 @@
 """Benchmark TTS end-clipping using the sample Pride & Prejudice EPUB + omni.
 
 For each sampled line this generates the RAW (unclipped) audio for the full
-script (line + postfix), transcribes it, then runs the production clipping path
-(_validate_and_clip_audio) on a copy and transcribes that. It reports whether the
-line's ENDING words survived clipping, isolating premature end-clipping from
-plain TTS quality issues.
+script (line + postfix), transcribes it once, runs the production clipping path
+(_validate_and_clip_audio), then transcribes the final clipped audio and reports
+whether the line's ending words survived. This isolates premature end-clipping
+from TTS quality issues. The ending check is punctuation-tolerant (Whisper adds
+trailing quotes/dashes like 'them"', 'he--').
+
+Note: 'premature' flags here are often Whisper re-read variance (the raw and the
+clipped audio are different audio, so the re-read can differ slightly) -- verify
+by checking the clip transcription.
 
 Usage:
     python scripts/benchmark_clipping.py [--lines N] [--chapters N] [--out DIR]
+        [--voice-ref PATH] [--device DEV] [--whisper-cpu]
 """
 import argparse
 import gc
@@ -121,7 +127,7 @@ def main() -> None:
 
             shutil.copy(raw, clip)
             ratio, last_valid = _validate_and_clip_audio(full_script, str(clip), tts_config)
-            cs, cstart, cend, clip_det = transcribe_full(whisper, clip)
+            _, _, _, clip_det = transcribe_full(whisper, clip)
             clip_words = clip_det.split()
 
             def tok(w):
@@ -180,7 +186,7 @@ def main() -> None:
     print(f"Last word MISSING after clip: {len(missing)}")
     print(f"PREMATURE clips (raw had ending, clip lost it): {len(premature)}")
     if premature:
-        print("\nPrematurely-clipped lines:")
+        print("\nPrematurely-clipped lines (verify: likely Whisper re-read variance):")
         for r in premature:
             print(f"  c{r['chapter']} l{r['line']}: {r['text'][:60]!r}")
             print(f"      raw : ...{r['raw_det'][-70:]}")

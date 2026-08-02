@@ -17,6 +17,7 @@ Requirements:
 """
 
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -70,6 +71,11 @@ CLONE_ONLY_ENGINES = {"echo-tts", "miso-tts", "zonos2"}
 
 # Persistent output directory for generated test voices
 _TEST_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "voice_test" / "test_voices"
+
+# Real speech reference used as the voice clone for clone-only engines (e.g.
+# zonos2), so voice-cloning is exercised against intelligible speech rather
+# than a synthetic tone. Falls back to a synthetic tone if the asset is absent.
+CLONE_REFERENCE = Path(__file__).resolve().parent / "assets" / "clone_reference.wav"
 
 
 @pytest.fixture(scope="session")
@@ -125,16 +131,27 @@ def all_engines(device: str):
 
 @pytest.fixture(scope="session")
 def voice_refs(available_engines: dict, output_dir: Path, device: str):
-    """Generate one voice reference per engine, reuse for all tests."""
+    """Generate one voice reference per engine, reuse for all tests.
+
+    Clone-only engines cannot synthesize a voice from a description, so they get
+    a real speech reference (CLONE_REFERENCE) when available, otherwise a
+    synthetic tone, so their generate_line path is still exercised.
+    """
     refs = {}
     for engine_name, engine in available_engines.items():
         try:
             if engine_name in CLONE_ONLY_ENGINES:
-                # Generate a synthetic voice reference for clone-only engines
-                ref_path = output_dir / engine_name / "test_voice.wav"
-                ref_path.parent.mkdir(parents=True, exist_ok=True)
-                generate_test_voice(ref_path)
-                refs[engine_name] = str(ref_path)
+                if CLONE_REFERENCE.exists():
+                    ref_path = output_dir / engine_name / "real_voice_ref.wav"
+                    ref_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(str(CLONE_REFERENCE), ref_path)
+                    refs[engine_name] = str(ref_path)
+                else:
+                    # No real speech asset available; generate a synthetic tone.
+                    ref_path = output_dir / engine_name / "test_voice.wav"
+                    ref_path.parent.mkdir(parents=True, exist_ok=True)
+                    generate_test_voice(ref_path)
+                    refs[engine_name] = str(ref_path)
             else:
                 success, ref_path, _ = engine.generate_voice_sample(
                     character_name="narrator",

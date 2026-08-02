@@ -227,7 +227,7 @@ def run_worker(device: str) -> None:
                 resp = requests.post(
                     f"{SERVER_URL}/tts/generate",
                     json=payload,
-                    timeout=120,
+                    timeout=600,
                 )
                 if resp.status_code != 200:
                     print(
@@ -276,7 +276,7 @@ def run_worker(device: str) -> None:
                 resp = requests.post(
                     f"{SERVER_URL}/tts/generate",
                     json=payload,
-                    timeout=120,
+                    timeout=600,
                 )
                 if resp.status_code != 200:
                     print(

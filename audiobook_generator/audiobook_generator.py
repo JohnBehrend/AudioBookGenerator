@@ -359,7 +359,15 @@ def _validate_and_clip_audio(
         if clip_points is not None:
             start_ms, end_ms = clip_points
             if end_ms is not None and end_ms > 0:
-                refined_end = refine_clip_end_with_energy(output_path, end_ms)
+                postfix_tokens = None
+                if tts_config.short_text_postfix:
+                    postfix_tokens = distill_string(tts_config.short_text_postfix).split()
+                word_starts = list(zip(segments, start_times))
+                refined_end = refine_clip_end_with_energy(
+                    output_path, end_ms,
+                    postfix_tokens=postfix_tokens,
+                    word_starts_ms=word_starts,
+                )
                 if refined_end != end_ms:
                     if tts_config.verbose:
                         print(f"  [Energy] refined clip end {end_ms}ms -> {refined_end}ms")

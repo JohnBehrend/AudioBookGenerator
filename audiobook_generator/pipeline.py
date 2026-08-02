@@ -376,9 +376,57 @@ def calculate_clip_points(
     return clip_start_ms, clip_end_ms
 
 
+def _distill_tail_words(word_starts_ms: List[float], threshold_ms: float):
+    """Return the Whisper words whose start time is >= threshold_ms.
+
+    Returns a tuple ``(tail_distilled, tail_word_count)`` describing the speech
+    that would be *removed* by clipping at ``threshold_ms``. Used to confirm
+    that the trailing speech after a candidate boundary is the postfix rather
+    than more content.
+    """
+    from audiobook_generator.utils import distill_string
+
+    tail = [
+        w for w, start in word_starts_ms
+        if start is not None and start >= threshold_ms
+    ]
+    return distill_string(" ".join(tail)), len(tail)
+
+
+def _is_postfix_tail(
+    tail_distilled: str,
+    postfix_distilled: str,
+    tail_word_count: int,
+    postfix_word_count: int,
+    slack: int = 2,
+) -> bool:
+    """True if the trailing speech is the postfix (not content + postfix).
+
+    After a true postfix boundary the trailing speech is essentially just the
+    postfix (short). If the tail is much longer than the postfix it contains
+    content, which means the candidate gap was a content-internal pause or the
+    leading silence -- clipping there would cut content. We reject such long
+    tails.
+
+    Crucially we do NOT require Whisper to read the content's final word
+    correctly -- we only inspect the short trailing region after the boundary.
+    """
+    if not tail_distilled or not postfix_distilled:
+        return False
+    if tail_word_count > postfix_word_count + slack:
+        return False
+    if postfix_distilled in tail_distilled:
+        return True
+    if tail_distilled in postfix_distilled:
+        return True
+    return tail_distilled.startswith(postfix_distilled[: max(1, len(postfix_distilled) // 2)])
+
+
 def refine_clip_end_with_energy(
     audio_path: str,
     clip_end_ms: float,
+    postfix_tokens: Optional[List[str]] = None,
+    word_starts_ms: Optional[List[float]] = None,
     silence_thresh_db: int = -40,
     min_silence_ms: int = 100,
     margin_ms: int = 20,
@@ -386,18 +434,31 @@ def refine_clip_end_with_energy(
     """Refine the end clip point to the start of the postfix speech using energy.
 
     The postfix is spoken after a brief pause following the last content word.
-    If the Whisper-derived clip end (the postfix word's start time) falls inside
-    such a silence gap, this clips at the END of that gap (minus a small margin),
-    i.e. at the start of the speech right after the silence. This keeps the full
-    last content word and its tail, and cuts the postfix at its actual audio
-    onset rather than at Whisper's (possibly inaccurate) word-start timestamp.
+    This anchors the clip boundary to the ENERGY GAP (the pause before the
+    postfix) rather than to Whisper's word timestamps, and uses Whisper only to
+    *confirm* that the trailing speech after the candidate gap is the postfix.
 
-    It only refines when clip_end lies within a detected silence, so it never
-    collapses the clip (it cannot grab leading silence).
+    Two refinement steps:
+
+    1. Conservative: if the Whisper-derived clip end (the postfix word's start
+       time) falls inside a detected silence gap, clip at the END of that gap
+       (minus a small margin) -- i.e. at the start of the speech right after the
+       silence. This only ever EXTENDS the clip (keeps more audio), so it can
+       never over-clip content.
+
+    2. Robust (only when postfix_tokens + word_starts_ms are supplied): from the
+       last gap backward, pick the first gap whose trailing speech matches the
+       postfix, and clip at that gap's end. This keeps the clip correct even if
+       Whisper misread or mislocated the content ending, because the boundary is
+       decided by the energy gap and verified against the postfix string.
+
+    It never collapses the clip (it cannot grab leading silence).
 
     Args:
         audio_path: Path to the WAV file (must exist)
         clip_end_ms: Rough end clip point (ms) from Whisper-based logic
+        postfix_tokens: Postfix word tokens (used for robust gap anchoring)
+        word_starts_ms: Whisper word start times, in order, as (word, start_ms)
         silence_thresh_db: Silence threshold in dBFS
         min_silence_ms: Minimum silence length (ms) to consider
         margin_ms: Margin (ms) to stay before the postfix onset
@@ -407,6 +468,7 @@ def refine_clip_end_with_energy(
         is found (or the clip would otherwise not improve).
     """
     import pydub
+    from audiobook_generator.utils import distill_string
 
     try:
         audio = pydub.AudioSegment.from_wav(audio_path)
@@ -420,13 +482,29 @@ def refine_clip_end_with_energy(
     silences = pydub.silence.detect_silence(
         audio, min_silence_len=min_silence_ms, silence_thresh=silence_thresh_db
     )
-    # The pause immediately preceding the postfix is the silence whose span
-    # contains the postfix onset (clip_end_ms). Clip just before its end.
+
+    # Step 1: conservative -- clip_end inside a pause -> extend to pause end.
     for start, end in silences:
         if start < clip_end_ms <= end:
             refined = int(end) - margin_ms
             if refined > clip_end_ms:
                 return refined
+
+    # Step 2: robust -- anchor to the last gap whose trailing speech is the
+    # postfix. Decouples the boundary from Whisper's (possibly wrong) word read.
+    if postfix_tokens and word_starts_ms is not None:
+        postfix_distilled = distill_string(" ".join(postfix_tokens))
+        postfix_word_count = len(postfix_tokens)
+        for start, end in reversed(silences):
+            tail, tail_count = _distill_tail_words(word_starts_ms, float(end))
+            if _is_postfix_tail(tail, postfix_distilled, tail_count, postfix_word_count):
+                refined = int(end) - margin_ms
+                # Only ever EXTEND the clip (keep more audio) toward the verified
+                # postfix onset. Never move earlier than Whisper's onset, so this
+                # can never over-clip content.
+                if refined > clip_end_ms:
+                    return refined
+                break
     return clip_end_ms
 
 

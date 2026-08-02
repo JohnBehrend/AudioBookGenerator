@@ -212,6 +212,65 @@ class TestRefineClipEndWithEnergy:
         self._make_wav(wav, 1000, 400, 600)
         assert refine_clip_end_with_energy(str(wav), 1800) == 1800
 
+    @staticmethod
+    def _make_segmented_wav(path, segments):
+        """segments: list of (kind, ms) where kind is 'tone' or 'sil'."""
+        import numpy as np
+        import wave
+        sr = 16000
+        def tone(ms):
+            t = np.arange(int(sr * ms / 1000))
+            return (0.3 * np.sin(2 * np.pi * 440 * t / sr) * 32767).astype(np.int16)
+        def silence(ms):
+            return np.zeros(int(sr * ms / 1000), dtype=np.int16)
+        data = np.concatenate([
+            (tone if kind == "tone" else silence)(ms) for kind, ms in segments
+        ])
+        with wave.open(str(path), "w") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(data.tobytes())
+
+    @staticmethod
+    def _postfix_words(offset_ms=0):
+        return [
+            ("and", offset_ms + 0), ("also", offset_ms + 150),
+            ("with", offset_ms + 250), ("you", offset_ms + 350),
+        ]
+
+    def test_step2_does_not_overclip_on_leading_silence(self, tmp_path):
+        # content flows straight into postfix (no pause). Whisper locates the
+        # postfix too early, inside the content. Energy must NOT extend into the
+        # leading silence (which would cut the line) -- it stays at the onset.
+        wav = tmp_path / "t.wav"
+        # leading silence 200 + content 200-1000 + postfix 1000-1600
+        self._make_segmented_wav(wav, [("sil", 200), ("tone", 800), ("tone", 600)])
+        words = [
+            ("what", 200), ("is", 300), ("his", 400), ("name", 500),
+        ] + self._postfix_words(1000)
+        result = refine_clip_end_with_energy(
+            str(wav), 500.0, postfix_tokens=["and", "also", "with", "you"],
+            word_starts_ms=words,
+        )
+        assert result == 500.0
+
+    def test_step2_extends_to_verified_postfix_boundary(self, tmp_path):
+        # real pause before the postfix (800-1000). Whisper locates postfix too
+        # early (300, inside content). Energy extends to the postfix boundary so
+        # content is not cut.
+        wav = tmp_path / "t.wav"
+        # content 0-800 + pause 800-1000 + postfix 1000-1600
+        self._make_segmented_wav(wav, [("tone", 800), ("sil", 200), ("tone", 600)])
+        words = [
+            ("what", 0), ("is", 100), ("his", 200), ("name", 300),
+        ] + self._postfix_words(1000)
+        result = refine_clip_end_with_energy(
+            str(wav), 300.0, postfix_tokens=["and", "also", "with", "you"],
+            word_starts_ms=words,
+        )
+        assert result == 980.0
+
 
 class TestInterLinePause:
     """Test that inter-line pause is inserted between audio segments."""

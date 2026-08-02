@@ -417,10 +417,16 @@ class TestRealWhisperValidation:
 
 @pytest.fixture(scope="session", autouse=True)
 def shutdown_engines(available_engines: dict):
-    """Shutdown all engine workers at the end of the test session."""
+    """Shutdown all engine workers and release GPU memory at session end."""
     yield
+    import gc
+    import torch
+
     for engine in available_engines.values():
         try:
             engine.shutdown_worker()
         except Exception:
             pass
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()

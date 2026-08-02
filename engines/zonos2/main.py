@@ -133,6 +133,9 @@ def run_worker(device: str) -> None:
             env=env,
             stdout=subprocess.PIPE,
             stderr=open(stderr_path, "w"),
+            # Own process group so stop_server() can kill the server AND all of
+            # its multiprocessing children, which otherwise leak and pin VRAM.
+            start_new_session=True,
         )
         print(f"  ZONOS2 server starting (pid={server_proc.pid})...", flush=True)
         wait_for_server(SERVER_URL, timeout=600, stderr_path=stderr_path)
@@ -142,15 +145,21 @@ def run_worker(device: str) -> None:
     def stop_server() -> None:
         nonlocal server_proc
         if server_proc is not None:
+            pgid = os.getpgid(server_proc.pid)
             try:
-                server_proc.send_signal(signal.SIGTERM)
+                # Kill the whole server process group (parent + multiprocessing
+                # children) so no orphaned workers keep holding GPU memory.
+                os.killpg(pgid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
                 server_proc.wait(timeout=15)
-            except Exception:
+            except subprocess.TimeoutExpired:
                 try:
-                    server_proc.terminate()
-                    server_proc.wait(timeout=5)
-                except Exception:
-                    server_proc.kill()
+                    os.killpg(pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                server_proc.wait(timeout=5)
             server_proc = None
 
     def get_speaker_base64(voice_path: str) -> str:

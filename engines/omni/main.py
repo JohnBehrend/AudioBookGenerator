@@ -150,7 +150,11 @@ def run_worker(device: str) -> None:
     import soundfile as sf
 
     model = None
+    # Voice clone prompts can be large (ASR + voice embeddings). Keep them
+    # bounded so distinct voice refs (e.g. per-chapter narrator seeds) don't
+    # accumulate unbounded GPU memory.
     _voice_clone_prompts: dict[str, Any] = {}
+    _MAX_CLONE_PROMPTS = 32
 
     def load_model(device: str) -> None:
         nonlocal model
@@ -161,6 +165,14 @@ def run_worker(device: str) -> None:
             device_map=device,
             dtype=torch.float16,
         )
+
+    def _load_asr_lazy() -> None:
+        """Load the ASR model only when a voice clone prompt is requested.
+
+        The celebrity path uses voice *design* (generate_voice_sample), which
+        never needs ASR. Loading it unconditionally wasted several GB on the
+        shared 24GB GPU, causing OOM when Whisper validation also needs memory.
+        """
         try:
             model.load_asr_model()
         except Exception as e:
@@ -168,11 +180,21 @@ def run_worker(device: str) -> None:
 
     def _get_voice_clone_prompt(voice_path: str) -> Any:
         if voice_path not in _voice_clone_prompts:
+            if len(_voice_clone_prompts) >= _MAX_CLONE_PROMPTS:
+                _voice_clone_prompts.clear()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            _load_asr_lazy()
             _voice_clone_prompts[voice_path] = model.create_voice_clone_prompt(
                 ref_audio=voice_path,
                 preprocess_prompt=True,
             )
         return _voice_clone_prompts[voice_path]
+
+    def _free_activations() -> None:
+        """Release cached-but-unused GPU memory after a generation."""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # Signal ready
     print(json.dumps({"type": "ready"}), flush=True)
@@ -251,6 +273,7 @@ def run_worker(device: str) -> None:
                         "output_file": output_file,
                         "duration": duration,
                     }), flush=True)
+                    _free_activations()
 
                 except ValueError as e:
                     error_msg = str(e)
@@ -287,6 +310,7 @@ def run_worker(device: str) -> None:
                                     "output_file": output_file,
                                     "duration": duration,
                                 }), flush=True)
+                                _free_activations()
                             except Exception:
                                 print(json.dumps({"id": req_id, "success": False}), flush=True)
                         else:
@@ -319,6 +343,7 @@ def run_worker(device: str) -> None:
                 else:
                     sf.write(output_path, audio[0], SAMPLE_RATE)
                 print(json.dumps({"id": req_id, "success": True}), flush=True)
+                _free_activations()
 
             else:
                 print(json.dumps({"id": req_id, "error": f"Unknown method: {method}"}), flush=True)

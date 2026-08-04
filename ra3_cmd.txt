@@ -1,0 +1,27 @@
+from audiobook_generator.audiobook_generator import run_full_pipeline
+
+result = run_full_pipeline(
+    epub_path='voice_test/RA3.epub',
+    output_dir='voice_test/RA3_output',
+    max_chapters=None,
+    verbose=True,
+    api_key=None,
+    llm_port='2136',
+    voice_engine='dramabox',
+    tts_engine='omni',
+    device='cuda:0',
+    seed_voice_map='voice_test/ra1_ra2_voices_map.json',
+    num_llm_attempts=2,
+    resume=True,
+    whisper_cpu=False,
+    concurrency=1,
+    gpus=['cuda:0'],
+    whisper_concurrency=1,
+    whisper_fast=False,
+    use_chunkformer=True,
+    celebrity_voices=True,
+    llm_model='coder-model',
+    desc_concurrency=1,
+    enable_postfix=False,
+)
+print('RESULT:', result)

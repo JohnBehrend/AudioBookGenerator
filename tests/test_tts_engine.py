@@ -31,7 +31,7 @@ class TestTTSEngine:
         engine = TTSEngine(engine_dir)
 
         assert engine.engine_dir == engine_dir
-        assert engine._worker is None
+        assert engine._shared is None
 
     def test_concrete_class(self):
         """Test that a concrete class can be created."""

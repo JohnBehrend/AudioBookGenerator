@@ -265,7 +265,7 @@ def generate_voice_samples(
     tts_engine: str = None,
     use_chunkformer: bool = False,
     seed_clone_fallback_engines: List[str] = None,
-    whisper_cpu: bool = True,
+    whisper_cpu: bool = False,
     use_celebrity_voices: bool = False,
     llm_client=None,
     llm_model: str = "coder-model",
@@ -558,6 +558,13 @@ def generate_voice_samples(
                         except OSError:
                             pass
 
+            # Release the seed-clone engine's reference to its (shared) worker so
+            # the model is freed from GPU memory before the main voice loop and
+            # before Stage 5. With shared workers this only decrements the
+            # refcount; the worker is fully shut down when the last user releases.
+            if seed_characters:
+                voice_mapper_seed.cleanup_engines()
+
         os.makedirs(output_dir, exist_ok=True)
 
         generated = {}
@@ -750,8 +757,14 @@ def generate_voice_samples(
                 if candidates:
                     candidates.sort(key=lambda x: x[0], reverse=True)
                     best_score, best_file, best_att, best_dur = candidates[0]
-                    final_path = os.path.join(output_dir, f"{char_name}.wav")
-                    shutil.copy2(best_file, final_path)
+                    if use_celebrity_voices and ("_ref" in best_file or "_fallback" in best_file):
+                        # Celebrity voice: keep the celebrity-named file (emitted by
+                        # save_celebrity_voice_as) so voices_map is directly
+                        # traceable to the celebrity; no {char}.wav rename.
+                        final_path = best_file
+                    else:
+                        final_path = os.path.join(output_dir, f"{char_name}.wav")
+                        shutil.copy2(best_file, final_path)
                     _normalize_loudness(final_path)
                     generated[char_name] = final_path
                     save_voices_map()
@@ -764,8 +777,12 @@ def generate_voice_samples(
                     # If all ChunkFormer checks failed, pick the first generated sample anyway
                     if all_attempts:
                         first_matches, first_file, first_num, first_dur = all_attempts[0]
-                        final_path = os.path.join(output_dir, f"{char_name}.wav")
-                        shutil.copy2(first_file, final_path)
+                        if use_celebrity_voices and ("_ref" in first_file or "_fallback" in first_file):
+                            # Celebrity voice: keep the celebrity-named file.
+                            final_path = first_file
+                        else:
+                            final_path = os.path.join(output_dir, f"{char_name}.wav")
+                            shutil.copy2(first_file, final_path)
                         _normalize_loudness(final_path)
                         generated[char_name] = final_path
                         save_voices_map()
@@ -787,6 +804,15 @@ def generate_voice_samples(
                         os.remove(_fp + ".cropped.wav")
                     except OSError:
                         pass
+
+                # Remove orphaned celebrity voice intermediates (segments/refs/
+                # downloads) now that the final voice exists and is what
+                # voices_map references. build_celebrity_voice tries several
+                # YouTube videos per character; only the winner is kept (saved
+                # as {celebrity}_ref.wav), so all *_v*_* files are safe to delete.
+                if generated.get(char_name):
+                    from .celebrity_voices import cleanup_celebrity_intermediates
+                    cleanup_celebrity_intermediates(char_name, output_dir)
 
             # Clean up TTS models after all characters are processed
             # Skip cleanup if engine was injected (caller manages lifecycle)

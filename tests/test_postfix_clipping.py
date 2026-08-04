@@ -346,51 +346,47 @@ class TestEngineInterfaceContract:
                 worker.shutdown()
 
     def test_tts_engine_adapter_delegates_to_worker(self):
-        """TTSEngine.generate_line must delegate to EngineWorker, not inline code."""
+        """TTSEngine.generate_line must delegate to the (shared) worker, not inline code."""
         from tts.engine import TTSEngine
         from unittest.mock import MagicMock, patch
         from pathlib import Path
 
         engine = TTSEngine(Path("/tmp/fake_engine"), "cpu")
-        with patch.object(engine, "_get_worker") as mock_get_worker:
-            mock_worker = MagicMock()
-            mock_worker.request.return_value = {"success": True}
-            mock_get_worker.return_value = mock_worker
-
+        mock_shared = MagicMock()
+        mock_shared.request.return_value = {"success": True}
+        with patch.object(engine, "_get_shared", return_value=mock_shared):
             engine.generate_line(
                 text="test",
                 voice_path="/tmp/voice.wav",
                 output_path="/tmp/out.wav",
             )
 
-            mock_worker.request.assert_called_once()
-            call_kwargs = mock_worker.request.call_args
+            mock_shared.request.assert_called_once()
+            call_kwargs = mock_shared.request.call_args
             assert call_kwargs[0][0] == "generate_line"  # method name
 
     def test_tts_engine_voice_sample_delegates_to_worker(self):
-        """TTSEngine.generate_voice_sample must delegate to EngineWorker."""
+        """TTSEngine.generate_voice_sample must delegate to the (shared) worker."""
         from tts.engine import TTSEngine
         from unittest.mock import MagicMock, patch
         from pathlib import Path
 
         engine = TTSEngine(Path("/tmp/fake_engine"), "cpu")
-        with patch.object(engine, "_get_worker") as mock_get_worker:
-            mock_worker = MagicMock()
-            mock_worker.request.return_value = {
-                "success": True,
-                "output_file": "/tmp/test.wav",
-                "duration": 1.0,
-            }
-            mock_get_worker.return_value = mock_worker
-
+        mock_shared = MagicMock()
+        mock_shared.request.return_value = {
+            "success": True,
+            "output_file": "/tmp/test.wav",
+            "duration": 1.0,
+        }
+        with patch.object(engine, "_get_shared", return_value=mock_shared):
             result = engine.generate_voice_sample(
                 character_name="test",
                 description="male",
                 output_dir=Path("/tmp"),
             )
 
-            mock_worker.request.assert_called_once()
-            call_kwargs = mock_worker.request.call_args
+            mock_shared.request.assert_called_once()
+            call_kwargs = mock_shared.request.call_args
             assert call_kwargs[0][0] == "generate_voice_sample"
             assert result[0] is True  # success
 

@@ -1825,6 +1825,60 @@ def _save_to_archive(celebrity: str, wav_path: str, verbose: bool = False) -> No
             pass
 
 
+def save_celebrity_voice_as(celebrity: str, source_wav: str, output_dir: str) -> str:
+    """Write a celebrity's winning voice to a celebrity-named file in output_dir.
+
+    Names the file by the *celebrity* (e.g. ``johnny_depp_ref.wav``) rather than
+    by the character, so that ``voices_map`` entries are directly traceable to
+    the celebrity. The ``_ref`` suffix is the marker the pipeline uses to
+    recognize a celebrity reference (and skip Whisper word-matching).
+
+    Returns:
+        The path of the written celebrity-named file.
+    """
+    safe = re.sub(r'[^a-zA-Z0-9 _-]', '', celebrity).strip().replace(' ', '_').lower()
+    dest = str(Path(output_dir) / f"{safe}_ref.wav")
+    shutil.copy2(source_wav, dest)
+    return dest
+
+
+def cleanup_celebrity_intermediates(
+    character_name: str,
+    output_dir: str,
+    keep_path: Optional[str] = None,
+) -> int:
+    """Delete a character's leftover per-video celebrity voice working files.
+
+    ``build_celebrity_voice()`` tries multiple YouTube videos per character, each
+    producing intermediates prefixed ``{character}_v<idx>_`` (extracted speech
+    ``*_segment<N>.wav``, generated references ``*_s<N>_ref.wav``, and the
+    downloaded ``*_celebrity_voice.wav``). Only the single winning reference is
+    kept — saved as ``{celebrity}_ref.wav`` via ``save_celebrity_voice_as`` and
+    archived — while every other per-video file is orphaned and would otherwise
+    accumulate in the output dir.
+
+    Args:
+        character_name: The character whose ``*_v*_*`` intermediates to remove.
+        output_dir: Directory containing the files.
+        keep_path: Optional winning path to preserve (still needed by caller).
+
+    Returns:
+        Number of files removed.
+    """
+    out = Path(output_dir)
+    keep = Path(keep_path).resolve() if keep_path else None
+    removed = 0
+    for p in out.glob(f"{character_name}_v*"):
+        if keep is not None and p.resolve() == keep:
+            continue
+        try:
+            p.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def build_celebrity_voice(
     client: Any,
     model: str,
@@ -2026,7 +2080,7 @@ def build_celebrity_voice(
                 "alternatives": [r[0] for r in video_refs[1:]],
             }
             _save_to_archive(celebrity, best_ref, verbose=verbose)
-            return best_ref, metadata
+            return save_celebrity_voice_as(celebrity, best_ref, output_dir), metadata
         else:
             for seg_path in video_segments:
                 all_segments.append(seg_path)
@@ -2054,7 +2108,7 @@ def build_celebrity_voice(
                     "audio_source": audio_src,
                 }
                 _save_to_archive(celebrity, ref_path, verbose=verbose)
-                return ref_path, metadata
+                return save_celebrity_voice_as(celebrity, ref_path, output_dir), metadata
 
         metadata = {
             "character": character,
@@ -2065,7 +2119,7 @@ def build_celebrity_voice(
             "audio_source": audio_src,
         }
         _save_to_archive(celebrity, seg_path, verbose=verbose)
-        return seg_path, metadata
+        return save_celebrity_voice_as(celebrity, seg_path, output_dir), metadata
 
     return None, None
 

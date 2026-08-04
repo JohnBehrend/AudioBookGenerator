@@ -141,6 +141,10 @@ def setup_validation_model(device: str, cpu: bool = False, fast: bool = False) -
     if cpu:
         return WhisperModel(model_name, device="cpu", compute_type="float32")
     else:
+        # faster_whisper/ctranslate2 only accepts bare "cuda", not "cuda:N".
+        # The GPU index is selected via CUDA_VISIBLE_DEVICES pinning (see
+        # tests/test_gpu_pinning.py). Passing "cuda:0" here raises
+        # ValueError: unsupported device.
         whisper_device = "cuda" if device.startswith("cuda") else device
         return WhisperModel(model_name, device=whisper_device, compute_type="float16")
 
@@ -1580,6 +1584,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 use_chunkformer=True,
                 seed_clone_fallback_engines=_fallback_engines,
                 use_celebrity_voices=celebrity_voices,
+                whisper_cpu=whisper_cpu,
                 llm_client=client,
                 llm_model=model,
             )

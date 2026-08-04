@@ -1,6 +1,7 @@
 """Tests for generate_voice_samples module."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -298,3 +299,89 @@ class TestVoiceMapperIntegration:
             assert success is True
 
         assert len(vm.voice_paths) > 0
+
+
+class TestCelebrityTraceability:
+    """Pins the celebrity traceability design through the real pipeline.
+
+    Intended behavior: when celebrity voices are enabled, a character's winning
+    celebrity voice is stored under the CELEBRITY's name (``{celebrity}_ref.wav``)
+    rather than ``{char}.wav``, and ``voices_map[char]`` points at that
+    celebrity-named file — so a character is directly traceable to its celebrity
+    just by reading ``voices_map.json``.
+    """
+
+    def _run_celebrity(self, temp_dir, mock_llm_client, descriptions, celebrities):
+        """Run generate_voice_samples with celebrity voices and a mocked
+        build_celebrity_voice returning a distinct celebrity-named ref per char."""
+        from audiobook_generator.testing import write_silence_wav
+
+        def fake_build(client, model, character, description, output_dir,
+                       pre_matched_celebrity=None, whisper_model=None,
+                       tts_engine=None, verbose=False, **kwargs):
+            # build_celebrity_voice is called with the per-sample name
+            # "<char>.sampleN"; the traceability target is the base character.
+            base = character.split(".")[0]
+            celeb = celebrities[base]
+            ref = os.path.join(output_dir, f"{celeb}_ref.wav")
+            if not os.path.exists(ref):
+                write_silence_wav(ref, 22050, 1)
+            return ref, {
+                "character": base,
+                "celebrity": celeb,
+                "reason": "test",
+                "search_query": f"{celeb} interview",
+                "segment": ref,
+                "audio_source": None,
+            }
+
+        with patch("audiobook_generator.celebrity_voices.build_celebrity_voice",
+                   side_effect=fake_build):
+            return _run_generate_voice_samples(
+                None, temp_dir, descriptions,
+                use_celebrity_voices=True,
+                llm_client=mock_llm_client,
+            )
+
+    def test_voices_map_points_to_celebrity_named_file(
+        self, temp_dir, mock_llm_client, sample_character_descriptions
+    ):
+        celebrities = {
+            "narrator": "morgan_freeman",
+            "jane": "emma_watson",
+            "elizabeth": "natalie_portman",
+        }
+        status, voices = self._run_celebrity(
+            temp_dir, mock_llm_client, sample_character_descriptions, celebrities
+        )
+
+        # voices_map maps each char to the celebrity-named ref, not {char}.wav.
+        assert voices["jane"] == os.path.join(str(temp_dir), "emma_watson_ref.wav")
+        assert voices["elizabeth"] == os.path.join(str(temp_dir), "natalie_portman_ref.wav")
+
+        with open(temp_dir / "voices_map.json", "r", encoding="utf-8") as f:
+            saved = json.load(f)
+        assert saved["jane"] == "emma_watson_ref.wav"
+        assert saved["elizabeth"] == "natalie_portman_ref.wav"
+
+        # The old {char}.wav rename must NOT be produced for celebrity voices.
+        assert not (temp_dir / "jane.wav").exists()
+        assert not (temp_dir / "elizabeth.wav").exists()
+
+    def test_celebrity_ref_files_exist_and_are_what_voices_map_references(
+        self, temp_dir, mock_llm_client, sample_character_descriptions
+    ):
+        celebrities = {
+            "narrator": "morgan_freeman",
+            "jane": "emma_watson",
+            "elizabeth": "natalie_portman",
+        }
+        _, voices = self._run_celebrity(
+            temp_dir, mock_llm_client, sample_character_descriptions, celebrities
+        )
+
+        for char_name, voice_path in voices.items():
+            assert os.path.exists(voice_path)
+            assert os.path.basename(voice_path).endswith("_ref.wav")
+            # The file is named by the celebrity, so its name IS the trace.
+            assert celebrities[char_name] in os.path.basename(voice_path)

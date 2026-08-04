@@ -8,7 +8,12 @@ from typing import Any, Optional, Tuple
 
 import torch
 
-from .worker import EngineWorker
+from .worker import (
+    EngineWorker,
+    SharedEngineWorker,
+    acquire_shared_worker,
+    release_shared_worker,
+)
 
 
 class TTSEngine:
@@ -20,21 +25,31 @@ class TTSEngine:
     - Generating audio lines from text + voice reference (Stage 5)
 
     Engines run TTS inference in isolated subprocess workers. The adapter
-    methods delegate to EngineWorker, while the engine's main.py handles the actual
-    model loading and inference in the subprocess.
+    methods delegate to a *shared* worker (see SharedEngineWorker): every
+    TTSEngine instance for the same (engine_dir, device) reuses one worker
+    subprocess so a single model copy is loaded per GPU/engine, avoiding
+    duplicate full-model loads (and OOM) from separate VoiceMappers.
     """
 
     def __init__(self, engine_dir: Path, device: str = "cuda"):
         self.engine_dir = engine_dir
         self.device = device
-        self._worker: Optional[EngineWorker] = None
+        self._shared: Optional[SharedEngineWorker] = None
+
+    def _get_shared(self) -> SharedEngineWorker:
+        """Get (and start) the shared worker, acquiring a reference on first use."""
+        if self._shared is None:
+            self._shared = acquire_shared_worker(self.engine_dir, self.device)
+            self._shared.start()
+        return self._shared
 
     def _get_worker(self) -> EngineWorker:
-        """Get or create the worker subprocess."""
-        if self._worker is None:
-            self._worker = EngineWorker(self.engine_dir, device=self.device)
-            self._worker.start()
-        return self._worker
+        """Return the underlying shared EngineWorker (kept for compatibility)."""
+        return self._get_shared()._worker
+
+    def _request(self, method: str, **kwargs: Any) -> Any:
+        """Send a request through the shared worker (serialized)."""
+        return self._get_shared().request(method, **kwargs)
 
     def generate_line(
         self,
@@ -46,8 +61,7 @@ class TTSEngine:
         **kwargs: Any,
     ) -> bool:
         """Generate audio for a single line (Stage 5)."""
-        worker = self._get_worker()
-        resp = worker.request(
+        resp = self._request(
             "generate_line",
             text=text,
             voice_path=voice_path,
@@ -73,8 +87,7 @@ class TTSEngine:
         **kwargs: Any,
     ) -> Tuple[bool, Optional[str], float]:
         """Generate a voice sample for a character (Stage 4)."""
-        worker = self._get_worker()
-        resp = worker.request(
+        resp = self._request(
             "generate_voice_sample",
             character_name=character_name,
             description=description,
@@ -87,10 +100,14 @@ class TTSEngine:
         return (True, resp.get("output_file"), resp.get("duration", 0.0))
 
     def shutdown_worker(self) -> None:
-        """Shutdown the worker subprocess."""
-        if self._worker is not None:
-            self._worker.shutdown()
-            self._worker = None
+        """Release this engine's reference to the shared worker.
+
+        The worker subprocess is only actually terminated when the last
+        reference (from any TTSEngine) is released.
+        """
+        if self._shared is not None:
+            release_shared_worker(self.engine_dir, self.device)
+            self._shared = None
 
     @staticmethod
     def _clear_cuda_cache() -> None:

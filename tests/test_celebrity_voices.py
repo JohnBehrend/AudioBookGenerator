@@ -14,6 +14,7 @@ from audiobook_generator.celebrity_voices import (
     generate_celebrity_reference,
     build_celebrity_voice,
     match_celebrity,
+    save_celebrity_voice_as,
     _retry_llm_call,
 )
 from audiobook_generator.testing import write_silence_wav
@@ -293,6 +294,42 @@ class TestGenerateCelebrityReference:
         assert ref is None
 
 
+class TestSaveCelebrityVoiceAs:
+    """Tests for save_celebrity_voice_as — the traceability writer.
+
+    Intended behavior: a celebrity's winning voice is saved under the CELEBRITY's
+    name (``{celebrity}_ref.wav``), not the character's name, so that the
+    ``voices_map`` entry for a character is directly traceable to the celebrity.
+    """
+
+    def _src(self, temp_dir):
+        src = temp_dir / "src.wav"
+        write_silence_wav(src, 22050, 1)
+        return src
+
+    def test_writes_celebrity_named_ref_file(self, temp_dir):
+        src = self._src(temp_dir)
+        dest = save_celebrity_voice_as("Johnny Depp", str(src), str(temp_dir))
+        assert os.path.basename(dest) == "johnny_depp_ref.wav"
+        assert os.path.exists(dest)
+        assert os.path.getsize(dest) == os.path.getsize(src)
+
+    def test_normalizes_whitespace_and_case(self, temp_dir):
+        src = self._src(temp_dir)
+        dest = save_celebrity_voice_as("  IAN MCKELLEN  ", str(src), str(temp_dir))
+        assert os.path.basename(dest) == "ian_mckellen_ref.wav"
+
+    def test_strips_punctuation_and_non_ascii(self, temp_dir):
+        src = self._src(temp_dir)
+        dest = save_celebrity_voice_as("Máry-Ann O'Brien", str(src), str(temp_dir))
+        assert os.path.basename(dest) == "mry-ann_obrien_ref.wav"
+
+    def test_returns_absolute_path_inside_output_dir(self, temp_dir):
+        src = self._src(temp_dir)
+        dest = save_celebrity_voice_as("Test Celebrity", str(src), str(temp_dir))
+        assert os.path.dirname(dest) == str(temp_dir)
+
+
 class TestBuildCelebrityVoice:
     """Tests for build_celebrity_voice with per-video validation."""
 
@@ -500,8 +537,46 @@ class TestBuildCelebrityVoice:
             )
 
         assert ref is not None
-        assert "segment" in ref
         assert meta is not None
+        # Intended behavior: the returned voice is named by the CELEBRITY (not the
+        # character), so voices_map is directly traceable to the celebrity.
+        assert os.path.basename(ref) == "test_celebrity_ref.wav"
+        assert os.path.exists(ref)
+
+    def test_returns_celebrity_named_ref_with_tts_engine(self, temp_dir, mock_llm_client, mock_tts_engine):
+        """TTS-engine path also returns a celebrity-named reference."""
+        seg_path = temp_dir / "test_char_v0_segment.wav"
+        write_silence_wav(seg_path, 22050, 3)
+
+        with patch("audiobook_generator.celebrity_voices.match_celebrity") as mock_match, \
+             patch("audiobook_generator.celebrity_voices.find_and_extract_video_segment") as mock_find, \
+             patch("audiobook_generator.celebrity_voices.validate_celebrity_segment") as mock_val, \
+             patch("audiobook_generator.celebrity_voices.generate_celebrity_reference") as mock_gen:
+            mock_match.return_value = {
+                "celebrity": "Test Celebrity",
+                "reason": "test",
+                "search_query": "Test Celebrity interview",
+            }
+            mock_find.return_value = (str(seg_path), str(seg_path))
+            mock_val.return_value = (True, "passed")
+            ref_path = temp_dir / "test_char_v0_ref.wav"
+            ref_path.touch()
+            mock_gen.return_value = (str(ref_path), 5.0)
+
+            ref, meta = build_celebrity_voice(
+                client=mock_llm_client,
+                model="test",
+                character="test_char",
+                description='{"gender": "male"}',
+                output_dir=str(temp_dir),
+                tts_engine=mock_tts_engine,
+                verbose=False,
+            )
+
+        assert ref is not None
+        assert meta is not None
+        assert os.path.basename(ref) == "test_celebrity_ref.wav"
+        assert os.path.exists(ref)
 
     def test_metadata_contains_required_fields(self, temp_dir, mock_llm_client, mock_tts_engine):
         """Test that metadata dict contains all required fields."""
@@ -539,6 +614,8 @@ class TestBuildCelebrityVoice:
         assert "search_query" in meta
         assert "segment" in meta
         assert "audio_source" in meta
+        # Intended behavior: the returned voice file is named by the celebrity.
+        assert os.path.basename(ref) == "test_celebrity_ref.wav"
 
 
 class TestRetryLLMCall:

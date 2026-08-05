@@ -1828,16 +1828,15 @@ def _save_to_archive(celebrity: str, wav_path: str, verbose: bool = False) -> No
 def save_celebrity_voice_as(celebrity: str, source_wav: str, output_dir: str) -> str:
     """Write a celebrity's winning voice to a celebrity-named file in output_dir.
 
-    Names the file by the *celebrity* (e.g. ``johnny_depp_ref.wav``) rather than
-    by the character, so that ``voices_map`` entries are directly traceable to
-    the celebrity. The ``_ref`` suffix is the marker the pipeline uses to
-    recognize a celebrity reference (and skip Whisper word-matching).
+    Names the file by the *celebrity* (e.g. ``johnny_depp.wav``) rather than by
+    the character, so that ``voices_map`` entries are directly traceable to the
+    celebrity. The character's voice is referenced by the celebrity name.
 
     Returns:
         The path of the written celebrity-named file.
     """
     safe = re.sub(r'[^a-zA-Z0-9 _-]', '', celebrity).strip().replace(' ', '_').lower()
-    dest = str(Path(output_dir) / f"{safe}_ref.wav")
+    dest = str(Path(output_dir) / f"{safe}.wav")
     shutil.copy2(source_wav, dest)
     return dest
 
@@ -1853,7 +1852,7 @@ def cleanup_celebrity_intermediates(
     producing intermediates prefixed ``{character}_v<idx>_`` (extracted speech
     ``*_segment<N>.wav``, generated references ``*_s<N>_ref.wav``, and the
     downloaded ``*_celebrity_voice.wav``). Only the single winning reference is
-    kept — saved as ``{celebrity}_ref.wav`` via ``save_celebrity_voice_as`` and
+    kept — saved as ``{celebrity}.wav`` via ``save_celebrity_voice_as`` and
     archived — while every other per-video file is orphaned and would otherwise
     accumulate in the output dir.
 
@@ -1959,7 +1958,7 @@ def build_celebrity_voice(
     if os.path.exists(archived_path):
         if verbose:
             print(f"    [ARCHIVE] Found pre-existing celebrity voice: {archived_path}")
-        final_path = os.path.join(output_dir, f"{base_character}.wav")
+        final_path = os.path.join(output_dir, f"{safe_name}.wav")
         shutil.copy2(archived_path, final_path)
         metadata = {
             "celebrity": celebrity,

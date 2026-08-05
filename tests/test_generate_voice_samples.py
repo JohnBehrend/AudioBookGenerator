@@ -77,7 +77,7 @@ class TestGenerateVoiceSample:
 
         with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
             mock_gen.return_value = (True, str(temp_dir / "jane.wav"), 1.0)
-            success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
+            success, output_file, duration, is_valid, validation_msg, is_celebrity = generate_voice_sample(
                 character_name="jane",
                 description="A gentle, refined female voice.",
                 voice_mapper=voice_mapper,
@@ -102,7 +102,7 @@ class TestGenerateVoiceSample:
 
         with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
             mock_gen.return_value = (True, str(temp_dir / "jane.wav"), 1.0)
-            success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
+            success, output_file, duration, is_valid, validation_msg, is_celebrity = generate_voice_sample(
                 character_name="jane",
                 description="A gentle, refined female voice.",
                 voice_mapper=voice_mapper,
@@ -122,7 +122,7 @@ class TestGenerateVoiceSample:
 
         with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
             mock_gen.return_value = (False, None, 0)
-            success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
+            success, output_file, duration, is_valid, validation_msg, is_celebrity = generate_voice_sample(
                 character_name="jane",
                 description="A gentle voice.",
                 voice_mapper=voice_mapper,
@@ -149,13 +149,14 @@ class TestGenerateVoiceSample:
             )
 
         assert isinstance(result, tuple)
-        assert len(result) == 5
-        success, output_file, duration, is_valid, validation_msg = result
+        assert len(result) == 6
+        success, output_file, duration, is_valid, validation_msg, is_celebrity = result
         assert isinstance(success, bool)
         assert output_file is None or isinstance(output_file, str)
         assert isinstance(duration, float)
         assert isinstance(is_valid, bool)
         assert isinstance(validation_msg, str)
+        assert isinstance(is_celebrity, bool)
 
 
 class TestGenerateVoiceSamples:
@@ -270,7 +271,7 @@ class TestVoiceMapperIntegration:
 
         with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
             mock_gen.return_value = (True, str(temp_dir / "jane.wav"), 1.0)
-            success, output_file, duration = vm.generate_voice_sample(
+            success, output_file, duration, is_celebrity = vm.generate_voice_sample(
                 character_name="jane",
                 description="A gentle voice.",
                 verbose=False
@@ -291,7 +292,7 @@ class TestVoiceMapperIntegration:
                 continue
             with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
                 mock_gen.return_value = (True, str(temp_dir / f"{char_name}.wav"), 1.0)
-                success, output_file, duration = vm.generate_voice_sample(
+                success, output_file, duration, is_celebrity = vm.generate_voice_sample(
                     character_name=char_name,
                     description=description,
                     verbose=False

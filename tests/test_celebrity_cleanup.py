@@ -3,7 +3,7 @@
 ``build_celebrity_voice`` tries several YouTube videos per character, each
 leaving working files prefixed ``{character}_v<idx>_`` (``*_segment<N>.wav``,
 ``*_s<N>_ref.wav``, ``*_celebrity_voice.wav``). Only the single winning
-reference is kept — saved as ``{celebrity}_ref.wav`` (traceability design, see
+reference is kept — saved as ``{celebrity}.wav`` (traceability design, see
 ``save_celebrity_voice_as``) or ``{character}.wav`` (non-celebrity path); the
 rest are orphaned and were accumulating unbounded (a few GB) in the output dir.
 These tests pin the cleanup helper and verify it is wired into the real
@@ -125,7 +125,7 @@ class TestCleanupWiredIntoPipeline:
         self, temp_dir, mock_llm_client, mock_tts_engine, sample_character_descriptions
     ):
         """Celebrity path: *_v*_* junk removed while the celebrity-named final
-        ref (``{celebrity}_ref.wav``) is preserved — the file voices_map points to."""
+        ref (``{celebrity}.wav``) is preserved — the file voices_map points to."""
         from audiobook_generator.testing import write_silence_wav
 
         # Pre-seed orphaned per-video files for jane, plus junk for another char.

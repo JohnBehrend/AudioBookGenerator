@@ -474,6 +474,30 @@ def generate_tts_for_line(
 # ============================================================================
 
 
+def find_missing_voices(character_descriptions, voice_map, output_dir):
+    """Return described characters lacking a usable voice file.
+
+    A character is considered voiced if it has a ``{char}.wav`` in the output
+    dir OR its ``voice_map`` entry resolves to an existing audio file. The
+    second case matters because celebrity voices may be stored under the
+    celebrity's name (``{celebrity}_ref.wav``) via the traceability feature
+    rather than ``{char}.wav``.
+    """
+    output_dir = str(output_dir)
+    wav_stems = {os.path.basename(f).rsplit('.', 1)[0] for f in Path(output_dir).glob("*.wav")}
+
+    def _has_voice(char):
+        if char in wav_stems:
+            return True
+        mapped = voice_map.get(char)
+        if not mapped:
+            return False
+        path = mapped if os.path.isabs(mapped) else os.path.join(output_dir, os.path.basename(mapped))
+        return os.path.exists(path)
+
+    return {c for c in character_descriptions if not _has_voice(c)}
+
+
 def generate_audiobook_from_chapters(
     chapters: list,
     chapter_maps: Dict[int, Tuple[Dict, Dict]],
@@ -1540,9 +1564,21 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     # Check for existing voice samples (resume mode)
     wav_files = list(state.chapters_dir.glob("*.wav"))
     wav_stems = {f.stem.lower().replace(" ", "") for f in wav_files}
-    # All described characters must have voice files to skip Stage 4
-    char_stems = {c.lower().replace(" ", "") for c in state.character_descriptions}
-    voice_samples_exist = len(state.character_descriptions) > 0 and char_stems.issubset(wav_stems)
+    # All described characters must have voice files to skip Stage 4. A char is
+    # voiced if it has a {char}.wav OR its voice_map entry resolves to an
+    # existing file (celebrity voices may be stored as {celebrity}_ref.wav).
+    def _resume_has_voice(char):
+        if char.lower().replace(" ", "") in wav_stems:
+            return True
+        mapped = state.voice_map.get(char)
+        if not mapped:
+            return False
+        path = mapped if os.path.isabs(mapped) else os.path.join(str(state.output_dir), os.path.basename(mapped))
+        return os.path.exists(path)
+    voice_samples_exist = (
+        len(state.character_descriptions) > 0
+        and all(_resume_has_voice(c) for c in state.character_descriptions)
+    )
 
     if resume and voice_samples_exist:
         if verbose:
@@ -1599,16 +1635,20 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             handler.update(num_characters, desc="Voice samples complete")
             state.load_voice_map()
 
-            # Verify ALL characters have voices before proceeding
-            wav_stems = {os.path.basename(f).rsplit('.', 1)[0] for f in state.chapters_dir.glob("*.wav")}
-            char_stems = {c for c in state.character_descriptions}
-            missing = char_stems - wav_stems
+            # Verify ALL characters have voices before proceeding. A character is
+            # voiced if it has a {char}.wav file OR its voice_map entry resolves to
+            # an existing audio file in the output dir. The latter is required
+            # because celebrity voices may be stored under the celebrity name
+            # ({celebrity}_ref.wav) via the traceability feature, not {char}.wav.
+            missing = find_missing_voices(
+                state.character_descriptions, state.voice_map, str(state.output_dir)
+            )
             if missing:
                 print(f"[ERROR] {len(missing)} characters missing voices: {', '.join(sorted(missing)[:10])}{'...' if len(missing) > 10 else ''}")
                 print(f"Cannot proceed to TTS with missing voices. Exiting.")
                 sys.exit(1)
             if verbose:
-                print(f"[OK] All {len(wav_stems)} characters have voices")
+                print(f"[OK] All {len(state.character_descriptions)} characters have voices")
 
     # Stage 5: Generate Audiobook with progress
     if verbose:

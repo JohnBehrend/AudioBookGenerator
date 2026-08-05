@@ -525,7 +525,7 @@ class VoiceMapper:
                 file_size = os.path.getsize(voice_path)
                 duration_seconds = file_size / (24000 * 2)
                 self.add_voice_path(character_name, voice_path, persist=False)
-                return True, voice_path, duration_seconds
+                return True, voice_path, duration_seconds, True
             elif verbose:
                 print(f"    [DEBUG] Celebrity voice generation failed for '{character_name}'")
 
@@ -553,7 +553,7 @@ class VoiceMapper:
             if verbose:
                 print(f"    [DEBUG] Voice generation failed for '{character_name}'")
 
-        return success, output_file, duration
+        return success, output_file, duration, False
 
     # =========================================================================
     # AUDIOBOOK GENERATION HELPERS

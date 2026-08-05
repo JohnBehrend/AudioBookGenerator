@@ -251,7 +251,7 @@ class TestGenerateVoiceSample:
         vm = VoiceMapper(output_dir=str(temp_dir), engine=mock_tts_engine)
         with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
             mock_gen.return_value = (True, str(temp_dir / "test_char.wav"), 1.0)
-            success, output_file, duration = vm.generate_voice_sample(
+            success, output_file, duration, is_celebrity = vm.generate_voice_sample(
                 character_name="test_char",
                 description="A test voice.",
                 verbose=False

@@ -204,7 +204,7 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
             if voice_mapper.use_celebrity_voices:
                 print(f"    [DEBUG] Celebrity voices enabled - will attempt celebrity matching")
 
-        success, output_file, duration = voice_mapper.generate_voice_sample(
+        success, output_file, duration, is_celebrity = voice_mapper.generate_voice_sample(
             character_name=character_name,
             description=description,
             output_dir=output_dir,
@@ -241,7 +241,7 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
             if not is_valid:
                 print(f"    Warning: Voice validation failed: {validation_msg}")
 
-        return success, output_file, duration, is_valid, validation_msg
+        return success, output_file, duration, is_valid, validation_msg, is_celebrity
 
     except Exception as e:
         print(f"    Error: {e}", file=sys.stderr)
@@ -676,7 +676,7 @@ def generate_voice_samples(
                 for sample_num in range(1, max_attempts + 1):
                     _tmp_name = f"{char_name}.sample{sample_num}"
                     try:
-                        success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
+                        success, output_file, duration, is_valid, validation_msg, is_celebrity = generate_voice_sample(
                             character_name=_tmp_name,
                             description=char_desc,
                             voice_mapper=effective_mapper,
@@ -698,7 +698,7 @@ def generate_voice_samples(
                             print(f"    [DEBUG] Voice file size: {os.path.getsize(output_file) if os.path.exists(output_file) else 'N/A'} bytes")
 
                         # Validate immediately after generation
-                        if use_celebrity_voices and output_file and ("_ref" in output_file or "_fallback" in output_file):
+                        if is_celebrity:
                             if verbose:
                                 print(f"    Sample {sample_num}: Celebrity reference generated, skipping Whisper validation")
                             # Still run ChunkFormer to catch gender mismatches
@@ -712,7 +712,7 @@ def generate_voice_samples(
                                     if verbose:
                                         print(f"    Sample {sample_num}: ChunkFormer FAIL: {cf_msg}")
                                     continue
-                            candidates.append((99, output_file, sample_num, duration))
+                            candidates.append((99, output_file, sample_num, duration, True))
                             break  # First passing celebrity sample is enough
                         try:
                             transcribed, starts, ends = transcribe_audio_with_whisper(vm, output_file)
@@ -727,7 +727,7 @@ def generate_voice_samples(
                                 use_path = cropped_path
                             else:
                                 use_path = output_file
-                            all_attempts.append((matches, use_path, sample_num, duration))
+                            all_attempts.append((matches, use_path, sample_num, duration, False))
                             # Validate against description with ChunkFormer if available
                             if chunkformer_model:
                                 if verbose:
@@ -746,7 +746,7 @@ def generate_voice_samples(
                                         print(f"    Sample {sample_num}: ChunkFormer PASS")
                             if verbose:
                                 print(f"    Sample {sample_num}: {matches}/{len(ref_words)} words ({duration:.1f}s): {transcribed[:80]}...")
-                            candidates.append((matches, use_path, sample_num, duration))
+                            candidates.append((matches, use_path, sample_num, duration, False))
                             break  # First passing sample is enough
                         except Exception as e:
                             if verbose:
@@ -756,8 +756,8 @@ def generate_voice_samples(
                             print(f"    Sample {sample_num}: generation failed ({e})")
                 if candidates:
                     candidates.sort(key=lambda x: x[0], reverse=True)
-                    best_score, best_file, best_att, best_dur = candidates[0]
-                    if use_celebrity_voices and ("_ref" in best_file or "_fallback" in best_file):
+                    best_score, best_file, best_att, best_dur, best_is_celeb = candidates[0]
+                    if best_is_celeb:
                         # Celebrity voice: keep the celebrity-named file (emitted by
                         # save_celebrity_voice_as) so voices_map is directly
                         # traceable to the celebrity; no {char}.wav rename.
@@ -776,8 +776,8 @@ def generate_voice_samples(
                 else:
                     # If all ChunkFormer checks failed, pick the first generated sample anyway
                     if all_attempts:
-                        first_matches, first_file, first_num, first_dur = all_attempts[0]
-                        if use_celebrity_voices and ("_ref" in first_file or "_fallback" in first_file):
+                        first_matches, first_file, first_num, first_dur, first_is_celeb = all_attempts[0]
+                        if first_is_celeb:
                             # Celebrity voice: keep the celebrity-named file.
                             final_path = first_file
                         else:
@@ -845,7 +845,7 @@ def generate_voice_samples(
                 for sample_num in range(1, max_attempts + 1):
                     _tmp_name = f"{char_name}.sample{sample_num}"
                     try:
-                        success, output_file, duration, is_valid, validation_msg = generate_voice_sample(
+                        success, output_file, duration, is_valid, validation_msg, is_celebrity = generate_voice_sample(
                             character_name=_tmp_name,
                             description=char_desc,
                             voice_mapper=_no_celeb_mapper,
@@ -906,7 +906,7 @@ def generate_voice_samples(
                         if verbose:
                             print(f"  [{failed_count}/{len(failed)}] {char_name}")
                         _fallback_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=fallback_engine_name)
-                        _success, _out_file, _duration = _fallback_mapper.generate_voice_sample(
+                        _success, _out_file, _duration, _ = _fallback_mapper.generate_voice_sample(
                             character_name=char_name,
                             description=char_desc,
                             output_dir=output_dir,

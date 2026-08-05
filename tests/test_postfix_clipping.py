@@ -405,7 +405,7 @@ class TestEngineInterfaceContract:
         vm = VoiceMapper(output_dir="/tmp", device="cpu", tts_engine="test")
         vm.set_engine(mock_engine)
 
-        success, output_file, duration = vm.generate_voice_sample(
+        success, output_file, duration, is_celebrity = vm.generate_voice_sample(
             character_name="test",
             description="male, young",
             output_dir="/tmp",
@@ -460,7 +460,7 @@ class TestRealVoiceGeneration:
         output_dir.mkdir()
 
         vm = VoiceMapper(output_dir=str(output_dir), device="cuda:0", tts_engine="omni")
-        success, output_file, duration = vm.generate_voice_sample(
+        success, output_file, duration, is_celebrity = vm.generate_voice_sample(
             character_name="test_narrator",
             description="male, middle-aged, moderate pitch",
             output_dir=str(output_dir),
@@ -493,7 +493,7 @@ class TestRealVoiceGeneration:
         output_dir.mkdir()
 
         vm = VoiceMapper(output_dir=str(output_dir), device="cuda:0", tts_engine="dramabox")
-        success, output_file, duration = vm.generate_voice_sample(
+        success, output_file, duration, is_celebrity = vm.generate_voice_sample(
             character_name="test_narrator",
             description="male, middle-aged, moderate pitch",
             output_dir=str(output_dir),

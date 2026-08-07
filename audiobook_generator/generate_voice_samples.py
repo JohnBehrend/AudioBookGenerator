@@ -76,6 +76,22 @@ def _word_match_count(ref_words, transcribed_lower):
     return sum(1 for w in ref_words if re.search(r'\b' + re.escape(w) + r'\b', transcribed_lower))
 
 
+def _on_reference_rate(ref_words, transcribed_words):
+    """Fraction of the clip's transcribed words that are in the reference.
+
+    This grades *whether what the clip said is the reference* (on-reference),
+    not whether the clip *covered* the whole reference. A clip that speaks the
+    first part of the reference correctly and then runs out of time (H3's ~15s
+    cap) is scored highly, because we do not grade it for words it did not have
+    time to speak.
+    """
+    if not transcribed_words:
+        return 0.0
+    rs = set(w.strip("!\"',.").lower() for w in ref_words)
+    matched = sum(1 for w in transcribed_words if w.strip("!\"',.").lower() in rs)
+    return matched / len(transcribed_words)
+
+
 def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_model, verbose: bool = False, skip_age: bool = False) -> Tuple[bool, str]:
     """Validate voice matches description using ChunkFormer model.
 
@@ -327,11 +343,11 @@ def generate_voice_samples(
             if verbose:
                 print("Added narrator voice to generation list (fallback voice)")
 
-        # Pre-compute reference words for scoring, skipping first 2 sentences (throwaway prefix for TTS clipping)
-        import re as _re
-        _sentences = _re.split(r'[.!?]+', DEFAULTS["static_voice_text"])
-        _validation_text = ' '.join(s.strip() for s in _sentences[2:] if s.strip())
-        ref_words = [w.strip("!\"',.").lower() for w in _validation_text.split() if w.strip("!\"',.").isalpha()]
+        # Pre-compute reference words for scoring. Use the FULL static text: H3
+        # (and other engines) speak it from the start, and grading is by
+        # on-reference rate (is what the clip said correct), so we never
+        # penalize a clip for reference words it did not have time to speak.
+        ref_words = [w.strip("!\"',.").lower() for w in DEFAULTS["static_voice_text"].split() if w.strip("!\"',.").isalpha()]
 
         # Pre-load whisper validation model once for all samples
         from .utils import transcribe_audio_with_whisper, crop_to_ref_text, get_chunkformer_model
@@ -717,10 +733,15 @@ def generate_voice_samples(
                         try:
                             transcribed, starts, ends = transcribe_audio_with_whisper(vm, output_file)
                             transcribed_words = transcribed.split()
+                            # Grade by on-reference rate: is what the clip SAID the
+                            # reference? This does not penalize the clip for words
+                            # it did not have time to speak (e.g. H3's ~15s cap
+                            # cuts the tail of a longer static text).
+                            on_rate = _on_reference_rate(ref_words, transcribed_words)
                             matches = _word_match_count(ref_words, transcribed.lower())
-                            if matches < len(ref_words) * 0.8:
+                            if on_rate < 0.8 or matches < 3:
                                 if verbose:
-                                    print(f"    Sample {sample_num}: {matches}/{len(ref_words)} words (too few): {transcribed[:80]}...")
+                                    print(f"    Sample {sample_num}: on-ref {on_rate:.2f}, {matches}/{len(ref_words)} words (too few): {transcribed[:80]}...")
                                 continue
                             cropped_path = output_file + ".cropped.wav"
                             if crop_to_ref_text(output_file, cropped_path, ref_words, transcribed_words, starts, ends, verbose=False):
@@ -745,7 +766,7 @@ def generate_voice_samples(
                                     if verbose:
                                         print(f"    Sample {sample_num}: ChunkFormer PASS")
                             if verbose:
-                                print(f"    Sample {sample_num}: {matches}/{len(ref_words)} words ({duration:.1f}s): {transcribed[:80]}...")
+                                print(f"    Sample {sample_num}: on-ref {on_rate:.2f}, {matches}/{len(ref_words)} words ({duration:.1f}s): {transcribed[:80]}...")
                             candidates.append((matches, use_path, sample_num, duration, False))
                             break  # First passing sample is enough
                         except Exception as e:
@@ -861,14 +882,15 @@ def generate_voice_samples(
                             continue
                         try:
                             transcribed, starts, ends = transcribe_audio_with_whisper(vm, output_file)
+                            on_rate = _on_reference_rate(ref_words, transcribed.lower().split())
                             matches = _word_match_count(ref_words, transcribed.lower())
-                            if matches >= len(ref_words) * 0.8:
+                            if on_rate >= 0.8 and matches >= 3:
                                 shutil.copy2(output_file, voice_path)
                                 _normalize_loudness(voice_path)
                                 generated[char_name] = voice_path
                                 save_voices_map()
                                 if verbose:
-                                    print(f"    [FALLBACK] {char_name}: succeeded (sample {sample_num}, {matches}/{len(ref_words)} words)")
+                                    print(f"    [FALLBACK] {char_name}: succeeded (sample {sample_num}, on-ref {on_rate:.2f}, {matches} words)")
                                 _found = True
                                 break
                         except Exception as e:

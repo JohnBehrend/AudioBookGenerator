@@ -62,7 +62,7 @@ TEST_DESCRIPTIONS = {
 TEST_TEXT = "Hello, world."
 
 # Engines that require special setup or large models
-OPTIONAL_ENGINES = set()
+OPTIONAL_ENGINES = {"minimax_h3"}
 
 # Engines that are clone-only (no voice sample generation from description)
 # zonos2 (Zyphra Zonos) is a zero-shot cloning TTS: it can only speak given a

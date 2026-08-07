@@ -16,6 +16,18 @@ from audiobook_generator.utils import (
 from audiobook_generator.testing import write_silence_wav
 
 
+def _write_tone_wav(path, sample_rate: int = 22050, duration: float = 2.0):
+    """Write a non-silent WAV (440 Hz tone) so the crop has speech to keep."""
+    import numpy as np
+    import torch
+    import torchaudio
+
+    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+    audio = (0.4 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    torchaudio.save(str(path), torch.from_numpy(audio).unsqueeze(0), sample_rate)
+    return path
+
+
 class TestDistillString:
     """Test distill_string function for text comparison."""
 
@@ -375,24 +387,19 @@ class TestTranscribeAudioForRefText:
 class TestCropToRefText:
     """Test crop_to_ref_text function for voice sample cropping."""
 
-    def test_crops_at_first_ref_word_not_prefix(self):
-        """Test that crop starts at first ref word, not at prefix garbage."""
+    def test_keeps_full_speech_span(self):
+        """Crop keeps the full spoken span (trims only leading/trailing silence)."""
         import tempfile
         import os
 
         from audiobook_generator.audio import crop_to_ref_text
 
-        # Create a 5 second silence audio file
         with tempfile.TemporaryDirectory() as tmpdir:
             audio_path = os.path.join(tmpdir, "test.wav")
             output_path = os.path.join(tmpdir, "cropped.wav")
 
-            sample_rate = 22050
-            duration = 5.0
-            write_silence_wav(audio_path, sample_rate, duration)
+            _write_tone_wav(audio_path, duration=3.0)
 
-            # Simulate transcription with prefix garbage before ref words
-            # "garbage" "noise" then "after" "all" "these" "years" (ref words)
             transcribed_words = ["garbage", "noise", "after", "all", "these", "years"]
             start_times = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
             end_times = [0.4, 0.9, 1.4, 1.9, 2.4, 2.9]
@@ -407,8 +414,14 @@ class TestCropToRefText:
             assert result is True
             assert os.path.exists(output_path)
 
-    def test_crops_with_small_start_buffer(self):
-        """Test that start buffer is small (200ms) to avoid prefix."""
+            # The whole tone (3s) is non-silent, so the crop must keep ~3s,
+            # NOT crop down to the matched-reference-word span.
+            import pydub
+            seg = pydub.AudioSegment.from_wav(output_path)
+            assert len(seg) > 2500  # ~3s, not ~1s
+
+    def test_keeps_full_duration_no_aggressive_trim(self):
+        """Crop preserves the full clip; it does not trim to a small ref span."""
         import tempfile
         import os
 
@@ -418,11 +431,8 @@ class TestCropToRefText:
             audio_path = os.path.join(tmpdir, "test.wav")
             output_path = os.path.join(tmpdir, "cropped.wav")
 
-            sample_rate = 22050
-            duration = 5.0
-            write_silence_wav(audio_path, sample_rate, duration)
+            _write_tone_wav(audio_path, duration=2.0)
 
-            # First word is a ref word
             transcribed_words = ["after", "all", "these", "years"]
             start_times = [1.0, 1.5, 2.0, 2.5]
             end_times = [1.4, 1.9, 2.4, 2.9]
@@ -437,11 +447,10 @@ class TestCropToRefText:
             assert result is True
             assert os.path.exists(output_path)
 
-            # Verify crop starts near the first ref word (with small buffer)
             import pydub
             seg = pydub.AudioSegment.from_wav(output_path)
-            # Should be around 800ms (1000ms - 200ms buffer)
-            assert len(seg) > 0
+            # Full 2s tone preserved (not trimmed to ~0.8s ref span).
+            assert len(seg) > 1500
 
     def test_returns_false_for_insufficient_matches(self):
         """Test that crop returns False when not enough ref words match."""
@@ -472,8 +481,8 @@ class TestCropToRefText:
 
             assert result is False
 
-    def test_handles_prefix_garbage_before_ref_words(self):
-        """Test realistic case: TTS prefix garbage followed by ref words."""
+    def test_keeps_all_speech_not_just_ref_span(self):
+        """Crop keeps the entire spoken clip, not only the ref-word window."""
         import tempfile
         import os
 
@@ -483,11 +492,8 @@ class TestCropToRefText:
             audio_path = os.path.join(tmpdir, "test.wav")
             output_path = os.path.join(tmpdir, "cropped.wav")
 
-            sample_rate = 22050
-            duration = 10.0
-            write_silence_wav(audio_path, sample_rate, duration)
+            _write_tone_wav(audio_path, duration=3.0)
 
-            # Simulate: prefix garbage -> ref words -> postfix garbage
             transcribed_words = [
                 "speaker", "one",  # prefix garbage
                 "after", "all", "these", "years", "its", "finally", "here",  # ref words
@@ -506,11 +512,10 @@ class TestCropToRefText:
             assert result is True
             assert os.path.exists(output_path)
 
-            # Verify crop starts at "after" (index 2), not at "speaker" (index 0)
             import pydub
             seg = pydub.AudioSegment.from_wav(output_path)
-            # Should start around 900ms (1.0s - 200ms buffer)
-            assert len(seg) > 0
+            # Full 3s tone kept despite ref words occupying only the middle.
+            assert len(seg) > 2500
 
 
 class TestCleanTextForTts:

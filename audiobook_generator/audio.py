@@ -468,12 +468,12 @@ def remove_long_silences(audio_path: str, output_path: str, silence_threshold_db
 
 
 def crop_to_ref_text(audio_path: str, output_path: str, ref_words: List[str], transcribed_words: List[str], start_times: List[float], end_times: List[float], verbose: bool = False) -> bool:
-    """Crop audio to the span where reference words are spoken.
+    """Crop audio to its full spoken span, trimming only leading/trailing silence.
 
-    Uses Whisper word-level timestamps to find the contiguous span of
-    reference words in the transcription, then crops the audio to that range.
-    Ensures the crop starts at a valid reference word, not at garbled prefix.
-    Also removes long silent pauses from the cropped audio.
+    Keeps all real speech (preserving natural pacing between words) and just
+    removes silent padding at the start/end of the clip. The caller gates the
+    sample on a high reference word-match first, so the clip is essentially the
+    reference speech and there is no garbled prefix to excise.
 
     Args:
         audio_path: Path to the source audio file (.wav)
@@ -497,79 +497,31 @@ def crop_to_ref_text(audio_path: str, output_path: str, ref_words: List[str], tr
     except Exception:
         return False
 
-    ref_set = set(ref_words)
-    best_start = 0
-    best_end = 0
-    best_len = 0
-    max_gap = 1
+    # The caller has already gated this sample on >=80% word match, so the clip
+    # is essentially the reference speech. Crop to the FULL speech span: trim
+    # only leading/trailing silence (preserving natural pacing and all spoken
+    # content) rather than the matched-reference-word span, which could discard
+    # large amounts of valid speech (e.g. H3's ~14s talking-head clips were
+    # being cut down to ~6s).
+    from pydub.silence import detect_leading_silence
 
-    for i in range(len(transcribed_words)):
-        gap = 0
-        match_count = 0
-        for j in range(i, len(transcribed_words)):
-            if transcribed_words[j] in ref_set:
-                match_count += 1
-                gap = 0
-            else:
-                gap += 1
-                if gap > max_gap:
-                    break
-        if match_count > best_len:
-            best_len = match_count
-            best_start = i
-            best_end = j + 1
+    def _trim_edges(s: "pydub.AudioSegment") -> "pydub.AudioSegment":
+        start_ms = detect_leading_silence(s, silence_threshold=-40)
+        end_ms = detect_leading_silence(s.reverse(), silence_threshold=-40)
+        # Keep a small buffer so the first/last phoneme isn't clipped.
+        start_ms = max(0, start_ms - 150)
+        end_ms = max(0, end_ms - 150)
+        return s[start_ms: len(s) - end_ms]
 
-    if best_len < 3:
+    try:
+        cropped = _trim_edges(seg)
+    except Exception:
         return False
 
-    # Find the first word in the best span that is actually a reference word
-    # This ensures we don't start at garbled prefix text
-    actual_start = best_start
-    for k in range(best_start, best_end):
-        if transcribed_words[k] in ref_set:
-            actual_start = k
-            break
+    if len(cropped) < 1000:  # <1s of speech
+        return False
 
-    # Small buffer at start (200ms) to avoid clipping the beginning of the word
-    # Large buffer at end (1000ms) to ensure we capture the full word
-    start_buffer_ms = 200
-    end_buffer_ms = 1000
-
-    crop_start_ms = max(0, int(start_times[actual_start] * 1000) - start_buffer_ms)
-    crop_end_ms = min(len(seg), int(end_times[best_end - 1] * 1000) + end_buffer_ms)
-
-    if verbose:
-        print(f"  [Crop] Start at '{transcribed_words[actual_start]}' ({start_times[actual_start]:.2f}s), end at '{transcribed_words[best_end-1]}' ({end_times[best_end-1]:.2f}s)")
-
-    cropped = seg[crop_start_ms:crop_end_ms]
-    
-    # Remove long silences from cropped audio
-    import tempfile
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp_path = tmp.name
-    cropped.export(tmp_path, format="wav")
-    
-    silence_removed_path = output_path.replace(".wav", "_silence_removed.wav")
-    if remove_long_silences(tmp_path, silence_removed_path, verbose=verbose):
-        # Use the silence-removed version
-        import shutil
-        shutil.copy2(silence_removed_path, output_path)
-        try:
-            import os
-            os.remove(silence_removed_path)
-        except OSError:
-            pass
-    else:
-        # Fall back to original cropped version
-        cropped.export(output_path, format="wav")
-    
-    # Clean up temp file
-    try:
-        import os
-        os.remove(tmp_path)
-    except OSError:
-        pass
-    
+    cropped.export(output_path, format="wav")
     return True
 
 

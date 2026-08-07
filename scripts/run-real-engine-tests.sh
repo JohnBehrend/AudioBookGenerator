@@ -43,6 +43,15 @@ for engine in "${ENGINES[@]}"; do
   # VRAM is released when this process exits (before the next engine starts).
   uv run pytest tests/test_real_engines.py --run-slow --run-generate \
     -q -p no:cacheprovider -k "$engine"
+
+  # minimax_h3 is covered by its own heavy test (generate -> free VRAM ->
+  # Whisper validate), which needs a live ComfyUI server on the same GPU.
+  # It self-skips if ComfyUI is unreachable.
+  if [ "$engine" == "minimax_h3" ]; then
+    echo "=== Heavy H3 test: $engine ==="
+    uv run pytest tests/test_minimax_h3_heavy.py --run-slow --run-generate \
+      -q -p no:cacheprovider
+  fi
 done
 
 echo

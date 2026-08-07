@@ -201,7 +201,7 @@ def validate() -> list[str]:
         from tts import list_engines
         valid_engines = list_engines()
     except ImportError:
-        valid_engines = ["omni", "moss", "vox", "echo-tts", "dramabox", "miso-tts"]
+        valid_engines = ["omni", "moss", "vox", "echo-tts", "dramabox", "miso-tts", "minimax_h3"]
 
     if AUDIO_SETTINGS["default_tts_engine"] not in valid_engines:
         warnings.append(

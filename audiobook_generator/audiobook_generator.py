@@ -1841,7 +1841,7 @@ def main():
     parser.add_argument("--saved-temp-dir", help="Path to saved temp directory to restore from")
     parser.add_argument("--tts-engine", choices=["moss", "echo-tts", "omni", "vox", "dramabox"], help="TTS engine to use")
     parser.add_argument("--model", default=None, help="LLM model name (e.g., coder-model)")
-    parser.add_argument("--voice-engine", choices=["omni", "vox", "dramabox"], default="dramabox", help="Voice engine for character descriptions")
+    parser.add_argument("--voice-engine", choices=["omni", "vox", "dramabox", "minimax_h3"], default="dramabox", help="Voice engine for character descriptions")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     parser.add_argument("--resume", nargs="?", const=True, default=None, metavar="DIR",
                         help="Resume from existing output directory (use --output-dir or specify DIR)")

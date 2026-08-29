@@ -11,6 +11,9 @@ read_wot1.txt
 chapters/
 celebrity_voices_archive/
 
+# Operational run recipes (contain local/private paths); keep out of git
+*_cmd.txt
+
 # Never commit book EPUBs except the Pride and Prejudice test fixture
 *.epub
 !**/test_pride_and_prejudice.epub

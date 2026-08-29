@@ -32,6 +32,18 @@ def _archive_dir() -> str:
     return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "celebrity_voices_archive")
 
 
+def _ydl_cookie_opts() -> dict:
+    """Return yt-dlp cookie options to avoid YouTube's 401/403 sign-in wall.
+
+    Prefers an exported cookies.txt file if the YTDLP_COOKIES_FILE env var is
+    set and exists; otherwise falls back to the desktop Firefox session cookies.
+    """
+    cookies_file = os.environ.get("YTDLP_COOKIES_FILE", "")
+    if cookies_file and os.path.exists(cookies_file):
+        return {"cookies": cookies_file}
+    return {"cookiesfrombrowser": ("firefox",)}
+
+
 def _retry_llm_call(func: Callable, max_retries: int = 3, backoff: float = 1.0, verbose: bool = False) -> Any:
     """Retry an LLM call with exponential backoff on connection errors.
 

@@ -35,7 +35,7 @@ LLM_SETTINGS = {
 AUDIO_SETTINGS = {
     "default_device": "cuda:0",
     "alt_device": "cuda:1",
-    "default_tts_engine": "omni",
+    "default_tts_engine": "breeze",
     "supported_audio_extensions": [".wav", ".mp3", ".flac"],
     "gradio_port": 7860,
 }
@@ -201,7 +201,7 @@ def validate() -> list[str]:
         from tts import list_engines
         valid_engines = list_engines()
     except ImportError:
-        valid_engines = ["omni", "moss", "vox", "echo-tts", "dramabox", "miso-tts", "minimax_h3"]
+        valid_engines = ["omni", "moss", "vox", "echo-tts", "dramabox", "miso-tts", "minimax_h3", "breeze"]
 
     if AUDIO_SETTINGS["default_tts_engine"] not in valid_engines:
         warnings.append(

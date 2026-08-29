@@ -9,6 +9,8 @@ from audiobook_generator.pipeline import (
     refine_clip_end_with_energy,
     prepare_script_for_tts,
     add_postfix,
+    detect_onset_tail_penalty,
+    uncover_speech_stats,
 )
 from audiobook_generator.audiobook_generator import (
     _tts_generate_only,
@@ -158,16 +160,118 @@ class TestClippingAccuracy:
         # Returns None because clip_start (0) >= clip_end (0) triggers guard
         assert result is None
 
-    def test_no_postfix_falls_back_to_last_valid_token(self):
-        """When postfix token not found, use last_valid_token for clipping."""
+    def test_no_postfix_keeps_full_audio_end(self):
+        """When the postfix token is not found, do NOT clip the end.
+
+        Clipping at Whisper's (under-reported) last-valid-token end time cut the
+        final word's tail (e.g. "tank" -> "t-"). Instead the end is kept intact
+        (end=None) so the final content word is preserved.
+        """
         segments = ["hello", "world", "foo"]
         start_times = [0.0, 0.5, 1.0]
         end_times = [0.4, 0.9, 1.4]
 
-        result = calculate_clip_points(segments, start_times, end_times, "notfound", "world")
+        result = calculate_clip_points(
+            segments, start_times, end_times, "notfound", "world",
+            input_tokens=["hello", "world", "foo"],
+        )
         assert result is not None
         _, end_clip = result
-        assert end_clip == 900.0
+        # End is None -> keep full audio (never cut the final word).
+        assert end_clip is None
+
+
+class TestOnsetTailPenalty:
+    """Penalty drives retries for garbled onset / truncated tail."""
+
+    def test_clean_line_no_penalty(self):
+        text = "Rael could only nod in agreement and wait with the others"
+        det = "Rael could only nod in agreement and wait with the others and also with you"
+        assert detect_onset_tail_penalty(text, det, "and also with you") == 0.0
+
+    def test_truncated_tail_penalty(self):
+        # "tank" clipped to "t-" -> final word missing -> penalty
+        text = "it was actually perfect for a tank and also with you"
+        det = "it was actually perfect for a t and also with you"
+        p = detect_onset_tail_penalty(text, det, "and also with you")
+        assert p >= 0.5
+
+    def test_garbled_onset_not_penalized(self):
+        # first word mispronounced (e.g. "Rael"->"rail") is NOT penalized: the
+        # artifact is consistent, so retrying does not help (only wastes GPU).
+        text = "Rael could only nod in agreement and wait with the others"
+        det = "rail could only nod in agreement and wait with the others"
+        assert detect_onset_tail_penalty(text, det, "") == 0.0
+
+    def test_extra_onset_word_not_penalized(self):
+        text = "Twice more they attacked in large numbers"
+        det = "yet twice more they attacked in large numbers"
+        assert detect_onset_tail_penalty(text, det, "") == 0.0
+
+    def test_fuzzy_mishearing_no_false_alarm(self):
+        # "Cole" heard as "coal" is close enough -> no penalty
+        text = "Cole shouted so the others could hear him"
+        det = "coal shouted so the others could hear him"
+        assert detect_onset_tail_penalty(text, det, "") == 0.0
+
+    def test_tail_penalty_only(self):
+        # only the truncated tail contributes now
+        text = "Twice more they attacked and would be lucky to return before sundown"
+        det = "yet twice more they attacked and would be lucky to return before"
+        p = detect_onset_tail_penalty(text, det, "")
+        assert 0.0 < p < 0.6
+
+
+class TestUncoverSpeechStats:
+    """Detect non-silent audio with no covering Whisper word."""
+
+    @staticmethod
+    def _make_wav(path, regions):
+        """regions: list of (kind, ms); kind in {'tone','sil'}."""
+        import numpy as np
+        import wave
+        sr = 16000
+        def tone(ms):
+            t = np.arange(int(sr * ms / 1000))
+            return (0.3 * np.sin(2 * np.pi * 440 * t / sr) * 32767).astype(np.int16)
+        def silence(ms):
+            return np.zeros(int(sr * ms / 1000), dtype=np.int16)
+        data = np.concatenate([(tone if k == "tone" else silence)(ms) for k, ms in regions])
+        with wave.open(str(path), "w") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sr)
+            wf.writeframes(data.tobytes())
+
+    def test_measures_uncovered_tail(self, tmp_path):
+        # covered word 0-800ms, uncovered garbage 900-1200ms
+        wav = tmp_path / "t.wav"
+        self._make_wav(wav, [("tone", 800), ("sil", 100), ("tone", 300)])
+        starts = [0.0]
+        ends = [0.8]
+        uncovered, last_covered = uncover_speech_stats(str(wav), starts, ends)
+        assert last_covered is not None
+        assert last_covered >= 800  # end of covered region
+        assert uncovered >= 290     # ~300ms uncovered tail (minus silence boundary)
+
+    def test_no_uncovered_when_all_covered(self, tmp_path):
+        wav = tmp_path / "t.wav"
+        self._make_wav(wav, [("tone", 800), ("sil", 200), ("tone", 600)])
+        starts = [0.0, 1.0]
+        ends = [0.8, 1.6]
+        uncovered, last_covered = uncover_speech_stats(str(wav), starts, ends)
+        assert uncovered == 0
+        assert last_covered >= 1600
+
+    def test_uncovered_in_middle(self, tmp_path):
+        # covered 0-500, uncovered 600-750, covered 900-1300 (wide silences)
+        wav = tmp_path / "t.wav"
+        self._make_wav(wav, [("tone", 500), ("sil", 100), ("tone", 150), ("sil", 150), ("tone", 400)])
+        starts = [0.0, 0.9]
+        ends = [0.5, 1.3]
+        uncovered, last_covered = uncover_speech_stats(str(wav), starts, ends)
+        assert uncovered >= 140   # ~150ms middle artifact
+        assert last_covered >= 1300
 
 
 class TestRefineClipEndWithEnergy:

@@ -1,0 +1,3 @@
+# Local model checkpoint (downloaded from BreezeBlue/Breeze-TTS-2)
+checkpoint/
+.cache/

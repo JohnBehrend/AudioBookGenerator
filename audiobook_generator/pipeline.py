@@ -319,7 +319,11 @@ def calculate_clip_points(
                         print(f"PREFIX FALLBACK CLIPPING at '{seg}' ({start_times[i]:.2f}s)")
                     break
 
-    # Find end clip point: before postfix or at last valid token
+    # Find end clip point: clip at the postfix onset so the final content word
+    # is preserved. If the postfix is NOT detected, do NOT clip the end at all:
+    # clipping at Whisper's (under-reported) end time / last-valid-token cuts
+    # off the final word's tail (e.g. "tank" -> "t-"). Keep the full audio end
+    # in that case (the caller handles an end of None by using full duration).
     clip_end_ms = None
 
     if postfix_detect_token and postfix_detect_token in norm_segments:
@@ -346,26 +350,17 @@ def calculate_clip_points(
         except (ValueError, IndexError):
             pass
 
-    if clip_end_ms is None and last_valid_token and last_valid_token in norm_segments:
-        try:
-            lastvalid_index = len(norm_segments) - 1 - norm_segments[::-1].index(last_valid_token)
-            clip_end_s = end_times[lastvalid_index]
-            clip_end_ms = clip_end_s * 1000
-
-            if verbose:
-                print(f"POSTFIX UN-DETECTED LAST VALID CLIPPING TO {last_valid_token} {clip_end_s}")
-        except (ValueError, IndexError):
-            pass
-
     # If neither start nor end clipping is needed
     if not start_found and clip_end_ms is None:
         if verbose:
             print("No clipping needed")
         return None
 
-    # If only start clipping is needed, use full audio length
+    # Postfix not detected -> keep the full audio end (never cut content).
     if clip_end_ms is None:
-        clip_end_ms = end_times[-1] * 1000
+        if verbose:
+            print("POSTFIX UN-DETECTED: keeping full audio end (no end clip)")
+        return clip_start_ms, None
 
     # Guard: if start >= end, the content is empty or garbled
     if clip_start_ms >= clip_end_ms:
@@ -557,6 +552,117 @@ def should_retry(
         True if another attempt should be made
     """
     return ratio < min_ratio and retries < max_retries
+
+
+def detect_onset_tail_penalty(
+    input_string: str,
+    detected_string: str,
+    postfix: str = "",
+) -> float:
+    """Return a ratio penalty for garbled line onset or truncated tail.
+
+    The TTS clone frequently (a) garbles the FIRST word at line onset (e.g.
+    "Rael" spoken as "rail"/"raul", or an extra "yet" prepended) and (b)
+    truncates / has its final word clipped off. These problems barely lower the
+    word-match ratio, so the line is accepted as-is. This function returns a
+    penalty large enough to push the ratio below ``MIN_RATIO_THRESHOLD`` so the
+    caller's retry loop regenerates the line with a fresh seed (keeping the best
+    attempt). Fuzzy matching avoids false alarms from Whisper mis-transcription.
+
+    Args:
+        input_string: Distilled expected script (with postfix, if any).
+        detected_string: Distilled Whisper transcription.
+        postfix: The distilled postfix string, or "" if none.
+
+    Returns:
+        A penalty in [0, 1] to subtract from the ratio.
+    """
+    from difflib import SequenceMatcher
+    from audiobook_generator.utils import distill_string
+
+    def words(s: str) -> List[str]:
+        return [w for w in distill_string(s).split() if w]
+
+    def fuzzy(a: str, b: str) -> float:
+        if not a or not b:
+            return 0.0
+        return SequenceMatcher(None, a, b).ratio()
+
+    exp = words(input_string)
+    det = words(detected_string)
+    if postfix:
+        pf = words(postfix)
+        if pf and exp[-len(pf):] == pf:
+            exp = exp[:-len(pf)]
+        if pf and det[-len(pf):] == pf:
+            det = det[:-len(pf)]
+
+    if not exp or not det:
+        return 0.0
+
+    penalty = 0.0
+
+    # Truncated tail: the final expected content word must appear near the end.
+    # (The garbled-line-onset case is deliberately NOT penalized here: the TTS
+    # clone mispronounces the first word consistently, so regenerating with a
+    # fresh seed does not fix it and only wastes GPU. See detect_audio_glitches.)
+    last_exp = exp[-1]
+    tail_win = det[-min(6, len(det)):]
+    if not any(fuzzy(w, last_exp) >= 0.8 for w in tail_win):
+        penalty += 0.5
+
+    return penalty
+
+
+def uncover_speech_stats(
+    audio_path: str,
+    starts: List[float],
+    ends: List[float],
+    min_silence_len: int = 60,
+    silence_thresh: int = -32,
+) -> Tuple[int, Optional[int]]:
+    """Measure "spoken but no words detected" audio in a line.
+
+    Whisper occasionally fails to turn real speech into words (a garbled "teh"
+    fragment, a cut-off word, a residual postfix). Such audio is non-silent but
+    is NOT covered by any transcribed word interval. This finds those regions.
+
+    A stricter ``silence_thresh`` (-32 dB) is used so light ambient/background
+    noise (wind, room tone) is treated as silence rather than false "speech".
+
+    Args:
+        audio_path: Path to the WAV file.
+        starts: Whisper word start times (seconds).
+        ends: Whisper word end times (seconds).
+        min_silence_len: Minimum silence (ms) to split non-silent regions.
+        silence_thresh: Silence threshold in dBFS.
+
+    Returns:
+        Tuple of:
+            uncovered_ms: total ms of non-silent audio with no covering word.
+            last_covered_end_ms: end (ms) of the last non-silent region that IS
+                covered by a word (the true tail of the final spoken word, by
+                energy rather than Whisper's under-reported end time), or None.
+    """
+    from pydub import AudioSegment
+    from pydub.silence import detect_nonsilent
+
+    if not starts:
+        return 0, None
+
+    audio = AudioSegment.from_wav(audio_path)
+    regions = detect_nonsilent(audio, min_silence_len=min_silence_len, silence_thresh=silence_thresh)
+    uncovered_ms = 0
+    last_covered_end_ms = None
+    for s, e in regions:  # s, e in milliseconds
+        s_s, e_s = s / 1000.0, e / 1000.0
+        covered = any(s_s < end and e_s > start for start, end in zip(starts, ends))
+        if covered:
+            if last_covered_end_ms is None or e > last_covered_end_ms:
+                last_covered_end_ms = e
+        else:
+            uncovered_ms += int(e - s)
+    return uncovered_ms, last_covered_end_ms
 
 
 def generate_output_filename(

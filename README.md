@@ -43,7 +43,7 @@ uv run python audiobook_generator.py <epub_file> [OPTIONS]
 # --verbose, -v        Print verbose output
 # --api-key KEY        LLM API key
 # --port PORT          LLM port
-# --tts-engine ENGINE  TTS engine: omni (default), dramabox, or vox
+# --tts-engine ENGINE  TTS engine: breeze (default), omni, dramabox, or vox
 # --voice-engine ENGINE  Voice generation engine: dramabox (default), omni, or vox
 # --device DEVICE      CUDA device (default: cuda)
 # --num-llm-attempts N Number of LLM attempts (default: 2)
@@ -101,7 +101,8 @@ uv sync
 The pipeline supports multiple TTS engines in the `engines/` directory. Each engine is self-contained with its own `main.py` (glue code), `pyproject.toml`, and isolated virtual environment.
 
 **Available engines:**
-- **Omni** (`omni`) - Default TTS engine, downloads model from HuggingFace at runtime
+- **Breeze-TTS-2** (`breeze`) - Default TTS engine (voice design + voice clone), downloads checkpoint from HuggingFace at runtime
+- **Omni** (`omni`) - OmniVoice engine, downloads model from HuggingFace at runtime
 - **Dramabox** (`dramabox`) - Default voice generation engine, uses DramaBox as a git submodule
 
 **Engine setup:**

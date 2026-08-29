@@ -107,7 +107,7 @@ def _set_seed(seed: int) -> None:
 class TTSConfig:
     """Configuration for TTS generation."""
     device: str = "cuda"
-    tts_engine: str = "omni"
+    tts_engine: str = AUDIO_SETTINGS["default_tts_engine"]
     output_dir: str = ""
     short_text_postfix: Optional[str] = DEFAULTS["short_text_postfix"]
     validation_model: Optional[Any] = None
@@ -331,6 +331,29 @@ def _validate_and_clip_audio(
         postfix_for_score = distill_string(tts_config.short_text_postfix) if tts_config.short_text_postfix else ""
         ratio, last_valid_token = score_strings_pop(distill_string(input_string), detected_string, lookahead=5, postfix=postfix_for_score)
 
+        # Penalize garbled onset / truncated tail so the retry loop tries a
+        # cleaner take. These problems barely affect the word-match ratio, yet
+        # sound wrong (e.g. "Rael" -> "rail", or a clipped final word).
+        from .pipeline import detect_onset_tail_penalty, uncover_speech_stats
+        penalty = detect_onset_tail_penalty(
+            input_string, detected_string, postfix_for_score
+        )
+
+        # "Spoken but no words" audio (non-silent, no covering word) is a real
+        # artifact (a garbled "teh" fragment / cut-off word). Score it so the
+        # retry loop regenerates the line. Track the true tail of the final
+        # spoken word too, to inform cropping below.
+        uncovered_ms, last_covered_end_ms = uncover_speech_stats(
+            output_path, start_times, end_times
+        )
+        if uncovered_ms >= 120:
+            penalty += 0.5
+
+        if penalty > 0:
+            ratio = max(0.0, ratio - penalty)
+            if tts_config.verbose:
+                print(f"  [GLITCH] penalty {penalty:.2f} (uncovered={uncovered_ms}ms) -> ratio {ratio:.2f}")
+
         if tts_config.validate_clean and tts_config.validation_client is not None and ratio >= 0.85:
             is_clean, clean_msg = validate_audio_clean(
                 audio_path=output_path,
@@ -362,6 +385,21 @@ def _validate_and_clip_audio(
         )
         if clip_points is not None:
             start_ms, end_ms = clip_points
+            if end_ms is None:
+                # Postfix not detected: keep the full final content word (never
+                # cut its tail) but trim trailing "spoken but no words" garbage.
+                # last_covered_end_ms is the true (energy-based) tail of the last
+                # transcribed word, so it keeps the whole word and cuts the
+                # uncovered residual after it.
+                margin = 60.0
+                if last_covered_end_ms:
+                    end_ms = last_covered_end_ms + margin
+                else:
+                    import pydub as _pydub
+                    try:
+                        end_ms = _pydub.AudioSegment.from_wav(output_path).duration_seconds * 1000
+                    except Exception:
+                        end_ms = end_times[-1] * 1000 if end_times else 0.0
             if end_ms is not None and end_ms > 0:
                 postfix_tokens = None
                 if tts_config.short_text_postfix:
@@ -1839,7 +1877,7 @@ def main():
     parser.add_argument("--seed-voice-map", help="Path to existing voices_map.json to seed voices")
     parser.add_argument("epub_file", nargs="?", help="Path to EPUB file to process")
     parser.add_argument("--saved-temp-dir", help="Path to saved temp directory to restore from")
-    parser.add_argument("--tts-engine", choices=["moss", "echo-tts", "omni", "vox", "dramabox"], help="TTS engine to use")
+    parser.add_argument("--tts-engine", choices=["moss", "echo-tts", "omni", "vox", "dramabox", "breeze"], help="TTS engine to use")
     parser.add_argument("--model", default=None, help="LLM model name (e.g., coder-model)")
     parser.add_argument("--voice-engine", choices=["omni", "vox", "dramabox", "minimax_h3"], default="dramabox", help="Voice engine for character descriptions")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")

@@ -220,17 +220,24 @@ class TestCalculateClipPoints:
         # first content word and ends at the start of the postfix "And" (0.96s).
         assert result == (0, 960.0)
 
-    def test_last_valid_token_fallback(self):
-        """Test fallback to last valid token when postfix not found."""
+    def test_no_postfix_keeps_full_audio_end(self):
+        """When the postfix is not found, do NOT clip the end.
+
+        Clipping at Whisper's (under-reported) last-valid-token end time cut the
+        final word's tail (e.g. "tank" -> "t-"). End is now kept intact (None).
+        """
         segments = ["hello", "world", "missing"]
         start_times = [0.0, 0.5, 1.0]
         end_times = [0.4, 0.9, 1.4]
 
-        result = calculate_clip_points(segments, start_times, end_times, "notfound", "world")
+        result = calculate_clip_points(
+            segments, start_times, end_times, "notfound", "world",
+            input_tokens=["hello", "world", "missing"],
+        )
 
         assert result is not None
         _, end_clip = result
-        assert end_clip == 900.0
+        assert end_clip is None
 
     def test_no_clipping_needed(self):
         """Test when no clipping is needed."""

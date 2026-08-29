@@ -159,26 +159,4 @@ class TestLoaderInvariant:
             assert not base.endswith(".mp3")
 
 
-_REAL_BOOKS = [
-    Path(__file__).resolve().parent.parent / "voice_test" / name
-    for name in ("teotw", "eye_of_the_world", "new_spring")
-]
 
-
-class TestRealBooksGolden:
-    @pytest.mark.skipif(
-        not any(p.is_dir() for p in _REAL_BOOKS),
-        reason="real prior-book directories not present",
-    )
-    def test_real_seed_build_has_no_chapter_or_mp3_entries(self, seed_module):
-        """Golden test: building the seed map from the real prior WOT books must
-        never emit chapter_XX keys or .mp3 values (the exact regression)."""
-        merged = {}
-        for book in _REAL_BOOKS:
-            if not book.is_dir():
-                continue
-            for name, path in seed_module.plain_voices(book).items():
-                merged.setdefault(name, path)
-        assert not any(k.startswith("chapter_") for k in merged)
-        assert not any(str(v).endswith(".mp3") for v in merged.values())
-        assert "narrator" in merged

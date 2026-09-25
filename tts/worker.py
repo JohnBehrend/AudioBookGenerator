@@ -174,8 +174,14 @@ class EngineWorker:
         }
 
         line = json.dumps(req) + "\n"
-        self._process.stdin.write(line)
-        self._process.stdin.flush()
+        try:
+            self._process.stdin.write(line)
+            self._process.stdin.flush()
+        except (BrokenPipeError, OSError):
+            stderr = ""
+            if self._process.stderr and self._process.poll() is not None:
+                stderr = self._process.stderr.read()
+            raise RuntimeError(f"Worker process died before accepting request: {stderr}")
 
         deadline = time.monotonic() + self.request_timeout
         while True:

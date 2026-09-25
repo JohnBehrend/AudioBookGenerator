@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from collections import Counter
 from openai import OpenAI
 
-from .config import LLM_SETTINGS, DEFAULTS
+from .config import LLM_NO_THINKING_EXTRA_BODY, LLM_SETTINGS, DEFAULTS
 from .utils import get_llm_client, merge_line_maps, compare_characters, natural_sort_key
 
 def normalize_key_value_pairs(json_str: str) -> str:
@@ -105,44 +105,22 @@ def extract_json_from_text(text: str) -> Optional[str]:
     Returns:
         Extracted JSON string or None if no JSON found
     """
-    import re
+    from .json_utils import extract_first_json_block
 
-    # Remove markdown code blocks
-    text = re.sub(r'```(?:json)?\n?([\s\S]*?)\n?```', r'\1', text)
-
-    # Find all brace pairs
-    brace_positions = []
-    brace_count = 0
-    first_brace = text.find('{')
-
-    if first_brace == -1:
+    json_str = extract_first_json_block(text)
+    if json_str is None:
         return None
 
-    for i, char in enumerate(text[first_brace:], start=first_brace):
-        if char == '{':
-            brace_count += 1
-        elif char == '}':
-            brace_count -= 1
-            if brace_count == 0:
-                brace_positions.append(i)
+    # Handle stringified JSON (wrapped in quotes)
+    if json_str.startswith('"') and json_str.endswith('"'):
+        try:
+            # Unescape and parse the inner JSON
+            unescaped = json_str[1:-1].encode().decode('unicode_escape')
+            return unescaped
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
 
-    # If we have brace positions, extract the first complete JSON
-    if brace_positions:
-        end_pos = brace_positions[0] + 1
-        json_str = text[first_brace:end_pos]
-
-        # Handle stringified JSON (wrapped in quotes)
-        if json_str.startswith('"') and json_str.endswith('"'):
-            try:
-                # Unescape and parse the inner JSON
-                unescaped = json_str[1:-1].encode().decode('unicode_escape')
-                return unescaped
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
-
-        return json_str
-
-    return None
+    return json_str
 
 
 def parse_json_output(text: str, attempt_num: int) -> Tuple[Dict[int, str], Dict[int, int]]:
@@ -849,7 +827,7 @@ def label_speakers(
                     model=model or LLM_SETTINGS["default_model"],
                     messages=messages,
                     temperature=0.7,
-                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                    extra_body=LLM_NO_THINKING_EXTRA_BODY,
                 ).choices[0].message
             except Exception as e:
                 error_msg = str(e)

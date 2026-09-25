@@ -18,6 +18,8 @@ from typing import Any, Dict, Optional, Tuple, List, Union
 from openai import OpenAI
 
 from .config import LLM_SETTINGS
+from .naming import sorted_chapter_files
+
 
 
 def _get_attn_implementation() -> Optional[str]:
@@ -220,11 +222,23 @@ class TempDirContext:
         self.cleanup()
 
 
-def get_chapters_dir(saved_temp_dir: Optional[str] = None) -> Path:
-    """Get or create a temporary chapters directory for this session.
+_temp_ctx: Optional[TempDirContext] = None
 
-    Creates a new TempDirContext and returns the chapters directory.
-    The context is automatically cleaned up when the program exits.
+
+def _get_temp_ctx() -> TempDirContext:
+    """Get the process-wide TempDirContext singleton, creating it on first use."""
+    global _temp_ctx
+    if _temp_ctx is None:
+        _temp_ctx = TempDirContext()
+        atexit.register(_temp_ctx.cleanup)
+    return _temp_ctx
+
+
+def get_chapters_dir(saved_temp_dir: Optional[str] = None) -> Path:
+    """Get the session's temporary chapters directory.
+
+    Uses a process-wide context so every stage sees the same directory
+    (a fresh TempDirContext per call would scatter files across temp dirs).
 
     Args:
         saved_temp_dir: Optional path to a saved temp directory to restore from.
@@ -232,24 +246,22 @@ def get_chapters_dir(saved_temp_dir: Optional[str] = None) -> Path:
     Returns:
         Path to the chapters directory (temp_dir / "chapters")
     """
-    ctx = TempDirContext()
-    atexit.register(ctx.cleanup)
-    return ctx.get_chapters_dir(saved_temp_dir)
+    return _get_temp_ctx().get_chapters_dir(saved_temp_dir)
 
 
 def get_temp_dir() -> str:
     """Get the temporary directory path for display purposes."""
-    return ""
+    return _get_temp_ctx().get_temp_dir()
 
 
 def cleanup_temp_dir() -> None:
-    """Clean up the temporary directory (no-op for stateless version)."""
-    pass
+    """Clean up the temporary directory."""
+    _get_temp_ctx().cleanup()
 
 
 def reset_chapters_dir() -> None:
-    """Reset state (no-op - stateless by design)."""
-    pass
+    """Reset temp-dir state so the next get_chapters_dir() creates a fresh one."""
+    _get_temp_ctx().reset()
 
 
 # ============================================================================
@@ -466,8 +478,7 @@ def get_chapters_dir_from_saved(saved_temp_dir: str) -> Path:
     Returns:
         Path to the chapters subdirectory within the saved temp dir
     """
-    ctx = TempDirContext()
-    return ctx.get_chapters_dir_from_saved(saved_temp_dir)
+    return _get_temp_ctx().get_chapters_dir_from_saved(saved_temp_dir)
 
 
 def get_characters_from_map_files(chapters_dir: Path) -> List[str]:
@@ -481,10 +492,7 @@ def get_characters_from_map_files(chapters_dir: Path) -> List[str]:
     """
     characters = set()
 
-    map_files = sorted([f for f in chapters_dir.glob("*.map.json")
-                       if re.match(r"^chapter_\d+\.map\.json$", f.name)],
-                      key=natural_sort_key)
-    for map_file in map_files:
+    for map_file in sorted_chapter_files(chapters_dir, ".map.json"):
         try:
             with open(map_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -561,23 +569,43 @@ def merge_line_maps(line_maps: List[Dict[int, int]], verbose: bool = False) -> D
     return {k: Counter(v).most_common(1)[0][0] for k, v in merged_line_map.items()}
 
 
-def get_llm_client(api_key: str, port: str) -> OpenAI:
-    """Create and return an OpenAI client for LM Studio.
+def get_llm_client(api_key: str, port: Optional[str] = None) -> OpenAI:
+    """Create and return an OpenAI client for the configured LLM endpoint.
 
-    Caches clients by (api_key, port) tuple to avoid creating duplicates.
+    Uses ``LLM_SETTINGS["endpoint"]`` (which honors the ``LLM_ENDPOINT`` env
+    override applied in config) for scheme/host/path. An explicit ``port``
+    overrides only the port, keeping the configured host.
+
+    Caches clients by (api_key, base_url) to avoid creating duplicates.
 
     Args:
         api_key: API key for the LLM (can be any string for LM Studio)
-        port: Port for the LLM inference
+        port: Optional port overriding the endpoint's port
 
     Returns:
-        OpenAI client configured for LM Studio
+        OpenAI client configured for the LLM endpoint
     """
-    key = (api_key, port)
+    from urllib.parse import urlparse, urlunparse
+
+    endpoint = LLM_SETTINGS["endpoint"]
+    base_url = endpoint
+    if port is not None:
+        parsed = urlparse(endpoint)
+        netloc = parsed.hostname or "localhost"
+        if parsed.username:
+            cred = parsed.username
+            if parsed.password:
+                cred += f":{parsed.password}"
+            netloc = f"{cred}@{netloc}"
+        if parsed.port is not None:
+            netloc = f"{netloc}:{port}"
+        base_url = urlunparse(parsed._replace(netloc=netloc))
+
+    key = (api_key, base_url)
     if not hasattr(get_llm_client, '_cache'):
         get_llm_client._cache = {}
     if key not in get_llm_client._cache:
-        get_llm_client._cache[key] = OpenAI(base_url=f"http://localhost:{port}/v1", api_key=api_key)
+        get_llm_client._cache[key] = OpenAI(base_url=base_url, api_key=api_key)
     return get_llm_client._cache[key]
 
 
@@ -882,32 +910,7 @@ def get_chapter_map_files(chapters_dir: Path) -> List[Path]:
     Returns:
         Sorted list of map file paths (naturally sorted)
     """
-    return sorted([f for f in chapters_dir.glob("*.map.json")
-                   if re.match(r"^chapter_\d+\.map\.json$", f.name)],
-                  key=natural_sort_key)
-
-
-def extract_characters_from_maps(chapters_dir: Path) -> List[str]:
-    """Extract unique character names from all map files in a directory.
-
-    Args:
-        chapters_dir: Path to the chapters directory
-
-    Returns:
-        Sorted list of unique character names
-    """
-    characters = set()
-    map_files = get_chapter_map_files(chapters_dir)
-
-    for map_file in map_files:
-        result = parse_map_file(map_file)
-        if result:
-            char_map, _ = result
-            for char_name in char_map.values():
-                if isinstance(char_name, str):
-                    characters.add(char_name)
-
-    return sorted(list(characters))
+    return sorted_chapter_files(chapters_dir, ".map.json")
 
 
 def count_lines_per_character(chapters_dir: Path) -> Dict[str, int]:
@@ -985,18 +988,8 @@ def natural_sort_key(filename: str):
     return (filename, 0, "")
 
 
-# ============================================================================
-# VOICE GENDER CORRECTION
-# ============================================================================
-
-# These functions are now in audio.py but re-exported here for backward compatibility
+# Audio helpers now live in audio.py; re-exported for backward compatibility.
 from .audio import (
-    extract_gender_from_description,
-    classify_gender_statistical,
-    plot_pitch_histogram,
-    extract_pitch_from_audio,
-    detect_gender_from_audio,
-    correct_voice_gender,
     crop_to_ref_text,
     validate_audio_clean,
 )

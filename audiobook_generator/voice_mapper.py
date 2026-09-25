@@ -10,16 +10,14 @@ This module provides a centralized, stateful VoiceMapper class that:
 
 import os
 import json
-import gc
-import traceback
 from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
 from openai import OpenAI
 
-from .config import DEFAULTS, AUDIO_SETTINGS, VOICE_VALIDATION, LLM_SETTINGS
+from .config import LLM_NO_THINKING_EXTRA_BODY, DEFAULTS, AUDIO_SETTINGS, VOICE_VALIDATION
 
 # Import TTS submodule
-from tts import TTSEngine, get_engine_dir, list_engines, get_engine
+from tts import get_engine
 
 # Import utilities for validation client
 from .utils import get_validation_client
@@ -199,20 +197,6 @@ class VoiceMapper:
             self._cached_engine = get_engine(self.tts_engine, device=self.device)
         return self._cached_engine
 
-    def get_pool(self, devices: List[str]) -> "WorkerPool":
-        """Get a multi-GPU worker pool for the configured engine.
-
-        Args:
-            devices: List of CUDA device strings (e.g., ['cuda:0', 'cuda:1'])
-
-        Returns:
-            WorkerPool instance ready to distribute requests across GPUs.
-        """
-        from tts import WorkerPool
-
-        engine_dir = get_engine_dir(self.tts_engine)
-        return WorkerPool(engine_dir, devices)
-
     def set_engine(self, engine: Any) -> None:
         """Set a TTS engine instance (for testing/mocking).
 
@@ -296,7 +280,7 @@ class VoiceMapper:
                     }
                 ],
                 max_tokens=512,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                extra_body=LLM_NO_THINKING_EXTRA_BODY,
             )
 
             result = response.choices[0].message.content.strip()
@@ -413,7 +397,7 @@ class VoiceMapper:
                     }
                 ],
                 max_tokens=256,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                extra_body=LLM_NO_THINKING_EXTRA_BODY,
             )
 
             result = response.choices[0].message.content.strip()
@@ -433,14 +417,6 @@ class VoiceMapper:
             if verbose:
                 print(f"    {error_msg}")
             return ""
-
-    def unload_model(self, engine_name: str) -> None:
-        """Unload models for a specific TTS engine.
-
-        Args:
-            engine_name: Name of the TTS engine to unload
-        """
-        pass
 
     def reset(self) -> None:
         """Reset all internal state (for testing).
@@ -463,7 +439,7 @@ class VoiceMapper:
         client: Optional[Any] = None,
         model: str = "coder-model",
         **kwargs
-    ) -> Tuple[bool, Optional[str], float]:
+    ) -> Tuple[bool, Optional[str], float, bool, bool]:
         """Generate a voice sample for a character using the configured TTS engine.
 
         Uses the cached engine instance to avoid reloading the model for each call.
@@ -478,7 +454,8 @@ class VoiceMapper:
             **kwargs: Additional arguments passed to the engine
 
         Returns:
-            Tuple of (success, output_file_path, duration_seconds)
+            Tuple of (success, output_file_path, duration_seconds,
+            is_celebrity, content_validated)
         """
         if output_dir is None:
             output_dir = self.output_dir
@@ -525,7 +502,8 @@ class VoiceMapper:
                 file_size = os.path.getsize(voice_path)
                 duration_seconds = file_size / (24000 * 2)
                 self.add_voice_path(character_name, voice_path, persist=False)
-                return True, voice_path, duration_seconds, True
+                content_validated = bool(metadata and metadata.get("content_validated"))
+                return True, voice_path, duration_seconds, True, content_validated
             elif verbose:
                 print(f"    [DEBUG] Celebrity voice generation failed for '{character_name}'")
 
@@ -553,7 +531,7 @@ class VoiceMapper:
             if verbose:
                 print(f"    [DEBUG] Voice generation failed for '{character_name}'")
 
-        return success, output_file, duration, False
+        return success, output_file, duration, False, False
 
     # =========================================================================
     # AUDIOBOOK GENERATION HELPERS

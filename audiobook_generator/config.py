@@ -49,6 +49,7 @@ VOICE_VALIDATION = {
     "endpoint": "http://localhost:8081/v1",
     "port": 8081,
     "model": "gemma4-model",
+    "api_key": "lm-studio",
     "threshold": 0.7,
     "prompt": "You will hear a voice sample. The spoken text is: \"{sample_text}\"\n\nThe intended voice description is: \"{description}\"\n\nAnalyze the voice and output JSON with these fields:\n{{\n  \"gender_match\": true/false,\n  \"age_match\": true/false,\n  \"tone_match\": true/false,\n  \"emotion_match\": true/false,\n  \"clarity_match\": true/false,\n  \"overall_match\": true/false,\n  \"reasons\": \"brief explanation of any mismatches\"\n}}",
 }
@@ -60,26 +61,6 @@ VOICE_VALIDATION = {
 CHUNKFORMER_VALIDATION = {
     "enable": False,
     "model_id": "khanhld/chunkformer-gender-emotion-dialect-age-classification",
-}
-
-# ============================================================================
-# VOICE GENDER CORRECTION SETTINGS
-# ============================================================================
-
-VOICE_GENDER_CORRECTION = {
-    "enable": False,  # Disabled - pitch shifting causes robotic audio; regenerate instead
-    "pitch_threshold_hz": 160,
-    "male_target_pitch_hz": 130,  # Target average pitch for male voices
-    "female_target_pitch_hz": 220,  # Target average pitch for female voices
-    # Statistical t-test settings for robust gender classification
-    "use_ttest": True,  # Use one-sample t-test instead of simple threshold
-    "ttest_alpha": 0.05,  # Significance level for t-test
-    # Reference distributions based on physiological ranges:
-    # Male: 90-155 Hz, Female: 165-255 Hz
-    "male_ref_mean_hz": 122.5,  # Midpoint of male range (90-155 Hz)
-    "female_ref_mean_hz": 210.0,  # Midpoint of female range (165-255 Hz)
-    "ref_std_hz": 30.0,  # Standard deviation for reference population
-    "plot_histogram": False,  # Generate pitch distribution histograms (disable during normal generation)
 }
 
 # Voice samples directory
@@ -129,8 +110,6 @@ if os.environ.get("VALIDATION_THRESHOLD"):
 DEFAULTS = {
     "num_llm_attempts": 1,
     "max_chapters": 1,
-    "sample_text_length": 150,
-    "description_length": 400,
     # Audio generation defaults
     "short_text_postfix": "and also with you?",
     "short_text_prefix_pause_ms": 500,
@@ -144,9 +123,12 @@ DEFAULTS = {
     "silence_thresh": -60,
     "inter_line_pause_ms": 300,
     # Speed optimization switches (defaults preserve current behavior)
-    "max_retries": 1,
     "enable_postfix": True,
 }
+
+# Shared extra_body for LLM chat calls: disable the model's thinking channel
+# (local chat-template models emit <think> blocks that must be parsed away).
+LLM_NO_THINKING_EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
 
 
 # ============================================================================
@@ -155,7 +137,6 @@ DEFAULTS = {
 
 # Output directories
 OUTPUT_DIR = Path("chapters")
-# VOICE_SAMPLES_DIR is already defined above in AUDIO_SETTINGS section
 
 # Default EPUB file for Gradio interface
 DEFAULT_EPUB_FILE = SCRIPT_DIR.parent / "voice_test" / "test_pride_and_prejudice.epub"
@@ -169,7 +150,7 @@ def get_llm_port() -> int:
     """Get the LLM port from settings.
 
     Returns:
-        LLM port number (default: 8080)
+        LLM port number (default: 2136)
     """
     return LLM_SETTINGS["port"]
 
@@ -201,7 +182,7 @@ def validate() -> list[str]:
         from tts import list_engines
         valid_engines = list_engines()
     except ImportError:
-        valid_engines = ["omni", "moss", "vox", "echo-tts", "dramabox", "miso-tts", "minimax_h3", "breeze"]
+        valid_engines = ["breeze", "dramabox", "minimax_h3", "omni", "zonos2"]
 
     if AUDIO_SETTINGS["default_tts_engine"] not in valid_engines:
         warnings.append(

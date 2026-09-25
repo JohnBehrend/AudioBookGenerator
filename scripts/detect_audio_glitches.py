@@ -22,10 +22,11 @@ import sys
 
 from difflib import SequenceMatcher
 
-
-def distill_string(s: str) -> str:
-    """Lowercase and strip punctuation, matching the pipeline's distill_string."""
-    return re.sub(r"[^\w\s]", "", s.lower()).replace("_", " ")
+# Reuse the pipeline's exact normalization so glitch-report ratios match
+# production scoring (a local re-implementation had drifted from it).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from audiobook_generator.utils import distill_string  # noqa: E402
+from audiobook_generator.pipeline import uncover_speech_stats  # noqa: E402
 
 
 def load_expected_lines(chapter_txt: str):
@@ -129,7 +130,7 @@ def main():
         if info["truncated_words"]:
             n_trunc += 1
             flags.append(f"TRUNC(miss{len(info['truncated_words'])}):{info['truncated_words'][-3:]}")
-        uncovered_ms = _uncovered_speech_ms(wav, starts, ends)
+        uncovered_ms, _ = uncover_speech_stats(wav, starts, ends)
         if uncovered_ms >= 80:
             n_uncovered += 1
             flags.append(f"UNCOVERED({uncovered_ms}ms)")
@@ -141,23 +142,6 @@ def main():
 
     print(f"\nSummary: {n_preamble} preamble, {n_trunc} truncated, {n_uncovered} uncovered-speech lines "
           f"(of {len(wav_paths)} line files)")
-
-
-def _uncovered_speech_ms(wav_path: str, starts, ends) -> int:
-    """Total ms of non-silent audio with no Whisper word covering it."""
-    from pydub import AudioSegment
-    from pydub.silence import detect_nonsilent
-    if not starts:
-        return 0
-    audio = AudioSegment.from_wav(wav_path)
-    ns = detect_nonsilent(audio, min_silence_len=60, silence_thresh=-32)
-    total = 0
-    for s, e in ns:
-        s_ms, e_ms = s / 1000.0, e / 1000.0
-        covered = any(s_ms < end and e_ms > start for start, end in zip(starts, ends))
-        if not covered:
-            total += int((e - s))
-    return total
 
 
 if __name__ == "__main__":

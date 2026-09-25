@@ -1,12 +1,15 @@
-"""Tests for audio quality improvements: Whisper transcription and clipping."""
+"""Tests for audio quality improvements: Whisper transcription and clipping.
+
+Pure-function scoring/normalization tests live in tests/test_pipeline.py and
+tests/test_postfix_clipping.py; this file focuses on transcription, cropping,
+and text-cleaning behavior.
+"""
 
 from unittest.mock import MagicMock
 
 from audiobook_generator.pipeline import (
     score_strings_pop,
     calculate_clip_points,
-    prepare_script_for_tts,
-    normalize_script,
     clean_text_for_tts,
 )
 from audiobook_generator.utils import (
@@ -26,121 +29,6 @@ def _write_tone_wav(path, sample_rate: int = 22050, duration: float = 2.0):
     audio = (0.4 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
     torchaudio.save(str(path), torch.from_numpy(audio).unsqueeze(0), sample_rate)
     return path
-
-
-class TestDistillString:
-    """Test distill_string function for text comparison."""
-
-    def test_removes_punctuation(self):
-        """Test that punctuation is removed."""
-        assert distill_string("Hello, world!") == "hello world"
-
-    def test_normalizes_whitespace(self):
-        """Test that whitespace is normalized."""
-        assert distill_string("Hello   world") == "hello world"
-
-    def test_lowercases(self):
-        """Test that string is lowercased."""
-        assert distill_string("HELLO") == "hello"
-
-
-class TestScoreStringsPop:
-    """Test score_strings_pop function for scoring accuracy."""
-
-    def test_perfect_match(self):
-        """Test perfect match returns high score."""
-        score, last_token = score_strings_pop("hello world", "hello world", postfix="")
-        assert score >= 0.5
-        assert last_token == "world"
-
-    def test_postfix_detection_improves_score(self):
-        """Test that postfix presence improves score."""
-        input_str = "hello world and also with you"
-        score_with_postfix, _ = score_strings_pop(input_str, input_str)
-        score_without_postfix, _ = score_strings_pop(input_str, "hello world")
-        assert score_with_postfix > score_without_postfix
-
-    def test_lookahead_affects_matching(self):
-        """Test lookahead parameter affects matching."""
-        input_str = "one two three four"
-        detected = "one two four"
-        score, last = score_strings_pop(input_str, detected, lookahead=5)
-        assert score > 0.0
-
-    def test_last_token_extraction(self):
-        """Test that last valid token is correctly identified."""
-        score, last_token = score_strings_pop("the quick brown fox", "the quick fox", postfix="")
-        assert last_token is not None
-        assert last_token in ["quick", "fox"]
-
-
-class TestCalculateClipPoints:
-    """Test calculate_clip_points function for clipping accuracy."""
-
-    def test_postfix_token_found(self):
-        """Test clip points when postfix token is found."""
-        segments = ["hello", "world", "and", "also", "with", "you"]
-        start_times = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
-        end_times = [0.4, 0.9, 1.4, 1.9, 2.4, 2.9]
-
-        result = calculate_clip_points(segments, start_times, end_times, "and", "world")
-        assert result is not None
-        start_clip, end_clip = result
-        # Clip at the start of the postfix word ("and" at 1.0s) to keep the full
-        # last content word.
-        assert end_clip == 1000.0
-
-    def test_last_valid_token_fallback(self):
-        """Test fallback to last valid token when postfix not found."""
-        segments = ["hello", "world", "missing"]
-        start_times = [0.0, 0.5, 1.0]
-        end_times = [0.4, 0.9, 1.4]
-
-        result = calculate_clip_points(segments, start_times, end_times, "notfound", "world")
-        assert result is not None
-        _, end_clip = result
-        assert end_clip == 900.0
-
-    def test_no_clipping_needed(self):
-        """Test when no clipping is needed."""
-        segments = ["hello", "world"]
-        start_times = [0.0, 0.5]
-        end_times = [0.4, 0.9]
-
-        result = calculate_clip_points(segments, start_times, end_times, None, None)
-        assert result is None
-
-
-class TestNormalizeScript:
-    """Test normalize_script function for text preparation."""
-
-    def test_capitalizes_first_letter(self):
-        """Test that first letter is capitalized."""
-        assert normalize_script("hello world") == "Hello world"
-
-    def test_cleans_multiple_periods(self):
-        """Test that whitespace followed by period is collapsed."""
-        assert normalize_script("Hello . world") == "Hello. world"
-
-    def test_empty_string(self):
-        """Test empty string handling."""
-        assert normalize_script("") == ""
-
-
-class TestPrepareScriptForTts:
-    """Test prepare_script_for_tts function."""
-
-    def test_normalize_and_add_postfix(self):
-        """Test combined normalization and postfix."""
-        script, token = prepare_script_for_tts("hello world", "and also with you")
-        assert script == "Hello world. and also with you"
-        assert token == "and"
-
-    def test_empty_text(self):
-        """Test empty text returns empty."""
-        script, token = prepare_script_for_tts("")
-        assert script == ""
-        assert token is None
 
 
 class TestIntegrationScenarios:

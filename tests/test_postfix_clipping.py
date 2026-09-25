@@ -509,7 +509,7 @@ class TestEngineInterfaceContract:
         vm = VoiceMapper(output_dir="/tmp", device="cpu", tts_engine="test")
         vm.set_engine(mock_engine)
 
-        success, output_file, duration, is_celebrity = vm.generate_voice_sample(
+        success, output_file, duration, is_celebrity, content_validated = vm.generate_voice_sample(
             character_name="test",
             description="male, young",
             output_dir="/tmp",
@@ -552,8 +552,8 @@ class TestRealVoiceGeneration:
     @pytest.mark.slow
     @pytest.mark.generate
     @pytest.mark.skipif(
-        not any(Path(__file__).resolve().parent.parent / "engines" / eng / "main.py"
-                 for eng in ["omni", "dramabox"]),
+        not all((Path(__file__).resolve().parent.parent / "engines" / eng / "main.py").exists()
+                for eng in ["omni", "dramabox"]),
         reason="No voice generation engines available"
     )
     def test_omni_generates_valid_wav(self, tmp_path):
@@ -564,7 +564,7 @@ class TestRealVoiceGeneration:
         output_dir.mkdir()
 
         vm = VoiceMapper(output_dir=str(output_dir), device="cuda:0", tts_engine="omni")
-        success, output_file, duration, is_celebrity = vm.generate_voice_sample(
+        success, output_file, duration, is_celebrity, content_validated = vm.generate_voice_sample(
             character_name="test_narrator",
             description="male, middle-aged, moderate pitch",
             output_dir=str(output_dir),
@@ -586,7 +586,7 @@ class TestRealVoiceGeneration:
     @pytest.mark.slow
     @pytest.mark.generate
     @pytest.mark.skipif(
-        not Path(__file__).resolve().parent.parent / "engines" / "dramabox" / "main.py",
+        not (Path(__file__).resolve().parent.parent / "engines" / "dramabox" / "main.py").exists(),
         reason="Dramabox engine not available"
     )
     def test_dramabox_generates_valid_wav(self, tmp_path):
@@ -597,7 +597,7 @@ class TestRealVoiceGeneration:
         output_dir.mkdir()
 
         vm = VoiceMapper(output_dir=str(output_dir), device="cuda:0", tts_engine="dramabox")
-        success, output_file, duration, is_celebrity = vm.generate_voice_sample(
+        success, output_file, duration, is_celebrity, content_validated = vm.generate_voice_sample(
             character_name="test_narrator",
             description="male, middle-aged, moderate pitch",
             output_dir=str(output_dir),

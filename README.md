@@ -9,7 +9,7 @@ A tool for creating synthesized audiobooks with distinct voices for different ch
 Run the full pipeline from EPUB to audiobook in one command:
 
 ```bash
-uv run python audiobook_generator.py <epub_file> [--verbose]
+uv run audiobook-interface <epub_file> [--verbose]
 ```
 
 ### Gradio Web Interface
@@ -17,7 +17,7 @@ uv run python audiobook_generator.py <epub_file> [--verbose]
 Launch the interactive web interface:
 
 ```bash
-uv run python audiobook_generator.py --gradio
+uv run audiobook-interface --gradio
 ```
 
 Then open the provided URL (typically http://127.0.0.1:7860) in your browser.
@@ -35,7 +35,7 @@ Then open the provided URL (typically http://127.0.0.1:7860) in your browser.
 ### CLI
 
 ```bash
-uv run python audiobook_generator.py <epub_file> [OPTIONS]
+uv run audiobook-interface <epub_file> [OPTIONS]
 
 # Options:
 # --output-dir DIR     Output directory (default: chapters)
@@ -43,8 +43,8 @@ uv run python audiobook_generator.py <epub_file> [OPTIONS]
 # --verbose, -v        Print verbose output
 # --api-key KEY        LLM API key
 # --port PORT          LLM port
-# --tts-engine ENGINE  TTS engine: breeze (default), omni, dramabox, or vox
-# --voice-engine ENGINE  Voice generation engine: dramabox (default), omni, or vox
+# --tts-engine ENGINE  TTS engine: breeze (default), omni, dramabox, minimax_h3, or zonos2
+# --voice-engine ENGINE  Voice generation engine: dramabox (default), omni, or minimax_h3
 # --device DEVICE      CUDA device (default: cuda)
 # --num-llm-attempts N Number of LLM attempts (default: 2)
 # --whisper-cpu        Run Whisper validation on CPU
@@ -54,7 +54,7 @@ uv run python audiobook_generator.py <epub_file> [OPTIONS]
 # --use-chunkformer    Enable ChunkFormer voice validation (gender/emotion/dialect/age classification)
 
 # Launch Gradio interface
-uv run python audiobook_generator.py --gradio
+uv run audiobook-interface --gradio
 ```
 
 ### Individual Stages (Advanced)
@@ -63,10 +63,10 @@ The pipeline runs all 5 stages automatically. For fine-grained control, use CLI 
 
 ```bash
 # Run stages 1-3 only (parsing, labeling, character descriptions)
-uv run python audiobook_generator.py <epub_file> --max-chapters 3
+uv run audiobook-interface <epub_file> --max-chapters 3
 
 # Resume from a specific stage by passing existing output files
-uv run python audiobook_generator.py --skip-existing
+uv run audiobook-interface --skip-existing
 ```
 
 **Internal Stage Files:**
@@ -92,7 +92,7 @@ uv sync
 - **PyTorch** (with CUDA support optional: `torch`, `torchaudio`, `torchvision`)
 - **Transformers** and **tokenizers** (HuggingFace)
 - **Gradio** for the web interface
-- **WhisperX** / **faster-whisper** for STT validation
+- **faster-whisper** for STT validation
 - **OpenAI API** client for LLM operations
 - **ChunkFormer** for voice classification validation
 
@@ -103,7 +103,9 @@ The pipeline supports multiple TTS engines in the `engines/` directory. Each eng
 **Available engines:**
 - **Breeze-TTS-2** (`breeze`) - Default TTS engine (voice design + voice clone), downloads checkpoint from HuggingFace at runtime
 - **Omni** (`omni`) - OmniVoice engine, downloads model from HuggingFace at runtime
-- **Dramabox** (`dramabox`) - Default voice generation engine, uses DramaBox as a git submodule
+- **DramaBox** (`dramabox`) - Default voice generation engine, uses DramaBox as a git submodule
+- **MiniMax-H3** (`minimax_h3`) - MiniMax H3 TTS engine (ComfyUI-based)
+- **Zonos2** (`zonos2`) - Zonos2 TTS engine
 
 **Engine setup:**
 ```bash
@@ -123,7 +125,7 @@ This runs `git submodule update --init --recursive` to fetch engine dependencies
 
 - **pydub** for audio manipulation (requires system ffmpeg)
 - **scipy** for signal processing
-- **pandas** for data handling
+- **soundfile** for WAV I/O
 
 ### System Dependencies
 
@@ -164,7 +166,7 @@ The pipeline includes multiple layers of audio validation:
 
 The pipeline uses an OpenAI-compatible API (LM Studio by default):
 - **Host**: localhost
-- **Port**: 1234 (default)
+- **Port**: 2136 (default, configurable via `--port` or `config.py`)
 - **API Key**: lm-studio (default, can be any string)
 
 ### GPU Settings
@@ -186,7 +188,9 @@ The pipeline uses an OpenAI-compatible API (LM Studio by default):
 AudioBookGenerator/
 ├── audiobook_generator/
 │   ├── __init__.py                     # Package initialization
+│   ├── audio.py                        # Audio analysis (pitch/gender detection)
 │   ├── audiobook_generator.py          # Stage 5: Full audiobook TTS generation
+│   ├── celebrity_voices.py             # Celebrity voice references from YouTube
 │   ├── config.py                       # Shared configuration
 │   ├── generate_voice_samples.py       # Stage 4: Voice sample generation
 │   ├── gradio_ui.py                    # Gradio web interface
@@ -197,16 +201,19 @@ AudioBookGenerator/
 │   ├── testing.py                      # Test utilities (MockLLMClient, etc.)
 │   ├── utils.py                        # Utility functions
 │   └── voice_mapper.py                 # Voice mapping logic
+├── tts/                                # TTS abstraction layer
+│   ├── engine.py                       # TTSEngine base class / engine adapter
+│   ├── worker.py                       # Engine worker subprocess
+│   ├── pool.py                         # Multi-GPU WorkerPool / WhisperPool
+│   └── voice_sample.py                 # Legacy standalone voice sample helpers
 ├── engines/                            # TTS engines (glue code only)
+│   ├── breeze/                         # Breeze-TTS-2 engine
 │   ├── omni/                           # OmniVoice engine
-│   │   ├── main.py                     # Worker process (glue code)
-│   │   └── pyproject.toml              # Engine dependencies
-│   └── dramabox/                       # DramaBox engine
-│       ├── main.py                     # Worker process (glue code)
-│       ├── pyproject.toml              # Engine dependencies
-│       └── DramaBox/                   # Git submodule -> resemble-ai/DramaBox
-├── scripts/
-│   └── setup-engines.py                # Initialize submodules + build envs
+│   ├── dramabox/                       # DramaBox engine
+│   │   └── DramaBox/                   # Git submodule -> resemble-ai/DramaBox
+│   ├── minimax_h3/                     # MiniMax-H3 engine
+│   └── zonos2/                         # Zonos2 engine
+├── scripts/                            # Utility and QA scripts
 └── tests/                              # Test suite
 ```
 

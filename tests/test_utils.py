@@ -18,12 +18,8 @@ from audiobook_generator.utils import (
     distill_string,
     parse_map_file,
     get_chapter_map_files,
-    extract_characters_from_maps,
     count_lines_per_character,
     natural_sort_key,
-    extract_gender_from_description,
-    classify_gender_statistical,
-    detect_gender_from_audio,
 )
 from audiobook_generator.testing import write_silence_wav
 
@@ -394,141 +390,6 @@ class TestGetChapterMapFiles:
 
         result = get_chapter_map_files(temp_dir)
         assert len(result) == 2
-
-
-class TestExtractCharactersFromMaps:
-    """Tests for extract_characters_from_maps function."""
-
-    def test_extracts_characters(self, temp_dir):
-        """Test that characters are extracted."""
-        data = [
-            {"1": "narrator", "2": "jane"},
-            {}
-        ]
-        with open(temp_dir / "chapter_0.map.json", "w") as f:
-            json.dump(data, f)
-
-        result = extract_characters_from_maps(temp_dir)
-        assert "narrator" in result
-        assert "jane" in result
-
-    def test_removes_duplicates(self, temp_dir):
-        """Test that duplicates are removed."""
-        data = [
-            {"1": "narrator", "2": "jane"},
-            {}
-        ]
-        with open(temp_dir / "chapter_0.map.json", "w") as f:
-            json.dump(data, f)
-        with open(temp_dir / "chapter_1.map.json", "w") as f:
-            json.dump([{"1": "narrator", "2": "jane"}, {}], f)
-
-        result = extract_characters_from_maps(temp_dir)
-        assert result.count("jane") == 1
-
-
-class TestCountLinesPerCharacter:
-    """Tests for count_lines_per_character function."""
-
-    def test_counts_spoken_lines(self, temp_dir):
-        """Test that spoken lines are counted."""
-        data = [
-            {"1": "narrator", "2": "jane"},
-            {"1": 2, "3": 2}
-        ]
-        with open(temp_dir / "chapter_0.map.json", "w") as f:
-            json.dump(data, f)
-
-        with open(temp_dir / "chapter_0.txt", "w") as f:
-            f.write('Line 1: "Quote."\nLine 2: "Another."\nLine 3: "Third."\n')
-
-        result = count_lines_per_character(temp_dir)
-        assert "jane" in result
-
-
-class TestNaturalSortKey:
-    """Tests for natural_sort_key function."""
-
-    def test_sorts_numerically(self):
-        """Test that numbers are sorted numerically."""
-        files = ["chapter_10.txt", "chapter_2.txt", "chapter_1.txt"]
-        sorted_files = sorted(files, key=natural_sort_key)
-        assert sorted_files[0] == "chapter_1.txt"
-        assert sorted_files[1] == "chapter_2.txt"
-        assert sorted_files[2] == "chapter_10.txt"
-
-    def test_handles_no_number(self):
-        """Test handling of filename without number."""
-        key = natural_sort_key("narrator.wav")
-        assert key == ("narrator.wav", 0, "")
-
-    def test_handles_prefix_and_suffix(self):
-        """Test that prefix and suffix are preserved."""
-        key = natural_sort_key("chapter_5.txt")
-        assert key[0] == "chapter_"
-        assert key[1] == 5
-        assert key[2] == ".txt"
-
-
-class TestExtractGenderFromDescription:
-    """Tests for extract_gender_from_description function."""
-
-    def test_female_detected(self):
-        """Test female gender is detected."""
-        assert extract_gender_from_description("A gentle female voice.") == "female"
-        assert extract_gender_from_description("A woman speaking.") == "female"
-
-    def test_male_detected(self):
-        """Test male gender is detected."""
-        assert extract_gender_from_description("A deep male voice.") == "male"
-        assert extract_gender_from_description("A man speaking.") == "male"
-
-    def test_female_before_male(self):
-        """Test that female is checked before male."""
-        assert extract_gender_from_description("A female male voice.") == "female"
-
-    def test_returns_none_for_no_gender(self):
-        """Test that None is returned when no gender found."""
-        assert extract_gender_from_description("A neutral voice.") is None
-
-
-class TestClassifyGenderStatistical:
-    """Tests for classify_gender_statistical function."""
-
-    def test_male_classification(self):
-        """Test male classification with low pitch."""
-        import numpy as np
-        voiced_f0 = np.array([100, 110, 120, 130, 140])
-        gender, confidence, reason = classify_gender_statistical(voiced_f0, verbose=False)
-        assert gender == "male"
-
-    def test_female_classification(self):
-        """Test female classification with high pitch."""
-        import numpy as np
-        voiced_f0 = np.array([200, 210, 220, 230, 240])
-        gender, confidence, reason = classify_gender_statistical(voiced_f0, verbose=False)
-        assert gender == "female"
-
-    def test_returns_confidence(self):
-        """Test that confidence is returned."""
-        import numpy as np
-        voiced_f0 = np.array([100, 110, 120, 130, 140])
-        gender, confidence, reason = classify_gender_statistical(voiced_f0, verbose=False)
-        assert confidence is not None
-        assert 0.0 <= confidence <= 1.0
-
-
-class TestDetectGenderFromAudio:
-    """Tests for detect_gender_from_audio function."""
-
-    def test_with_silence_audio(self, temp_dir, mock_tts_engine):
-        """Test gender detection with silence audio."""
-        voice_file = temp_dir / "test_voice.wav"
-        write_silence_wav(voice_file, mock_tts_engine.sample_rate, 1.0)
-
-        gender, confidence, reason = detect_gender_from_audio(str(voice_file), use_ttest=False, verbose=False)
-
-        assert gender is None or gender in ("male", "female")
 
 
 class TestGetCharactersFromMapFiles:

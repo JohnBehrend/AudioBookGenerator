@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from openai import OpenAI
 
-from .config import LLM_SETTINGS, OUTPUT_DIR
+from .config import LLM_NO_THINKING_EXTRA_BODY, LLM_SETTINGS, OUTPUT_DIR
+from .naming import sorted_chapter_files
 from .utils import get_llm_client, compare_characters, get_characters_from_map_files, natural_sort_key
 
 
@@ -293,9 +294,7 @@ def extract_character_dialogue(chapters_dir: Path, character_name: str, max_exam
     char_lower = character_name.lower()
 
     # Get all map files sorted
-    map_files = sorted([f for f in chapters_dir.glob("*.map.json")
-                       if re.match(r"^chapter_\d+\.map\.json$", f.name)],
-                      key=natural_sort_key)
+    map_files = sorted_chapter_files(chapters_dir, ".map.json")
 
     for map_file in map_files:
         try:
@@ -433,26 +432,12 @@ def _parse_universal_description(raw: str) -> Optional[Dict[str, str]]:
     Returns dict with keys 'gender', 'age', 'pitch', 'accent', 'style', 'celebrity_voice' or None if invalid.
     """
     try:
-        text = raw.strip()
-        # Try direct parse first
-        try:
-            obj = json.loads(text)
-        except json.JSONDecodeError:
-            # Try extracting JSON from markdown code block
-            if "```" in text:
-                text = text.split("\n", 1)[1] if "\n" in text else text
-                if text.endswith("```"):
-                    text = text[:-3]
-            # Try finding JSON object anywhere in the text
-            start = text.find("{")
-            end = text.rfind("}") + 1
-            if start >= 0 and end > start:
-                text = text[start:end]
-            try:
-                obj = json.loads(text)
-            except json.JSONDecodeError:
-                # Fallback: extract values from prose
-                return _extract_from_prose(raw)
+        # Tolerant extraction: markdown fences, prose-wrapped JSON, etc.
+        from .json_utils import extract_json_dict
+        obj = extract_json_dict(raw)
+        if obj is None:
+            # Fallback: extract values from prose
+            return _extract_from_prose(raw)
         gender = obj.get("gender", "").lower()
         age = obj.get("age", "").lower()
         pitch = obj.get("pitch", "moderate").lower()
@@ -592,18 +577,6 @@ def _universal_description_to_dramabox(parsed: Dict[str, str]) -> str:
     return ", ".join(parts)
 
 
-def _universal_description_to_vox(parsed: Dict[str, str]) -> str:
-    """Convert universal JSON description to VoxCPM format."""
-    parts = [parsed["gender"], parsed["age"]]
-    if parsed.get("pitch"):
-        parts.append(parsed["pitch"])
-    if parsed.get("style"):
-        parts.extend(s.strip() for s in parsed["style"].split(","))
-    if parsed.get("accent"):
-        parts.append(parsed["accent"])
-    return f"({', '.join(parts)})"
-
-
 def describe_character(client: OpenAI, model: str, character: str, context: str, chapter_messages: Optional[List[str]] = None, voice_engine: Optional[str] = None, max_retries: int = 3, used_celebrities: Optional[List[str]] = None) -> str:
     """Ask the LLM to describe a single character.
 
@@ -646,7 +619,7 @@ def describe_character(client: OpenAI, model: str, character: str, context: str,
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                extra_body=LLM_NO_THINKING_EXTRA_BODY,
             )
             raw = response.choices[0].message.content
             # Validate universal JSON format
@@ -682,7 +655,7 @@ def describe_all_characters(client: OpenAI, model: str, characters: List[str], c
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            extra_body=LLM_NO_THINKING_EXTRA_BODY,
         )
         content = response.choices[0].message.content
         # Try to parse JSON from response
@@ -748,7 +721,7 @@ def describe_characters_shared(
         wiki_url_template: Optional URL template for wiki lookup
         verbose: Print verbose output
         progress_callback: Optional callback for progress updates
-        voice_engine: TTS engine for voice generation ('omni', 'vox', etc.)
+        voice_engine: TTS engine for voice generation ('omni', 'dramabox', 'minimax_h3', etc.)
         max_concurrent: Maximum number of concurrent LLM calls (default 1, set higher to parallelize)
 
     Returns:
@@ -967,7 +940,7 @@ def describe_characters(
         verbose: Print verbose output
         seed_characters: Dict mapping character names to voice paths from seed voices_map
         progress_callback: Optional callback(progress, desc) for progress updates
-        voice_engine: TTS engine for voice generation ('omni', 'vox', etc.) - affects prompt format
+        voice_engine: TTS engine for voice generation ('omni', 'dramabox', 'minimax_h3', etc.) - affects prompt format
         client: Optional LLM client for injection (for testing)
 
     Returns:

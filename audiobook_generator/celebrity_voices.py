@@ -17,7 +17,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yt_dlp
 
-from .config import DEFAULTS, LLM_SETTINGS
+from .audio import validate_voice_with_chunkformer
+from .config import LLM_NO_THINKING_EXTRA_BODY, DEFAULTS
 
 
 # Module-level cache for celebrity audio downloads to avoid duplicate YouTube requests
@@ -69,6 +70,12 @@ def _retry_llm_call(func: Callable, max_retries: int = 3, backoff: float = 1.0, 
             else:
                 raise
     return None
+
+
+def _extract_json_obj(raw: str) -> Optional[Dict[str, Any]]:
+    """Extract a dict from an LLM response, tolerating imperfect JSON."""
+    from .json_utils import extract_json_dict
+    return extract_json_dict(raw)
 
 
 CELEBRITY_MATCHING_PROMPT = """You are a voice matching expert. Given a character description, suggest a celebrity whose voice best matches.
@@ -123,7 +130,7 @@ def match_celebrity(
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                extra_body=LLM_NO_THINKING_EXTRA_BODY,
             )
             raw = response.choices[0].message.content
             if not raw:
@@ -148,6 +155,222 @@ def match_celebrity(
     return None
 
 
+KNOWN_LINES_PROMPT = """You are identifying a target movie and spoken lines for a celebrity voice.
+
+Given the celebrity name, choose ONE well-known movie (or TV series) where this
+actor STARS in a speaking role, and list 4-6 SHORT lines that the actor actually
+speaks IN THAT SAME movie. The movie must be one with widely available clips on
+YouTube so we can find and download a scene from it.
+
+Rules:
+- Choose a single iconic/popular movie for this actor (a movie with many clips).
+- All lines must come from THAT movie, spoken by this actor.
+- Keep each line SHORT (2-10 words), verbatim as spoken, so Whisper can match it.
+- Prefer memorable, distinct lines from that movie.
+
+Output ONLY a JSON object:
+{{"movie": "Movie Title", "lines": ["line one", "line two", "line three", "line four", "line five"]}}
+
+Example for Benedict Cumberbatch:
+{{"movie": "Sherlock", "lines": ["The world is not in your books and maps, it's out there", "You have a grand gift for silence, Watson"]}}
+"""
+
+
+def get_celebrity_known_lines(
+    client: Any,
+    model: str,
+    celebrity: str,
+    max_retries: int = 2,
+    verbose: bool = False,
+) -> Tuple[str, List[str]]:
+    """Ask the LLM for a target movie and short lines the celebrity speaks in it.
+
+    The returned movie is used to build targeted search queries (so the scraped
+    clip comes from a movie the actor stars in), and the lines are used to
+    content-validate the clip: if a Whisper transcription of the found clip
+    matches one of these lines, the clip is trusted as the celebrity's real voice.
+
+    Args:
+        client: OpenAI client instance
+        model: Model name
+        celebrity: Celebrity full name
+        max_retries: Number of retries on parse/connection failure
+        verbose: Print debug output
+
+    Returns:
+        Tuple of (target_movie, list_of_short_lines). Empty strings/list on failure.
+    """
+    if not client:
+        return "", []
+    messages = [
+        {"role": "system", "content": KNOWN_LINES_PROMPT},
+        {"role": "user", "content": f"Celebrity: {celebrity}"},
+    ]
+    for attempt in range(max_retries):
+        try:
+            raw = _retry_llm_call(
+                lambda: client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    extra_body=LLM_NO_THINKING_EXTRA_BODY,
+                ).choices[0].message.content,
+                max_retries=2,
+                backoff=1.0,
+                verbose=verbose,
+            )
+            if not raw:
+                return "", []
+            obj = _extract_json_obj(raw)
+            lines = [str(l).strip() for l in obj.get("lines", []) if str(l).strip()] if obj else []
+            movie = str(obj.get("movie", "")).strip() if obj else ""
+            if lines:
+                return movie, lines
+        except Exception as e:
+            if verbose:
+                print(f"    [DEBUG] get_celebrity_known_lines attempt {attempt+1} failed: {e}")
+    return "", []
+
+
+def _transcript_contains_known_line(
+    transcript: str,
+    known_lines: List[str],
+    threshold: float = 0.8,
+) -> bool:
+    """Return True if the transcript fuzzy-matches any known line.
+
+    Content validation: if the celebrity's known spoken line appears in the
+    Whisper transcription of a scraped clip, that is strong evidence the clip
+    really contains the celebrity's voice (as opposed to a wrong video or a
+    misattributed clip). This is more reliable than an audio gender classifier.
+
+    Args:
+        transcript: Whisper transcription of the clip (lowercased at use site)
+        known_lines: Short known lines the celebrity is known to say
+        threshold: Minimum fuzzy match ratio to count as a hit
+
+    Returns:
+        True if at least one known line is spoken in the transcript.
+    """
+    from difflib import SequenceMatcher
+    from .utils import distill_string
+
+    def norm(s: str) -> str:
+        return distill_string(s)
+
+    if not transcript or not known_lines:
+        return False
+    t_norm = norm(transcript)
+    t_words = t_norm.split()
+    n = len(t_words)
+    for line in known_lines:
+        l_norm = norm(line)
+        l_words = l_norm.split()
+        if not l_words:
+            continue
+        ln = len(l_words)
+        # Slide a window over the transcript matching the line's length (with a
+        # little slack) and take the best fuzzy ratio.
+        best = 0.0
+        for i in range(max(0, n - ln + 1)):
+            window = " ".join(t_words[i:i + ln])
+            best = max(best, SequenceMatcher(None, window, l_norm).ratio())
+            if best >= threshold:
+                return True
+    return False
+
+
+TRANSCRIPT_REVIEW_PROMPT = """You are verifying that a scraped voice clip's content genuinely belongs to a celebrity.
+
+The clip was selected as a voice reference for the character "{character}", whose voice description is:
+{description}
+
+It is attributed to the celebrity "{celebrity}".
+
+Here is the Whisper transcription of the clip:
+---
+{transcript}
+---
+
+Judge whether this clip is an appropriate, content-correct voice reference:
+1. Is the content plausibly the celebrity "{celebrity}" speaking? (recognizable
+   from their known roles, interviews, or how they are known to speak)
+2. Is it a single coherent real speaker, and NOT a mashup, clearly a different
+   person, background music, or a description ABOUT the celebrity rather than BY them?
+3. Does the speaking style (tone, register) reasonably fit the character description?
+
+Be decisive but fair. A genuine interview or scene where the celebrity talks about
+themselves/their work is valid even if it is not a famous scripted quote.
+
+Respond ONLY with JSON:
+{{"valid": true or false, "reason": "short explanation"}}
+"""
+
+
+def review_celebrity_transcript(
+    client: Any,
+    model: str,
+    celebrity: str,
+    character: str,
+    description: str,
+    transcript: str,
+    verbose: bool = False,
+) -> Tuple[bool, str]:
+    """Ask the LLM whether a clip's transcript content-correctly belongs to a celebrity.
+
+    This is more robust than matching pre-supplied known lines: the LLM can
+    recognize the celebrity from any of their real content (interviews, roles,
+    distinctive speech) and reject clips that are about the celebrity rather than
+    BY them, or that are clearly a different person.
+
+    Args:
+        client: OpenAI client instance
+        model: Model name
+        celebrity: Celebrity full name
+        character: Character being voiced
+        description: Character voice description
+        transcript: Whisper transcription of the clip
+        verbose: Print debug output
+
+    Returns:
+        Tuple of (is_valid, reason). is_valid=False on any failure.
+    """
+    if not client or not transcript:
+        return False, "no client or transcript"
+    prompt = TRANSCRIPT_REVIEW_PROMPT.format(
+        character=character,
+        description=description,
+        celebrity=celebrity,
+        transcript=transcript[:4000],
+    )
+    messages = [
+        {"role": "system", "content": "You verify audio content attribution. Respond only with JSON."},
+        {"role": "user", "content": prompt},
+    ]
+    try:
+        raw = _retry_llm_call(
+            lambda: client.chat.completions.create(
+                model=model,
+                messages=messages,
+                extra_body=LLM_NO_THINKING_EXTRA_BODY,
+            ).choices[0].message.content,
+            max_retries=2,
+            backoff=1.0,
+            verbose=verbose,
+        )
+        if not raw:
+            return False, "empty LLM response"
+        obj = _extract_json_obj(raw)
+        if obj is None:
+            return False, "unparseable LLM response"
+        valid = bool(obj.get("valid"))
+        reason = str(obj.get("reason", "")).strip()
+        return valid, reason
+    except Exception as e:
+        if verbose:
+            print(f"    [DEBUG] review_celebrity_transcript failed: {e}")
+    return False, "review failed"
+
+
 def download_celebrity_audio(
     search_query: str,
     output_dir: str,
@@ -157,6 +380,7 @@ def download_celebrity_audio(
     model: str = "",
     celebrity: str = "",
     description: str = "",
+    known_lines: Optional[List[str]] = None,
     verbose: bool = False,
 ) -> Optional[str]:
     """Download audio clip of celebrity using yt-dlp.
@@ -175,13 +399,15 @@ def download_celebrity_audio(
         model: LLM model name
         celebrity: Celebrity name
         description: Character description
+        known_lines: Optional short known lines used to select a clip that
+            actually contains one of them (content validation).
         verbose: Print debug output
 
     Returns:
         Path to downloaded WAV file or None on failure
     """
     # Check cache first - avoid downloading the same video multiple times
-    cache_key = f"{search_query}|{output_dir}"
+    cache_key = f"{search_query}|{output_dir}|{file_prefix}"
     if cache_key in _celebrity_audio_cache:
         cached_path = _celebrity_audio_cache[cache_key]
         if os.path.exists(cached_path):
@@ -213,6 +439,7 @@ def download_celebrity_audio(
             description=description,
             output_dir=output_dir,
             max_results=5,
+            known_lines=known_lines,
             verbose=verbose,
         )
         if selected_url:
@@ -312,6 +539,7 @@ def find_best_celebrity_video(
     description: str,
     output_dir: str = ".",
     max_results: int = 5,
+    known_lines: Optional[List[str]] = None,
     verbose: bool = False,
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]], Optional[str]]:
     """Find the best YouTube video for a celebrity using Whisper transcription.
@@ -319,6 +547,11 @@ def find_best_celebrity_video(
     Searches YouTube, downloads audio, transcribes with Whisper,
     uses LLM to determine which video likely has the celebrity speaking most clearly,
     then returns the video URL, best segment timestamps, and the downloaded audio path.
+
+    If ``known_lines`` are provided, a video whose transcription matches one of
+    those lines is preferred (content validation): it is returned immediately as
+    the selected clip, since it provably contains the celebrity's actual dialogue.
+    If no video matches, the normal LLM-based selection still runs as a fallback.
 
     Args:
         client: OpenAI client instance
@@ -328,6 +561,8 @@ def find_best_celebrity_video(
         description: Character description
         output_dir: Directory for temp files
         max_results: Max number of videos to check
+        known_lines: Optional short known lines used to prefer a clip that
+            actually contains one of them (content validation).
         verbose: Print debug output
 
     Returns:
@@ -436,7 +671,31 @@ def find_best_celebrity_video(
                         })
                         if verbose:
                             print(f"    [DEBUG] Whisper transcription found for video {idx+1}: {len(whisper_text)} chars")
-                        
+
+                        # Content validation: if this clip's transcription matches
+                        # a known line, it provably contains the celebrity's real
+                        # dialogue — select it immediately and skip LLM approval.
+                        if known_lines and _transcript_contains_known_line(whisper_text, known_lines):
+                            if verbose:
+                                print(f"    [DEBUG] Video {idx+1} content-validated (known line matched), stopping early")
+                            best_audio_path = audio_path
+                            return url, None, best_audio_path
+
+                        # When known_lines are provided we are hunting for a clip
+                        # that contains one of them, so do NOT stop early on a
+                        # character-description match — keep scanning for content.
+                        if known_lines:
+                            if verbose:
+                                print(f"    [DEBUG] known_lines active, continuing scan for a content match")
+                            # This video did not content-match; delete its audio
+                            # so temp files don't accumulate across the scan.
+                            if audio_path and Path(audio_path).exists():
+                                try:
+                                    os.unlink(audio_path)
+                                except Exception:
+                                    pass
+                            continue
+
                         # Stop early - ask LLM if this video is good enough
                         if len(whisper_text) >= 200:
                             approved, best_segment = _evaluate_single_video_with_llm(
@@ -1077,7 +1336,7 @@ Example:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": f"Select the best video for {celebrity} from these {len(candidate_videos)} options:\n\n{videos_text}"},
             ],
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            extra_body=LLM_NO_THINKING_EXTRA_BODY,
         )
         return response.choices[0].message.content
 
@@ -1160,7 +1419,7 @@ Example:
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": f"Is this video good enough for {celebrity}'s voice? Find the best segment."},
             ],
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            extra_body=LLM_NO_THINKING_EXTRA_BODY,
         )
         return response.choices[0].message.content
 
@@ -1489,7 +1748,7 @@ def identify_celebrity_segments(
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": "Analyze the transcription and identify which segments are spoken by the celebrity."},
                 ],
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                extra_body=LLM_NO_THINKING_EXTRA_BODY,
             )
             return response.choices[0].message.content
 
@@ -1569,13 +1828,15 @@ def find_and_extract_video_segment(
     search_query: str,
     celebrity: str,
     description: str,
-    output_dir: str,
-    file_prefix: str,
+    character: str = "",
+    output_dir: str = "",
+    file_prefix: str = "",
     max_duration: int = 300,
     whisper_model: Any = None,
     max_segments: int = 3,
+    known_lines: Optional[List[str]] = None,
     verbose: bool = False,
-) -> Tuple[Optional[str], Optional[str]]:
+) -> Tuple[Optional[str], Optional[str], bool]:
     """Download one video, transcribe once, LLM evaluates and picks segments, extract to WAV.
 
     Single transcription is used for both LLM evaluation and segment extraction.
@@ -1586,15 +1847,23 @@ def find_and_extract_video_segment(
         search_query: YouTube search query
         celebrity: Celebrity name
         description: Character voice description
+        character: Character being voiced (used for content validation)
         output_dir: Directory to save files
         file_prefix: Prefix for output filenames
         max_duration: Max duration for downloaded clip
         whisper_model: WhisperModel for transcription
         max_segments: Maximum number of segments to extract from this video
+        known_lines: Short known lines used to content-validate the clip (the
+            clip is trusted as the celebrity's voice only if the transcript
+            matches one of these lines).
         verbose: Print debug output
 
     Returns:
-        Tuple of (segment_path, audio_source_path) or (None, None) on failure
+        Tuple of (segment_path, audio_source_path, content_validated) or
+        (None, None, False) on failure. content_validated is True when the clip
+        was verified by content: either a known line matched the transcription,
+        or an LLM transcript review confirmed the content belongs to the
+        celebrity (content-based identity proof).
     """
     audio_path = download_celebrity_audio(
         search_query=search_query,
@@ -1605,11 +1874,14 @@ def find_and_extract_video_segment(
         model=model,
         celebrity=celebrity,
         description=description,
+        known_lines=known_lines,
         verbose=verbose,
     )
 
     if not audio_path:
-        return None, None
+        return None, None, False
+
+    content_validated = False
 
     # Transcribe once, reuse for both LLM evaluation and segment extraction
     if whisper_model:
@@ -1624,6 +1896,27 @@ def find_and_extract_video_segment(
         if transcribed_text:
             if verbose:
                 print(f"    [DEBUG] Transcribed {len(transcribed_text)} chars (single pass)")
+
+            # Content validation. Known-line fuzzy match is a fast first check;
+            # if it fails, ask the LLM to review the transcript and judge whether
+            # the content genuinely belongs to the celebrity (more robust than
+            # exact lines). Either signal marks the clip content-validated.
+            if known_lines and _transcript_contains_known_line(transcribed_text, known_lines):
+                content_validated = True
+                if verbose:
+                    print(f"    [DEBUG] Content validation: MATCHED a known line")
+            if not content_validated:
+                content_validated, review_reason = review_celebrity_transcript(
+                    client=client,
+                    model=model,
+                    celebrity=celebrity,
+                    character=character,
+                    description=description,
+                    transcript=transcribed_text,
+                    verbose=verbose,
+                )
+                if verbose:
+                    print(f"    [DEBUG] Content validation (LLM review): {content_validated} - {review_reason}")
 
             # Build timestamped transcription for LLM
             sentences = []
@@ -1662,7 +1955,7 @@ def find_and_extract_video_segment(
                         {"role": "system", "content": prompt},
                         {"role": "user", "content": "Analyze the transcription and identify the best segment spoken by the celebrity."},
                     ],
-                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                    extra_body=LLM_NO_THINKING_EXTRA_BODY,
                 )
                 return response.choices[0].message.content
 
@@ -1692,7 +1985,7 @@ def find_and_extract_video_segment(
                             if _extract_segment_from_audio(audio_path, seg['start'], seg['end'], str(seg_path)):
                                 if verbose:
                                     print(f"    [DEBUG] Extracted segment {seg_idx}: {seg_path}")
-                        return str(Path(output_dir) / f"{file_prefix}_segment0.wav"), audio_path
+                        return str(Path(output_dir) / f"{file_prefix}_segment0.wav"), audio_path, content_validated
 
     # Fallback: silence detection
     segments = extract_speech_segments(
@@ -1710,9 +2003,9 @@ def find_and_extract_video_segment(
                 os.unlink(s)
             except OSError:
                 pass
-        return str(seg_path), audio_path
+        return str(seg_path), audio_path, content_validated
 
-    return None, None
+    return None, None, False
 
 
 def validate_celebrity_segment(
@@ -1723,7 +2016,8 @@ def validate_celebrity_segment(
 ) -> Tuple[bool, str]:
     """Validate a celebrity voice segment against the character description.
 
-    Uses ChunkFormer for gender/age validation.
+    Uses ChunkFormer for gender validation (age is skipped: celebrity clips
+    may be in-character, so age need not match the character description).
 
     Args:
         segment_path: Path to the segment WAV file
@@ -1742,25 +2036,18 @@ def validate_celebrity_segment(
         return False, f"File too small ({file_size} bytes)"
 
     if chunkformer_model:
-        try:
-            result = chunkformer_model.classify_audio(audio_path=segment_path)
-            predicted_gender = result["gender"]["label"]
-            gender_prob = result["gender"]["prob"]
-
-            desc_lower = description.lower()
-            expected_gender = "female" if any(w in desc_lower for w in ["female", "woman", "women", "girl"]) else ("male" if any(w in desc_lower for w in ["male", "man", "men", "boy"]) else None)
-
-            GENDER_CONFIDENCE_THRESHOLD = 0.7
-            if expected_gender is not None and predicted_gender != expected_gender:
-                if gender_prob >= GENDER_CONFIDENCE_THRESHOLD:
-                    return False, f"Gender mismatch: expected {expected_gender}, got {predicted_gender} (conf: {gender_prob:.2f})"
-                elif verbose:
-                    print(f"    [DEBUG] Gender mismatch ignored (conf: {gender_prob:.2f} < {GENDER_CONFIDENCE_THRESHOLD})")
-        except Exception as e:
-            if verbose:
-                print(f"    [DEBUG] ChunkFormer validation error: {e}")
+        is_valid, reason, _ = validate_voice_with_chunkformer(
+            segment_path, description, chunkformer_model,
+            check_age=False, verbose=verbose,
+        )
+        return is_valid, reason
 
     return True, "Validation passed"
+
+
+def safe_celebrity_name(celebrity: str) -> str:
+    """Filesystem-safe name for a celebrity (used in archive/output paths)."""
+    return re.sub(r'[^a-zA-Z0-9 _-]', '', celebrity).strip().replace(' ', '_').lower()
 
 
 def generate_celebrity_reference(
@@ -1817,7 +2104,7 @@ def _save_to_archive(celebrity: str, wav_path: str, verbose: bool = False) -> No
     """Save a celebrity voice to the archive for future reuse."""
     archive_dir = _archive_dir()
     os.makedirs(archive_dir, exist_ok=True)
-    safe_name = re.sub(r'[^a-zA-Z0-9 _-]', '', celebrity).strip().replace(' ', '_').lower()
+    safe_name = safe_celebrity_name(celebrity)
     dest = os.path.join(archive_dir, f'{safe_name}.wav')
     if not os.path.exists(dest):
         shutil.copy2(wav_path, dest)
@@ -1847,7 +2134,7 @@ def save_celebrity_voice_as(celebrity: str, source_wav: str, output_dir: str) ->
     Returns:
         The path of the written celebrity-named file.
     """
-    safe = re.sub(r'[^a-zA-Z0-9 _-]', '', celebrity).strip().replace(' ', '_').lower()
+    safe = safe_celebrity_name(celebrity)
     dest = str(Path(output_dir) / f"{safe}.wav")
     shutil.copy2(source_wav, dest)
     return dest
@@ -1965,18 +2252,24 @@ def build_celebrity_voice(
 
     # Check celebrity_voices_archive for pre-existing voice
     archive_dir = _archive_dir()
-    safe_name = re.sub(r'[^a-zA-Z0-9 _-]', '', celebrity).strip().replace(' ', '_').lower()
+    safe_name = safe_celebrity_name(celebrity)
     archived_path = os.path.join(archive_dir, f'{safe_name}.wav')
     if os.path.exists(archived_path):
         if verbose:
             print(f"    [ARCHIVE] Found pre-existing celebrity voice: {archived_path}")
         final_path = os.path.join(output_dir, f"{safe_name}.wav")
         shutil.copy2(archived_path, final_path)
+        # NOTE: the archive stores a TTS-generated reference (reading static
+        # text), not the original scraped celebrity audio, so it cannot be
+        # content-validated here. content_validated is therefore False, which
+        # means ChunkFormer still runs on it downstream. Content validation only
+        # applies to freshly scraped audio in the main path below.
         metadata = {
             "celebrity": celebrity,
             "source": "archive",
             "archive_path": archived_path,
             "output_path": final_path,
+            "content_validated": False,
         }
         return final_path, metadata
 
@@ -1989,11 +2282,36 @@ def build_celebrity_voice(
         style = ""
         gender = ""
 
-    search_queries = [
+    # Get a target movie the celebrity stars in and short lines they speak in it.
+    # These are used to build targeted search queries AND to content-validate the
+    # clip (identity proof by matching the transcript), which lets us skip
+    # ChunkFormer. Tying the search and the validation to the SAME movie makes a
+    # content match much more likely than generic "famous lines".
+    target_movie, known_lines = get_celebrity_known_lines(client, model, celebrity, verbose=verbose)
+    if verbose:
+        print(f"    [DEBUG] Target movie '{target_movie}', known lines: {known_lines}")
+
+    # Search for clips of the target movie (where the actor stars) first, so the
+    # scraped clip is likely from the same movie as the validation lines. Queries
+    # are GENERAL (natural phrasing, no exact-quote constraints — which return
+    # empty) but still DIRECTED at the movie + actor.
+    search_queries = []
+    if target_movie:
+        search_queries += [
+            f"{celebrity} {target_movie} scene",
+            f"{celebrity} {target_movie} best scenes",
+            f"{celebrity} {target_movie} interview",
+            f"{celebrity} {target_movie}",
+        ]
+    search_queries += [
         f"{celebrity} {style} dialogue",
         f"{celebrity} emotional scene",
         f"{celebrity} {gender} speech",
     ]
+    # Best-effort extra queries built from specific lines (may return nothing).
+    for line in known_lines[:2]:
+        if line:
+            search_queries.append(f'"{celebrity}" "{line}"')
 
     static_text = DEFAULTS.get("static_voice_text", "")
     all_segments = []
@@ -2005,17 +2323,21 @@ def build_celebrity_voice(
         if verbose:
             print(f"    [DEBUG] Video {vid_idx+1}/{max_videos}: query='{query}'")
 
-        # Step 1: Download and extract segments
-        segment_path, audio_source = find_and_extract_video_segment(
+        # Step 1: Download and extract segments (content-validated when the
+        # clip is verified by content: a known line match or an LLM transcript
+        # review).
+        segment_path, audio_source, content_validated = find_and_extract_video_segment(
             client=client,
             model=model,
             search_query=query,
             celebrity=celebrity,
             description=description,
+            character=character,
             output_dir=output_dir,
             file_prefix=file_prefix,
             max_duration=max_duration,
             whisper_model=whisper_model,
+            known_lines=known_lines,
             verbose=verbose,
         )
 
@@ -2023,6 +2345,9 @@ def build_celebrity_voice(
             if verbose:
                 print(f"    [DEBUG] Failed to extract segment for video {vid_idx+1}")
             continue
+
+        if verbose:
+            print(f"    [DEBUG] content_validated={content_validated} for video {vid_idx+1}")
 
         # Collect all segments from this video
         video_segments = []
@@ -2040,13 +2365,22 @@ def build_celebrity_voice(
         # Try each segment: validate, generate reference, collect all passing
         video_refs = []
         for seg_idx, seg_path in enumerate(video_segments):
-            # Step 2: Validate segment
-            is_valid, reason = validate_celebrity_segment(
-                segment_path=seg_path,
-                description=description,
-                chunkformer_model=chunkformer_model,
-                verbose=verbose,
-            )
+            # Step 2: Validate segment.
+            # If the clip was content-validated (a known line matched the
+            # transcript, or the LLM transcript review approved it), skip
+            # ChunkFormer — content is the identity proof.
+            # Otherwise fall back to ChunkFormer gender/age validation.
+            if content_validated:
+                is_valid, reason = True, "content-validated (known line match or LLM review)"
+                if verbose:
+                    print(f"    [DEBUG] Segment {seg_idx}: skipping ChunkFormer (content-validated)")
+            else:
+                is_valid, reason = validate_celebrity_segment(
+                    segment_path=seg_path,
+                    description=description,
+                    chunkformer_model=chunkformer_model,
+                    verbose=verbose,
+                )
 
             if not is_valid:
                 if verbose:
@@ -2088,6 +2422,7 @@ def build_celebrity_voice(
                 "search_query": query,
                 "segment": best_seg,
                 "audio_source": best_audio,
+                "content_validated": bool(content_validated),
                 "alternatives": [r[0] for r in video_refs[1:]],
             }
             _save_to_archive(celebrity, best_ref, verbose=verbose)
@@ -2117,6 +2452,7 @@ def build_celebrity_voice(
                     "search_query": search_queries[0],
                     "segment": seg_path,
                     "audio_source": audio_src,
+                    "content_validated": False,
                 }
                 _save_to_archive(celebrity, ref_path, verbose=verbose)
                 return save_celebrity_voice_as(celebrity, ref_path, output_dir), metadata
@@ -2128,62 +2464,9 @@ def build_celebrity_voice(
             "search_query": search_queries[0],
             "segment": seg_path,
             "audio_source": audio_src,
+            "content_validated": False,
         }
         _save_to_archive(celebrity, seg_path, verbose=verbose)
         return save_celebrity_voice_as(celebrity, seg_path, output_dir), metadata
 
     return None, None
-
-
-def match_all_celebrities(
-    client: Any,
-    model: str,
-    characters: Dict[str, str],
-    output_dir: str,
-    max_duration: int = 30,
-    verbose: bool = False,
-) -> Dict[str, Dict[str, Any]]:
-    """Match celebrities for all characters.
-
-    Args:
-        client: OpenAI client instance
-        model: Model name
-        characters: Dict of character_name -> description
-        output_dir: Directory to save voice files
-        max_duration: Max duration for downloaded clips
-        verbose: Print progress
-
-    Returns:
-        Dict of character_name -> metadata
-    """
-    results = {}
-    total = len(characters)
-
-    for i, (char, desc) in enumerate(characters.items(), 1):
-        if char == "narrator":
-            if verbose:
-                print(f"  [{i}/{total}] Skipping narrator (no celebrity match)")
-            continue
-
-        if verbose:
-            print(f"  [{i}/{total}] Matching celebrity for: {char}")
-
-        voice_path, metadata = build_celebrity_voice(
-            client=client,
-            model=model,
-            character=char,
-            description=desc,
-            output_dir=output_dir,
-            max_duration=max_duration,
-        )
-
-        if metadata:
-            results[char] = metadata
-            if verbose:
-                print(f"    Matched: {metadata['celebrity']}")
-                print(f"    Voice: {voice_path}")
-        else:
-            if verbose:
-                print(f"    Failed to match celebrity")
-
-    return results

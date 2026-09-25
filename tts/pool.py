@@ -92,8 +92,14 @@ class WorkerPool:
         output_path: str,
         verbose: bool = False,
         ref_text: Optional[str] = None,
+        **kwargs: Any,
     ) -> bool:
-        """Generate audio for a single line, routing to next worker."""
+        """Generate audio for a single line, routing to next worker.
+
+        Mirrors TTSEngine.generate_line's contract: returns True/False instead
+        of raising, so the pipeline treats pool and single-engine failures the
+        same way.
+        """
         w = self._next_worker()
         resp = w.worker.request(
             "generate_line",
@@ -101,10 +107,17 @@ class WorkerPool:
             voice_path=voice_path,
             output_path=output_path,
             device=w.device,
+            verbose=verbose,
+            ref_text=ref_text,
+            **kwargs,
         )
-        if resp.get("error"):
-            raise RuntimeError(resp["error"])
-        return resp.get("success", True)
+        if "error" in resp:
+            print(f"    [EngineError] generate_line failed: {resp['error']}")
+            if resp.get("traceback"):
+                print(f"    {resp['traceback']}")
+        elif not resp.get("success", False):
+            print(f"    [EngineError] generate_line returned success=False (no error details)")
+        return resp.get("success", False)
 
     def shutdown(self) -> None:
         """Shutdown all worker subprocesses."""

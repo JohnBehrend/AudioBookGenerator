@@ -13,7 +13,7 @@ class TestSettingsShape:
             assert key in config.AUDIO_SETTINGS
 
     def test_defaults_has_audio_generation_keys(self):
-        for key in ("short_text_postfix", "inter_line_pause_ms", "enable_postfix", "max_retries"):
+        for key in ("short_text_postfix", "inter_line_pause_ms", "enable_postfix"):
             assert key in config.DEFAULTS
 
     def test_get_llm_port_returns_int(self):

@@ -29,7 +29,7 @@ from .gradio_ui import (
     cleanup_temp_dir,
 )
 from .utils import TempDirContext
-from .celebrity_voices import match_celebrity, match_all_celebrities, build_celebrity_voice
+from .celebrity_voices import match_celebrity, build_celebrity_voice
 from .testing import MockTTSEngine, MockLLMClient
 
 __all__ = [

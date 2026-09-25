@@ -232,87 +232,70 @@ class TestReset:
         assert len(vm._voice_map) == 0
 
 
-class TestUnloadModel:
-    """Tests for unload_model method."""
-
-    def test_unloads_specific_engine(self, temp_dir, mock_tts_engine):
-        """Test that specific engine models are unloaded."""
-        vm = VoiceMapper(output_dir=str(temp_dir), engine=mock_tts_engine)
-        vm.unload_model("moss")
-        # unload_model is a no-op in current implementation
-        assert True
-
-
 class TestGenerateVoiceSample:
     """Tests for generate_voice_sample method."""
 
     def test_generates_voice_sample(self, temp_dir, mock_tts_engine):
         """Test that voice sample is generated."""
         vm = VoiceMapper(output_dir=str(temp_dir), engine=mock_tts_engine)
-        with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
-            mock_gen.return_value = (True, str(temp_dir / "test_char.wav"), 1.0)
-            success, output_file, duration, is_celebrity = vm.generate_voice_sample(
-                character_name="test_char",
-                description="A test voice.",
-                verbose=False
-            )
+        success, output_file, duration, is_celebrity, content_validated = vm.generate_voice_sample(
+            character_name="test_char",
+            description="A test voice.",
+            verbose=False
+        )
 
         assert success is True
         assert output_file is not None
         assert duration > 0
+        assert is_celebrity is False
+        assert content_validated is False
 
     def test_adds_voice_path_on_success(self, temp_dir, mock_tts_engine):
         """Test that voice path is added on successful generation."""
         vm = VoiceMapper(output_dir=str(temp_dir), engine=mock_tts_engine)
         initial_count = len(vm.voice_paths)
 
-        with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
-            mock_gen.return_value = (True, str(temp_dir / "test_char.wav"), 1.0)
-            vm.generate_voice_sample(
-                character_name="test_char",
-                description="A test voice.",
-                verbose=False
-            )
+        vm.generate_voice_sample(
+            character_name="test_char",
+            description="A test voice.",
+            verbose=False
+        )
 
         assert len(vm.voice_paths) == initial_count + 1
 
+    @pytest.mark.parametrize("content_validated", [True, False])
+    def test_celebrity_path_propagates_content_validated(
+        self, temp_dir, mock_llm_client, content_validated
+    ):
+        """The celebrity path must surface build_celebrity_voice's
+        content_validated flag in the returned tuple."""
+        from audiobook_generator.testing import write_silence_wav
 
-class TestBuildVoiceClonePrompt:
-    """Tests for build_voice_clone_prompt method."""
+        vm = VoiceMapper(
+            output_dir=str(temp_dir),
+            use_celebrity_voices=True,
+        )
+        voice_file = temp_dir / "celebrity.wav"
+        write_silence_wav(voice_file, 22050, 1)
 
-    def test_requires_voice_file(self, temp_dir, mock_tts_engine):
-        """Test that voice file is required."""
-        vm = VoiceMapper(output_dir=str(temp_dir), engine=mock_tts_engine)
-        # build_voice_clone_prompt was moved to tts.voice_sample, not on VoiceMapper
-        from tts.voice_sample import build_voice_clone_prompt
-        with pytest.raises(Exception):
-            build_voice_clone_prompt(
-                engine_dir="/tmp/nonexistent",
-                device="cpu",
-                voice_path=str(temp_dir / "nonexistent.wav"),
-                ref_text="Test text"
+        metadata = {
+            "celebrity": "Test Celebrity",
+            "search_query": "Test Celebrity interview",
+            "content_validated": content_validated,
+        }
+        with patch("audiobook_generator.celebrity_voices.build_celebrity_voice",
+                   return_value=(str(voice_file), metadata)) as mock_build:
+            success, output_file, duration, is_celebrity, propagated = vm.generate_voice_sample(
+                character_name="test_char",
+                description='{"gender": "male"}',
+                verbose=False,
+                client=mock_llm_client,
             )
 
-
-class TestGetVoiceClonePrompt:
-    """Tests for get_voice_clone_prompt method."""
-
-    def test_returns_none_for_missing_voice(self, temp_dir, mock_tts_engine):
-        """Test that None is returned when voice is missing."""
-        vm = VoiceMapper(output_dir=str(temp_dir), engine=mock_tts_engine)
-        # get_voice_clone_prompt was moved to tts.voice_sample module
-        # This test validates that the old API no longer exists
-        assert not hasattr(vm, 'get_voice_clone_prompt')
-
-
-class TestGetAllClonePrompts:
-    """Tests for get_all_clone_prompts method."""
-
-    def test_returns_empty_for_no_voices(self, temp_dir, mock_tts_engine):
-        """Test that the method no longer exists on VoiceMapper."""
-        vm = VoiceMapper(output_dir=str(temp_dir), engine=mock_tts_engine)
-        # get_all_clone_prompts was removed from VoiceMapper
-        assert not hasattr(vm, 'get_all_clone_prompts')
+        assert success is True
+        assert is_celebrity is True
+        assert propagated is content_validated
+        mock_build.assert_called_once()
 
 
 class TestLoadVoiceMap:

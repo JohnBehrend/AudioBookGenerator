@@ -89,9 +89,9 @@ def sample_chapter_text():
     """Sample chapter text with dialogue and narration."""
     return '''Mr. Bennet was among the earliest of her neighbours in calling
 upon Mrs. Bennet, and he entered the room with an air which decidedly
-marked either his delight in the discovery of his wife in one of her
-littleoramuseurs, or his wish to have theacolade in the greatest
-perfection. "I beg you would not go," said she. "You had much rather have
+    marked either his delight in the discovery of his wife in one of her
+    little amusements, or his wish to have the accolade in the greatest
+    perfection. "I beg you would not go," said she. "You had much rather have
 the honour of it, I assure you." "Indeed, Mrs. Bennet, well I know and
 have also experienced your hospitality, for my part I do not go to these
 places." She left the room in great agitation. "I hope," said Mr. Bennet,

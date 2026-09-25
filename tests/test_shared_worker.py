@@ -104,10 +104,12 @@ class TestSharedEngineWorkerLifecycle:
         assert shared_worker_count() == 0
 
     def test_release_below_zero_is_safe(self, tmp_path):
-        from tts.worker import release_shared_worker
+        from tts.worker import release_shared_worker, shared_worker_count
         eng = _make_fake_engine(tmp_path)
         release_shared_worker(eng, "cpu")  # no-op, never acquired
-        assert True
+        # Releasing an unacquired worker must not corrupt the shared count.
+        assert shared_worker_count(eng, "cpu") == 0
+        assert shared_worker_count() == 0
 
 
 class TestSharedWorkerProtocol:

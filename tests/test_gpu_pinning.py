@@ -94,11 +94,11 @@ class TestWhisperDeviceRouting:
 
     def test_run_full_pipeline_forwards_whisper_cpu_to_stage4(self):
         """run_full_pipeline must pass whisper_cpu through to generate_voice_samples."""
-        src = open(
-            "audiobook_generator/audiobook_generator.py",
-            encoding="utf-8",
-        ).read()
-        # The gen_voice_samples call site must forward whisper_cpu.
+        import inspect
+        from audiobook_generator.audiobook_generator import run_full_pipeline
+
+        src = inspect.getsource(run_full_pipeline)
+        # The generate_voice_samples call site must forward whisper_cpu.
         assert "whisper_cpu=whisper_cpu" in src
 
 

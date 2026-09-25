@@ -41,9 +41,11 @@ def main():
     if wav_path.suffix.lower() not in [".wav", ".mp3", ".flac"]:
         print(f"Warning: File extension '{wav_path.suffix}' may not be supported. Expected .wav, .mp3, or .flac", file=sys.stderr)
 
-    # Create client
+    # Create client (endpoint, model, and api_key all come from the same
+    # VOICE_VALIDATION config, falling back to the main LLM settings' key
+    # since local OpenAI-compatible servers accept any non-empty key).
     endpoint = args.endpoint or VOICE_VALIDATION["endpoint"]
-    api_key = args.api_key or LLM_SETTINGS["api_key"]
+    api_key = args.api_key or VOICE_VALIDATION.get("api_key") or LLM_SETTINGS["api_key"]
     model = args.model or VOICE_VALIDATION["model"]
 
     client = OpenAI(base_url=endpoint, api_key=api_key)

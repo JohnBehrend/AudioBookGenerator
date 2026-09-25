@@ -14,7 +14,6 @@ State machine pattern ensures each stage only runs when dependencies are met.
 
 import sys
 import io
-import re
 
 # ============================================================================
 # Suppress sox binary warning (sox Python package requires sox CLI binary)
@@ -45,6 +44,7 @@ from typing import Optional, Tuple, Dict, Any, List
 # Import from package modules - using clean public interfaces
 from . import parse_chapter
 from .llm_label_speakers import label_speakers  # Clean public function
+from .naming import sorted_chapter_files
 from .llm_describe_character import describe_characters as describe_chars  # Clean public function
 from .generate_voice_samples import generate_voice_samples as gen_voice_samples
 from .utils import (
@@ -224,9 +224,7 @@ def process_chapters_for_labels(
         log_output += "\nError: Chapters directory not initialized."
         return log_output, pipeline_state
 
-    chapter_files = sorted([f for f in chapters_dir.glob("chapter_*.txt")
-                           if re.match(r"^chapter_\d+\.txt$", f.name)],
-                          key=natural_sort_key)
+    chapter_files = sorted_chapter_files(chapters_dir)
 
     if not chapter_files:
         progress(1.0, desc="No chapter files found. Please run Stage 1 (Parse EPUB) first.")
@@ -506,9 +504,10 @@ def regenerate_voice_sample(
             return log_output, pipeline_state, None
 
         char_description = descriptions[character_name]
-        # Voice generation uses omni by default
 
-        voice_engine = "omni"
+        # Reuse the engine chosen for this pipeline run (Stage 3 radio);
+        # fall back to the pipeline default if state wasn't initialized.
+        voice_engine = getattr(pipeline_state, "voice_engine", None) or "dramabox"
 
         # Call generate_voice_samples from package
         progress(0, desc=f"Regenerating voice sample for {character_name} with TTS engine '{voice_engine}'...")
@@ -817,7 +816,7 @@ def create_or_get_pipeline_state(output_dir: str = None, voice_engine: str = Non
 
     Args:
         output_dir: Optional output directory path. If None, uses get_chapters_dir().
-        voice_engine: Voice engine for character descriptions ('omni' or 'vox')
+        voice_engine: Voice engine for character descriptions ('omni', 'dramabox', 'minimax_h3')
 
     Returns:
         PipelineState instance
@@ -999,9 +998,7 @@ def update_chapter_progress_from_state(pipeline_state: PipelineState) -> gr.HTML
         return gr.HTML(value="<div style='color: #888; padding: 20px; text-align: center;'>Chapters will appear here after EPUB parsing.</div>")
 
     # Get chapter text files (only chapter_N.txt format, exclude intermediate files)
-    import re
-    chapter_txt_files = sorted([f for f in chapters_dir.glob("chapter_*.txt") if re.match(r'chapter_\d+\.txt$', f.name)],
-                              key=natural_sort_key)
+    chapter_txt_files = sorted_chapter_files(chapters_dir)
     # Get chapter map files (speaker labeled)
     chapter_map_files = sorted(chapters_dir.glob("chapter_*.map.json"), key=natural_sort_key)
     # Get chapter audio files
@@ -1110,7 +1107,7 @@ def create_interface(
     Args:
         saved_temp_dir: Optional path to a saved temp directory to restore from.
                        If provided, restores the pipeline state from this directory.
-        voice_engine_default: Default voice engine for character descriptions ('omni' or 'vox')
+        voice_engine_default: Default voice engine for character descriptions ('omni', 'dramabox', 'minimax_h3')
     """
 
     with gr.Blocks() as demo:
@@ -1377,10 +1374,10 @@ def create_interface(
 
             # Voice engine selection (hidden, passed through state)
             voice_engine_input = gr.Radio(
-                choices=["omni", "vox"],
+                choices=["omni", "dramabox", "minimax_h3"],
                 label="Voice Engine for Character Descriptions",
-                value=voice_engine_default or "omni",
-                info="omni=OmniVoice format, vox=VoxCPM format"
+                value=voice_engine_default or "dramabox",
+                info="Engine whose description format is used for character voices"
             )
 
             # Save and Load
@@ -1793,7 +1790,7 @@ def create_interface(
                     return "No work to save. Please parse an EPUB file first."
                 archive_path = save_temp_dir(temp_dir)
                 # Show the chapters directory path for consistency
-                from utils import get_chapters_dir
+                from .utils import get_chapters_dir
                 chapters_dir = get_chapters_dir()
                 return f"Saved to: {archive_path}\nChapters: {chapters_dir}"
             except Exception as e:
@@ -1839,7 +1836,7 @@ def create_interface(
 
                 if temp_dir:
                     # Get the chapters directory for display
-                    from utils import get_chapters_dir_from_saved
+                    from .utils import get_chapters_dir_from_saved
                     chapters_dir = get_chapters_dir_from_saved(temp_dir)
                     # temp_dir is the extracted archive root, chapters_dir is the "chapters" subdirectory
                     # The actual files are in chapters_dir, so pass that to PipelineState
@@ -1984,7 +1981,7 @@ def create_interface(
                 temp_dir = load_temp_dir(archive_path)
                 if temp_dir:
                     # Get the chapters directory path for display
-                    from utils import get_chapters_dir_from_saved
+                    from .utils import get_chapters_dir_from_saved
                     chapters_dir = get_chapters_dir_from_saved(temp_dir)
                     # Note: Pipeline state is not automatically restored here.
                     # User should use --resume_from at startup for full state restoration.
@@ -2005,7 +2002,7 @@ def restore_pipeline_state(saved_temp_dir: str) -> Tuple[PipelineState, str]:
     Returns:
         Tuple of (PipelineState, log_message)
     """
-    from utils import get_chapters_dir_from_saved
+    from .utils import get_chapters_dir_from_saved
 
     chapters_dir = get_chapters_dir_from_saved(saved_temp_dir)
 

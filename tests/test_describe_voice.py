@@ -14,19 +14,13 @@ class TestDescribeVoiceCLI:
     def test_script_syntax(self):
         """Test that describe_voice.py has valid Python syntax."""
         import ast
-        script_path = Path(__file__).resolve().parent.parent / "describe_voice.py"
+        script_path = Path(__file__).resolve().parent.parent / "scripts" / "describe_voice.py"
         with open(script_path) as f:
             ast.parse(f.read())
 
-    def test_creates_wav_file(self, temp_dir):
-        """Test that a WAV file is created for testing."""
-        voice_file = temp_dir / "test_voice.wav"
-        write_silence_wav(voice_file, 22050, 1)
-        assert voice_file.exists()
-
     def test_missing_file_error(self, temp_dir, capsys):
         """Test error when file is missing."""
-        from describe_voice import main
+        from scripts.describe_voice import main
         with patch.object(sys, 'argv', ['describe_voice.py', '/nonexistent/file.wav']):
             with pytest.raises(SystemExit) as exc_info:
                 main()
@@ -44,10 +38,10 @@ class TestDescribeVoiceCLI:
         mock_client.chat.completions.create.return_value = mock_response
 
         with patch.object(sys, 'argv', ['describe_voice.py', str(voice_file), '--verbose']):
-            with patch('describe_voice.OpenAI', return_value=mock_client):
-                with patch('describe_voice.VoiceMapper') as mock_mapper:
+            with patch('scripts.describe_voice.OpenAI', return_value=mock_client):
+                with patch('scripts.describe_voice.VoiceMapper') as mock_mapper:
                     mock_mapper.describe_voice_with_llm.return_value = "female, young adult, high pitch"
-                    from describe_voice import main
+                    from scripts.describe_voice import main
                     main()
 
         captured = capsys.readouterr()
@@ -65,11 +59,11 @@ class TestDescribeVoiceCLI:
         mock_client.chat.completions.create.return_value = mock_response
 
         with patch.object(sys, 'argv', ['describe_voice.py', str(voice_file)]):
-            with patch('describe_voice.OpenAI') as mock_openai:
+            with patch('scripts.describe_voice.OpenAI') as mock_openai:
                 mock_openai.return_value = mock_client
-                with patch('describe_voice.VoiceMapper') as mock_mapper:
+                with patch('scripts.describe_voice.VoiceMapper') as mock_mapper:
                     mock_mapper.describe_voice_with_llm.return_value = "male, middle-aged, moderate pitch"
-                    from describe_voice import main
+                    from scripts.describe_voice import main
                     main()
 
         # Verify OpenAI was called with default endpoint

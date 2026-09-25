@@ -1,24 +1,36 @@
 #!/usr/bin/env python3
 """
-Test ChunkFormer voice classification with known voice samples.
+Inspect ChunkFormer voice classification with known voice samples.
 
 Tests seed voices (known good) vs Dramabox voices (suspected broken)
 to identify exactly where classification fails.
+
+Run manually: uv run python scripts/inspect_chunkformer_voices.py
+(Diagnostic script, not part of the pytest suite.)
 """
 import os
-import json
 import hashlib
-from chunkformer import ChunkFormerModel
 
 SEED_DIR = "/home/johnbehrend/pydev/voices_archive"
 DRAMABOX_DIR = "/home/johnbehrend/pydev/AudioBookGenerator/voice_test/eye_of_the_world"
 
-model = ChunkFormerModel.from_pretrained("khanhld/chunkformer-gender-emotion-dialect-age-classification")
+_model = None
+
+
+def _get_model():
+    """Load the ChunkFormer model lazily, using the id from config."""
+    global _model
+    if _model is None:
+        from audiobook_generator.config import CHUNKFORMER_VALIDATION
+        from chunkformer import ChunkFormerModel
+
+        _model = ChunkFormerModel.from_pretrained(CHUNKFORMER_VALIDATION["model_id"])
+    return _model
 
 
 def classify_voice(audio_path: str) -> dict:
     """Classify voice using ChunkFormer model."""
-    result = model.classify_audio(audio_path=audio_path)
+    result = _get_model().classify_audio(audio_path=audio_path)
     return {
         "gender": result["gender"]["label"],
         "age_group": result["age"]["label"],

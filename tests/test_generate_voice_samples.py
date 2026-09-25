@@ -75,19 +75,18 @@ class TestGenerateVoiceSample:
 
         voice_mapper = VoiceMapper(output_dir=str(temp_dir), engine=mock_tts_engine)
 
-        with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
-            mock_gen.return_value = (True, str(temp_dir / "jane.wav"), 1.0)
-            success, output_file, duration, is_valid, validation_msg, is_celebrity = generate_voice_sample(
-                character_name="jane",
-                description="A gentle, refined female voice.",
-                voice_mapper=voice_mapper,
-                output_dir=str(temp_dir),
-                verbose=False
-            )
+        success, output_file, duration, is_valid, validation_msg, is_celebrity, content_validated = generate_voice_sample(
+            character_name="jane",
+            description="A gentle, refined female voice.",
+            voice_mapper=voice_mapper,
+            output_dir=str(temp_dir),
+            verbose=False
+        )
 
         assert success is True
         assert output_file is not None
         assert duration > 0
+        assert content_validated is False
 
     def test_validates_when_requested(self, temp_dir, mock_tts_engine, mock_llm_client, sample_character_descriptions):
         """Test that validation is performed when requested."""
@@ -100,17 +99,15 @@ class TestGenerateVoiceSample:
 
         voice_mapper = VoiceMapper(output_dir=str(temp_dir), engine=mock_tts_engine)
 
-        with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
-            mock_gen.return_value = (True, str(temp_dir / "jane.wav"), 1.0)
-            success, output_file, duration, is_valid, validation_msg, is_celebrity = generate_voice_sample(
-                character_name="jane",
-                description="A gentle, refined female voice.",
-                voice_mapper=voice_mapper,
-                output_dir=str(temp_dir),
-                verbose=False,
-                validate=True,
-                validation_client=mock_llm_client
-            )
+        success, output_file, duration, is_valid, validation_msg, is_celebrity, content_validated = generate_voice_sample(
+            character_name="jane",
+            description="A gentle, refined female voice.",
+            voice_mapper=voice_mapper,
+            output_dir=str(temp_dir),
+            verbose=False,
+            validate=True,
+            validation_client=mock_llm_client
+        )
 
         assert isinstance(is_valid, bool)
 
@@ -120,17 +117,16 @@ class TestGenerateVoiceSample:
 
         voice_mapper = VoiceMapper(output_dir=str(temp_dir), engine=mock_tts_engine_failure)
 
-        with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
-            mock_gen.return_value = (False, None, 0)
-            success, output_file, duration, is_valid, validation_msg, is_celebrity = generate_voice_sample(
-                character_name="jane",
-                description="A gentle voice.",
-                voice_mapper=voice_mapper,
-                output_dir=str(temp_dir),
-                verbose=False
-            )
+        success, output_file, duration, is_valid, validation_msg, is_celebrity, content_validated = generate_voice_sample(
+            character_name="jane",
+            description="A gentle voice.",
+            voice_mapper=voice_mapper,
+            output_dir=str(temp_dir),
+            verbose=False
+        )
 
         assert success is False
+        assert content_validated is False
 
     def test_returns_correct_tuple_format(self, temp_dir, mock_tts_engine, sample_character_descriptions):
         """Test that returned tuple has correct format."""
@@ -138,25 +134,24 @@ class TestGenerateVoiceSample:
 
         voice_mapper = VoiceMapper(output_dir=str(temp_dir), engine=mock_tts_engine)
 
-        with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
-            mock_gen.return_value = (True, str(temp_dir / "jane.wav"), 1.0)
-            result = generate_voice_sample(
-                character_name="jane",
-                description="A gentle voice.",
-                voice_mapper=voice_mapper,
-                output_dir=str(temp_dir),
-                verbose=False
-            )
+        result = generate_voice_sample(
+            character_name="jane",
+            description="A gentle voice.",
+            voice_mapper=voice_mapper,
+            output_dir=str(temp_dir),
+            verbose=False
+        )
 
         assert isinstance(result, tuple)
-        assert len(result) == 6
-        success, output_file, duration, is_valid, validation_msg, is_celebrity = result
+        assert len(result) == 7
+        success, output_file, duration, is_valid, validation_msg, is_celebrity, content_validated = result
         assert isinstance(success, bool)
         assert output_file is None or isinstance(output_file, str)
         assert isinstance(duration, float)
         assert isinstance(is_valid, bool)
         assert isinstance(validation_msg, str)
         assert isinstance(is_celebrity, bool)
+        assert isinstance(content_validated, bool)
 
 
 class TestGenerateVoiceSamples:
@@ -269,13 +264,11 @@ class TestVoiceMapperIntegration:
 
         vm = VoiceMapper(output_dir=str(temp_dir), engine=mock_tts_engine)
 
-        with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
-            mock_gen.return_value = (True, str(temp_dir / "jane.wav"), 1.0)
-            success, output_file, duration, is_celebrity = vm.generate_voice_sample(
-                character_name="jane",
-                description="A gentle voice.",
-                verbose=False
-            )
+        success, output_file, duration, is_celebrity, content_validated = vm.generate_voice_sample(
+            character_name="jane",
+            description="A gentle voice.",
+            verbose=False
+        )
 
         assert success is True
         cached_path = vm.get_voice_path("jane")
@@ -290,13 +283,11 @@ class TestVoiceMapperIntegration:
         for char_name, description in sample_character_descriptions.items():
             if char_name == "narrator":
                 continue
-            with patch("tts.voice_sample.generate_voice_sample") as mock_gen:
-                mock_gen.return_value = (True, str(temp_dir / f"{char_name}.wav"), 1.0)
-                success, output_file, duration, is_celebrity = vm.generate_voice_sample(
-                    character_name=char_name,
-                    description=description,
-                    verbose=False
-                )
+            success, output_file, duration, is_celebrity, content_validated = vm.generate_voice_sample(
+                character_name=char_name,
+                description=description,
+                verbose=False
+            )
             assert success is True
 
         assert len(vm.voice_paths) > 0

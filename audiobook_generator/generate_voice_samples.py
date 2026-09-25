@@ -14,7 +14,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from openai import OpenAI
 
 # Import config for default values
-from .config import DEFAULTS, AUDIO_SETTINGS, VOICE_SAMPLES_DIR
+from .config import DEFAULTS
+from .audio import validate_voice_with_chunkformer
 from .utils import get_validation_client
 
 # Import VoiceMapper for centralized TTS management
@@ -93,10 +94,10 @@ def _on_reference_rate(ref_words, transcribed_words):
 
 
 def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_model, verbose: bool = False, skip_age: bool = False) -> Tuple[bool, str]:
-    """Validate voice matches description using ChunkFormer model.
+    """Validate voice matches description using ChunkFormer.
 
-    Uses ChunkFormer to classify the voice (gender, age),
-    then compares the classification to the description.
+    Thin wrapper over audio.validate_voice_with_chunkformer that preserves the
+    JSON debug log (.chunkformer_validation.json) and JSON-string return.
 
     Args:
         voice_path: Path to the voice sample
@@ -108,92 +109,30 @@ def _validate_with_chunkformer(voice_path: str, description: str, chunkformer_mo
     Returns:
         Tuple of (is_valid, json_log_string)
     """
-    try:
-        result = chunkformer_model.classify_audio(audio_path=voice_path)
-
-        predicted_gender = result["gender"]["label"]
-        predicted_emotion = result["emotion"]["label"]
-        predicted_age = result["age"]["label"]
-
-        desc_lower = description.lower().strip()
-
-        # Extract expected values from description
-        expected_gender = "female" if any(w in desc_lower for w in ["female", "woman", "women", "girl"]) else ("male" if any(w in desc_lower for w in ["male", "man", "men", "boy"]) else None)
-
-        expected_age = "young" if any(w in desc_lower for w in ["young", "youth", "teen", "teenager", "child"]) else ("old" if any(w in desc_lower for w in ["old", "elder", "elderly", "senior", "ancient"]) else ("middle age" if any(w in desc_lower for w in ["middle", "mature", "adult", "forty", "fifty", "thirty"]) else None))
-
-        # Validate each field
-        is_valid = True
-        reasons = []
-
-        gender_prob = result["gender"]["prob"]
-        age_prob = result["age"]["prob"]
-        GENDER_CONFIDENCE_THRESHOLD = 0.7
-
-        if expected_gender is not None and predicted_gender != expected_gender:
-            if gender_prob >= GENDER_CONFIDENCE_THRESHOLD:
-                is_valid = False
-                reasons.append(f"gender mismatch: expected {expected_gender}, got {predicted_gender} (conf: {gender_prob:.2f})")
-            elif verbose:
-                print(f"      [INFO] Gender mismatch ignored (conf: {gender_prob:.2f} < {GENDER_CONFIDENCE_THRESHOLD})")
-
-        if not skip_age and expected_age is not None and predicted_age != expected_age:
-            if age_prob >= 0.7:
-                is_valid = False
-                reasons.append(f"age mismatch: expected {expected_age}, got {predicted_age} (conf: {age_prob:.2f})")
-            elif verbose:
-                print(f"      [INFO] Age mismatch ignored (conf: {age_prob:.2f} < 0.7)")
-
-        if verbose:
-            print(f"      Description: {description[:80]}")
-            print(f"      Classified: {predicted_gender} / {predicted_age} / {predicted_emotion}")
-            print(f"      Expected: gender={expected_gender}, age={expected_age}")
-            print(f"      Overall: {'PASS' if is_valid else 'FAIL'}")
-            if reasons:
-                print(f"      Reasons: {'; '.join(reasons)}")
-
-        # Log result to file for debugging
+    is_valid, reason, classification = validate_voice_with_chunkformer(
+        voice_path, description, chunkformer_model,
+        check_age=not skip_age, verbose=verbose,
+    )
+    if classification:
         log_entry = {
             "voice": os.path.basename(voice_path),
             "description": description,
-            "classification": {
-                "gender": {"label": predicted_gender, "prob": result["gender"]["prob"]},
-                "emotion": {"label": predicted_emotion, "prob": result["emotion"]["prob"]},
-                "age": {"label": predicted_age, "prob": result["age"]["prob"]},
-            },
-            "expected": {
-                "gender": expected_gender,
-                "age": expected_age,
-            },
-            "gender_ok": expected_gender is None or predicted_gender == expected_gender,
-            "age_ok": expected_age is None or predicted_age == expected_age,
-            "is_valid": is_valid,
-            "reasons": reasons,
+            **classification,
         }
         log_path = os.path.join(os.path.dirname(voice_path), ".chunkformer_validation.json")
         with open(log_path, "a") as f:
             f.write(json.dumps(log_entry) + "\n")
-
-        return is_valid, json.dumps({"classification": {
-            "gender": predicted_gender, "emotion": predicted_emotion,
-            "age": predicted_age,
-        }, "expected": {
-            "gender": expected_gender, "age": expected_age,
-        }, "gender_ok": expected_gender is None or predicted_gender == expected_gender,
-            "age_ok": expected_age is None or predicted_age == expected_age,
-            "is_valid": is_valid, "reasons": reasons})
-
-    except Exception as e:
-        if verbose:
-            print(f"    ChunkFormer validation error: {e}")
-        return True, str(e)
+        # Return value uses flat label strings, matching the original format.
+        flat = {k: v["label"] for k, v in classification["classification"].items()}
+        return is_valid, json.dumps({**classification, "classification": flat})
+    return is_valid, reason
 
 
 def generate_voice_sample(character_name: str, description: str, voice_mapper: VoiceMapper,
                           output_dir: str, verbose: bool = False,
                           validate: bool = False, validation_client: Optional[OpenAI] = None,
                           max_new_tokens: int = None, llm_client: Optional[Any] = None,
-                          llm_model: str = "coder-model") -> Tuple[bool, Optional[str], float, bool, str]:
+                          llm_model: str = "coder-model") -> Tuple[bool, Optional[str], float, bool, str, bool, bool]:
     """Generate a short voice sample for a character using VoiceDesign model via VoiceMapper.
 
     Uses voice design with an instruct prompt to generate speech
@@ -210,8 +149,12 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
         max_new_tokens: Max tokens for generation (unused, kept for compatibility)
 
     Returns:
-        Tuple of (success, output_file_path, duration_seconds, is_valid, validation_msg)
+        Tuple of (success, output_file_path, duration_seconds, is_valid,
+        validation_msg, is_celebrity, content_validated)
         When validate=True, is_valid indicates if the voice passed validation.
+        content_validated is True when a celebrity clip was verified by content
+        (a known line matched the transcript, or an LLM transcript review
+        approved the clip).
     """
     try:
         if verbose:
@@ -220,7 +163,7 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
             if voice_mapper.use_celebrity_voices:
                 print(f"    [DEBUG] Celebrity voices enabled - will attempt celebrity matching")
 
-        success, output_file, duration, is_celebrity = voice_mapper.generate_voice_sample(
+        success, output_file, duration, is_celebrity, content_validated = voice_mapper.generate_voice_sample(
             character_name=character_name,
             description=description,
             output_dir=output_dir,
@@ -257,13 +200,13 @@ def generate_voice_sample(character_name: str, description: str, voice_mapper: V
             if not is_valid:
                 print(f"    Warning: Voice validation failed: {validation_msg}")
 
-        return success, output_file, duration, is_valid, validation_msg, is_celebrity
+        return success, output_file, duration, is_valid, validation_msg, is_celebrity, content_validated
 
     except Exception as e:
         print(f"    Error: {e}", file=sys.stderr)
         print(f"    Exception type: {type(e).__name__}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
-        return False, None, 0, False, "Exception during generation"
+        return False, None, 0, False, "Exception during generation", False, False
 
 
 def generate_voice_samples(
@@ -297,7 +240,7 @@ def generate_voice_samples(
         verbose: Print verbose output
         progress: Gradio progress bar to update during generation
         seed_characters: Dict mapping character names to existing voice paths from seed voices_map
-        voice_engine: TTS engine for voice generation ('omni', 'vox', 'dramabox')
+        voice_engine: TTS engine for voice generation ('omni', 'dramabox', 'minimax_h3')
         force_regenerate: If True, regenerate voices even if they already exist
         validate: Deprecated - ignored
         use_chunkformer: If True, validate voices with ChunkFormer model
@@ -692,7 +635,7 @@ def generate_voice_samples(
                 for sample_num in range(1, max_attempts + 1):
                     _tmp_name = f"{char_name}.sample{sample_num}"
                     try:
-                        success, output_file, duration, is_valid, validation_msg, is_celebrity = generate_voice_sample(
+                        success, output_file, duration, is_valid, validation_msg, is_celebrity, content_validated = generate_voice_sample(
                             character_name=_tmp_name,
                             description=char_desc,
                             voice_mapper=effective_mapper,
@@ -717,8 +660,11 @@ def generate_voice_samples(
                         if is_celebrity:
                             if verbose:
                                 print(f"    Sample {sample_num}: Celebrity reference generated, skipping Whisper validation")
-                            # Still run ChunkFormer to catch gender mismatches
-                            if chunkformer_model:
+                            # Skip ChunkFormer only when the clip was content-
+                            # validated (a known line matched the transcript, or
+                            # the LLM transcript review approved it).
+                            # Otherwise fall back to ChunkFormer gender check.
+                            if chunkformer_model and not content_validated:
                                 cf_ok, cf_msg = _validate_with_chunkformer(
                                     output_file, char_desc,
                                     chunkformer_model, verbose=verbose,
@@ -728,6 +674,8 @@ def generate_voice_samples(
                                     if verbose:
                                         print(f"    Sample {sample_num}: ChunkFormer FAIL: {cf_msg}")
                                     continue
+                            elif content_validated and verbose:
+                                print(f"    Sample {sample_num}: skipping ChunkFormer (content-validated)")
                             candidates.append((99, output_file, sample_num, duration, True))
                             break  # First passing celebrity sample is enough
                         try:
@@ -866,7 +814,7 @@ def generate_voice_samples(
                 for sample_num in range(1, max_attempts + 1):
                     _tmp_name = f"{char_name}.sample{sample_num}"
                     try:
-                        success, output_file, duration, is_valid, validation_msg, is_celebrity = generate_voice_sample(
+                        success, output_file, duration, is_valid, validation_msg, is_celebrity, content_validated = generate_voice_sample(
                             character_name=_tmp_name,
                             description=char_desc,
                             voice_mapper=_no_celeb_mapper,
@@ -928,7 +876,7 @@ def generate_voice_samples(
                         if verbose:
                             print(f"  [{failed_count}/{len(failed)}] {char_name}")
                         _fallback_mapper = VoiceMapper(output_dir=output_dir, device=device, tts_engine=fallback_engine_name)
-                        _success, _out_file, _duration, _ = _fallback_mapper.generate_voice_sample(
+                        _success, _out_file, _duration, _, _ = _fallback_mapper.generate_voice_sample(
                             character_name=char_name,
                             description=char_desc,
                             output_dir=output_dir,

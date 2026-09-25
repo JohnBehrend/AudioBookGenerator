@@ -1,4 +1,4 @@
-"""Tests for scripts/build_wot_seed_map.py.
+"""Tests for scripts/build_seed_map.py.
 
 Guards the regression where audiobook chapter MP3 files from prior books
 (e.g. ``chapter_00.mp3`` in teotw/) were mistakenly ingested as "character
@@ -16,13 +16,13 @@ import pytest
 
 from audiobook_generator.testing import write_silence_wav
 
-_SEED_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "build_wot_seed_map.py"
+_SEED_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "build_seed_map.py"
 
 
 @pytest.fixture(scope="module")
 def seed_module():
-    """Load build_wot_seed_map.py via importlib (scripts/ is not a package)."""
-    spec = importlib.util.spec_from_file_location("build_wot_seed_map", _SEED_SCRIPT)
+    """Load build_seed_map.py via importlib (scripts/ is not a package)."""
+    spec = importlib.util.spec_from_file_location("build_seed_map", _SEED_SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -49,7 +49,7 @@ def _run_main(seed_module, tmp_path, books):
     """Invoke seed_module.main() with argv pointing at the given book dirs."""
     out = tmp_path / "seed_voices_map.json"
     old = sys.argv
-    sys.argv = ["build_wot_seed_map", "--out", str(out), "--priority", *[str(b) for b in books]]
+    sys.argv = ["build_seed_map", "--out", str(out), "--priority", *[str(b) for b in books]]
     try:
         seed_module.main()
     finally:

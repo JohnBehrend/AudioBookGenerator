@@ -1,10 +1,13 @@
-"""Smoke tests for TTS engine registry and base classes."""
+"""Smoke tests for TTS engine registry and base classes.
+
+WorkerPool/WhisperPool behavior is covered in tests/test_tts_pool.py; routing
+with the audiobook pipeline in tests/test_concurrency.py.
+"""
 
 import pytest
 from unittest.mock import MagicMock, patch
 
 from tts import TTSEngine, list_engines, get_engine
-from tts.pool import WorkerPool, WhisperPool
 
 
 # ============================================================================
@@ -49,18 +52,3 @@ class TestTTSEngineBase:
         assert hasattr(TTSEngine, 'generate_voice_sample')
         assert hasattr(TTSEngine, 'generate_line')
         assert hasattr(TTSEngine, 'shutdown_worker')
-
-
-class TestWorkerPool:
-    """Tests for WorkerPool class."""
-
-    def test_worker_pool_init(self):
-        """WorkerPool should accept engine_dir and devices."""
-        pool = WorkerPool(engine_dir="/tmp/test", devices=["cuda:0"])
-        assert pool.devices == ["cuda:0"]
-
-    def test_whisper_pool_init(self):
-        """WhisperPool should accept model_factory and size."""
-        mock_factory = MagicMock(return_value=MagicMock())
-        pool = WhisperPool(mock_factory, size=2)
-        assert pool._size == 2

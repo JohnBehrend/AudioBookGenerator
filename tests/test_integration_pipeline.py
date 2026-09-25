@@ -2,6 +2,9 @@
 
 These tests verify that the pipeline stages work together correctly:
 - EPUB parsing → LLM speaker labeling → Character descriptions → Voice sample generation → TTS generation
+
+Uses the shared ``sample_chapters``/``sample_chapter_maps`` fixtures from
+conftest.py.
 """
 
 import os
@@ -10,39 +13,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 from audiobook_generator.testing import MockTTSEngine, create_voice_files, patch_audiobook_pipeline
-from audiobook_generator.parse_chapter import ChapterObj, get_chapter_objs
-
-
-# ============================================================================
-# FIXTURES
-# ============================================================================
-
-@pytest.fixture
-def sample_chapters():
-    """Create sample chapter objects."""
-    chapter1 = [
-        ChapterObj(False, "The story begins.", 1),
-        ChapterObj(True, '"Hello," said Jane.', 2),
-        ChapterObj(False, "Jane continued walking.", 3),
-        ChapterObj(True, '"Goodbye," Elizabeth replied.', 4),
-    ]
-
-    chapter2 = [
-        ChapterObj(True, '"We must go now," said Jane.', 1),
-        ChapterObj(False, "They left the room.", 2),
-        ChapterObj(True, '"Farewell," Elizabeth said.', 3),
-    ]
-
-    return [chapter1, chapter2]
-
-
-@pytest.fixture
-def sample_chapter_maps():
-    """Create sample chapter maps."""
-    return {
-        0: ({"1": "narrator", "2": "jane", "3": "narrator", "4": "elizabeth"}, {"2": 2, "4": 4}),
-        1: ({"1": "jane", "2": "narrator", "3": "elizabeth"}, {"1": 1, "3": 3}),
-    }
+from audiobook_generator.parse_chapter import get_chapter_objs
 
 
 # ============================================================================
@@ -212,6 +183,9 @@ class TestPipelineFailurePaths:
         assert isinstance(status, str)
         assert isinstance(char_map, dict)
         assert isinstance(line_map, dict)
+        # All attempts failed: no speakers were attributed.
+        assert len(char_map) == 0
+        assert len(line_map) == 0
 
     def test_describe_characters_no_characters_returns_tuple(self, temp_dir):
         """Test that describe_characters returns tuple when no characters found."""
@@ -228,26 +202,3 @@ class TestPipelineFailurePaths:
         msg, descriptions = result
         assert isinstance(msg, str)
         assert isinstance(descriptions, dict)
-
-    def test_pipeline_aborts_when_no_characters_after_labeling(self, temp_dir, sample_chapter_objs, mock_llm_client):
-        """Test that pipeline aborts gracefully when all LLM labeling fails."""
-        from audiobook_generator.parse_chapter import write_chapters_to_txt
-        from audiobook_generator.llm_label_speakers import label_speakers
-
-        chapters = [sample_chapter_objs]
-        write_chapters_to_txt(chapters, str(temp_dir))
-
-        chapter_file = temp_dir / "chapter_0.txt"
-
-        mock_llm_client.set_exception(Exception("Error code: 401, Message: Authentication failed"))
-
-        status, char_map, line_map = label_speakers(
-            txt_file=str(chapter_file),
-            api_key="bad-key",
-            port="1234",
-            num_attempts=1,
-            client=mock_llm_client
-        )
-
-        assert len(char_map) == 0
-        assert len(line_map) == 0

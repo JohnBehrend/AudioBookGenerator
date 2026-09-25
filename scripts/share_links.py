@@ -17,7 +17,6 @@ PORT = 8080
 USERNAME = "opencode"
 
 PASSWORD_ENV = "OPENCODE_SERVER_PASSWORD"
-DEFAULT_PASSWORD = "piggypants"
 
 
 def public_ip() -> str:
@@ -45,7 +44,14 @@ def lan_ip() -> str:
 
 
 def auth_token() -> str:
-    password = os.environ.get(PASSWORD_ENV, DEFAULT_PASSWORD)
+    password = os.environ.get(PASSWORD_ENV, "")
+    if not password:
+        print(
+            f"Error: set {PASSWORD_ENV} to the server password "
+            "(no insecure default is embedded).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     return base64.b64encode(f"{USERNAME}:{password}".encode()).decode()
 
 
@@ -72,8 +78,14 @@ def main() -> None:
     lan = lan_ip()
 
     print("Shareable download links (auth embedded):\n")
+    # The opencode file server serves paths relative to its own root; derive
+    # the served path from the file's location under that root.
+    serve_root = Path(os.environ.get("OPENCODE_SERVER_ROOT", str(Path.home())))
     for f in files:
-        rel = str(Path(f).relative_to(Path("/home/johnbehrend")))
+        try:
+            rel = str(Path(f).relative_to(serve_root))
+        except ValueError:
+            rel = str(Path(f).relative_to(Path(__file__).resolve().parent.parent))
         name = Path(f).name
         print(f"[{name}]")
         if pub:

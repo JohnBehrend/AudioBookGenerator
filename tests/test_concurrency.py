@@ -142,26 +142,8 @@ class TestThreadPoolConcurrency:
 # ============================================================================
 
 class TestWorkerPool:
-    """Multi-GPU worker pool distribution."""
-
-    def test_pool_shutdown_stops_all_workers(self):
-        """WorkerPool.shutdown should stop all workers."""
-        from tts.pool import WorkerPool, _WorkerDevice
-
-        mock_w1 = MagicMock()
-        mock_w2 = MagicMock()
-
-        pool = WorkerPool.__new__(WorkerPool)
-        pool._workers = [
-            _WorkerDevice(mock_w1, "cuda:0"),
-            _WorkerDevice(mock_w2, "cuda:1"),
-        ]
-        pool._index = 0
-        pool._lock = threading.Lock()
-
-        pool.shutdown()
-        mock_w1.shutdown.assert_called_once()
-        mock_w2.shutdown.assert_called_once()
+    """Multi-GPU worker pool routing (init/shutdown/device basics live in
+    tests/test_tts_pool.py)."""
 
     def test_pool_generate_line_routes_round_robin(self):
         """generate_line should route to the next worker in rotation."""
@@ -204,14 +186,6 @@ class TestWorkerPool:
             pool.generate_line(text="test", voice_path="/tmp/v.wav", output_path="/tmp/out.wav")
 
         assert mock_w1.request.call_count == 5
-
-    def test_worker_device_slots(self):
-        """_WorkerDevice should have correct slots."""
-        from tts.pool import _WorkerDevice
-
-        w = _WorkerDevice(MagicMock(), "cuda:0")
-        assert w.device == "cuda:0"
-        assert w.worker is not None
 
 
 # ============================================================================

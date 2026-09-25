@@ -1,470 +1,139 @@
-"""Audio processing, gender detection, and voice validation utilities.
+"""Audio processing and voice validation utilities.
 
-This module contains functions for audio analysis, pitch-based gender detection,
-and audio quality validation. These were extracted from utils.py for clarity.
+Contains audio cropping, ChunkFormer voice validation, and quality-validation
+helpers used by the TTS pipeline. These were extracted from utils.py for
+clarity.
 """
 
+import json
 import os
-from typing import Any, Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any
 
 from openai import OpenAI
 
+from .config import LLM_NO_THINKING_EXTRA_BODY
 
-# ============================================================================
-# GENDER DETECTION FROM DESCRIPTIONS
-# ============================================================================
+# A classification mismatch only fails validation when the model is at least
+# this confident; below it the mismatch is treated as noise.
+CHUNKFORMER_CONFIDENCE_THRESHOLD = 0.7
+
+_GENDER_FEMALE_KEYWORDS = ("female", "woman", "women", "girl")
+_GENDER_MALE_KEYWORDS = ("male", "man", "men", "boy")
+_AGE_YOUNG_KEYWORDS = ("young", "youth", "teen", "teenager", "child")
+_AGE_OLD_KEYWORDS = ("old", "elder", "elderly", "senior", "ancient")
+_AGE_MIDDLE_KEYWORDS = ("middle", "mature", "adult", "forty", "fifty", "thirty")
 
 
-def extract_gender_from_description(description: str) -> Optional[str]:
-    """Extract gender from a voice description string.
-
-    Args:
-        description: Voice description (e.g., "A calm, commanding male narrator")
-
-    Returns:
-        "male" or "female" if found, None otherwise
-    """
-    desc_lower = description.lower()
-    # Check for "female" first to avoid matching "male" in "female"
-    if "female" in desc_lower:
+def _expected_gender_from_description(desc_lower: str) -> Optional[str]:
+    if any(w in desc_lower for w in _GENDER_FEMALE_KEYWORDS):
         return "female"
-    if "woman" in desc_lower:
-        return "female"
-    if "male" in desc_lower:
-        return "male"
-    if "man" in desc_lower:
+    if any(w in desc_lower for w in _GENDER_MALE_KEYWORDS):
         return "male"
     return None
 
 
-# ============================================================================
-# PITCH ANALYSIS & GENDER CLASSIFICATION
-# ============================================================================
+def _expected_age_from_description(desc_lower: str) -> Optional[str]:
+    if any(w in desc_lower for w in _AGE_YOUNG_KEYWORDS):
+        return "young"
+    if any(w in desc_lower for w in _AGE_OLD_KEYWORDS):
+        return "old"
+    if any(w in desc_lower for w in _AGE_MIDDLE_KEYWORDS):
+        return "middle age"
+    return None
 
 
-def classify_gender_statistical(
-    voiced_f0: "np.ndarray",
-    male_ref_mean: float = 122.5,
-    female_ref_mean: float = 210.0,
-    alpha: float = 0.05,
-    verbose: bool = False
-) -> Tuple[str, float, str]:
-    """Classify gender using one-sample t-test against reference distributions.
-
-    Performs two one-sample t-tests to determine if the pitch distribution
-    is statistically consistent with male or female reference distributions.
-
-    Reference distributions based on physiological ranges:
-    - Male: 90-155 Hz (mean ~122.5 Hz)
-    - Female: 165-255 Hz (mean ~210 Hz)
-
-    Args:
-        voiced_f0: Array of voiced pitch values in Hz (from librosa.pyin)
-        male_ref_mean: Reference mean pitch for male voices (default: 122.5 Hz)
-        female_ref_mean: Reference mean pitch for female voices (default: 210 Hz)
-        alpha: Significance level for t-test (default: 0.05)
-        verbose: Print detailed analysis
-
-    Returns:
-        Tuple of (gender, confidence, reason)
-        - gender: 'male' or 'female'
-        - confidence: 0.0-1.0 confidence score (higher = more certain)
-        - reason: Human-readable explanation of classification
-    """
-    import numpy as np
-    from scipy import stats
-
-    sample_mean = np.mean(voiced_f0)
-    sample_std = np.std(voiced_f0, ddof=1) if len(voiced_f0) > 1 else 0
-    sample_size = len(voiced_f0)
-
-    if verbose:
-        print(f"    Pitch distribution: n={sample_size}, mean={sample_mean:.1f}Hz, std={sample_std:.1f}Hz")
-        print(f"    Reference: male={male_ref_mean}Hz, female={female_ref_mean}Hz")
-
-    t_stat_male, p_value_male = stats.ttest_1samp(voiced_f0, male_ref_mean)
-    t_stat_female, p_value_female = stats.ttest_1samp(voiced_f0, female_ref_mean)
-
-    if verbose:
-        print(f"    T-test vs male ref: t={t_stat_male:.3f}, p={p_value_male:.4f}")
-        print(f"    T-test vs female ref: t={t_stat_female:.3f}, p={p_value_female:.4f}")
-
-    is_male = p_value_male > alpha
-    is_female = p_value_female > alpha
-
-    if is_male and not is_female:
-        confidence = min(1.0, p_value_male)
-        return "male", confidence, f"Statistically consistent with male distribution (p={p_value_male:.3f})"
-
-    if is_female and not is_male:
-        confidence = min(1.0, p_value_female)
-        return "female", confidence, f"Statistically consistent with female distribution (p={p_value_female:.3f})"
-
-    dist_to_male = abs(sample_mean - male_ref_mean)
-    dist_to_female = abs(sample_mean - female_ref_mean)
-
-    if dist_to_male < dist_to_female:
-        confidence = 0.5 + (dist_to_female - dist_to_male) / (dist_to_female + dist_to_male) * 0.3
-        reason = "ambiguous" if is_male and is_female else "unusual distribution"
-        return "male", min(1.0, confidence), f"{reason.capitalize()} - closer to male (mean={sample_mean:.1f}Hz)"
-    else:
-        confidence = 0.5 + (dist_to_male - dist_to_female) / (dist_to_male + dist_to_female) * 0.3
-        reason = "ambiguous" if is_male and is_female else "unusual distribution"
-        return "female", min(1.0, confidence), f"{reason.capitalize()} - closer to female (mean={sample_mean:.1f}Hz)"
-
-
-def plot_pitch_histogram(
-    voiced_f0: "np.ndarray",
-    detected_gender: str,
-    output_path: str,
-    male_ref_mean: float = 122.5,
-    female_ref_mean: float = 210.0,
-    ref_std: float = 30.0,
-    confidence: float = None,
-    reason: str = None
-):
-    """Generate histogram of pitch distribution with reference overlays.
-
-    Creates a visualization showing:
-    - Histogram of detected pitch values
-    - Overlaid male and female reference distributions
-    - Sample mean and reference means marked
-
-    Args:
-        voiced_f0: Array of voiced pitch values in Hz
-        detected_gender: 'male', 'female', or 'ambiguous'
-        output_path: Path to save the plot (PNG or PDF)
-        male_ref_mean: Reference mean for male distribution
-        female_ref_mean: Reference mean for female distribution
-        ref_std: Standard deviation for reference distributions
-        confidence: Confidence score (0-1) if available
-        reason: Classification reason text if available
-    """
-    try:
-        import matplotlib
-        matplotlib.use('Agg')  # Non-interactive backend
-        import matplotlib.pyplot as plt
-        import numpy as np
-        from scipy import stats as scipy_stats
-
-        fig, ax = plt.subplots(figsize=(10, 6))
-
-        ax.hist(voiced_f0, bins=30, alpha=0.7, color='steelblue', edgecolor='black',
-                label=f'Detected pitches (n={len(voiced_f0)}, mean={np.mean(voiced_f0):.1f}Hz)')
-
-        x = np.linspace(60, 280, 500)
-
-        male_pdf = scipy_stats.norm.pdf(x, male_ref_mean, ref_std)
-        ax.plot(x, male_pdf * len(voiced_f0) * 0.3, 'r--', linewidth=2,
-                label=f'Male ref (μ={male_ref_mean}Hz)')
-        ax.axvline(male_ref_mean, color='red', linestyle='--', alpha=0.5, linewidth=1)
-
-        female_pdf = scipy_stats.norm.pdf(x, female_ref_mean, ref_std)
-        ax.plot(x, female_pdf * len(voiced_f0) * 0.3, 'm--', linewidth=2,
-                label=f'Female ref (μ={female_ref_mean}Hz)')
-        ax.axvline(female_ref_mean, color='magenta', linestyle='--', alpha=0.5, linewidth=1)
-
-        sample_mean = np.mean(voiced_f0)
-        ax.axvline(sample_mean, color='green', linestyle='-', linewidth=2,
-                   label=f'Sample mean ({sample_mean:.1f}Hz)')
-
-        threshold = (male_ref_mean + female_ref_mean) / 2
-        ax.axvline(threshold, color='gray', linestyle=':', linewidth=1.5,
-                   label=f'Threshold ({threshold:.1f}Hz)')
-
-        ax.set_xlabel('Pitch (Hz)', fontsize=12)
-        ax.set_ylabel('Count', fontsize=12)
-        title = f'Pitch Distribution - Detected: {detected_gender.upper()}'
-        if confidence is not None:
-            title += f' (confidence: {confidence:.2f})'
-        ax.set_title(title, fontsize=14)
-
-        ax.legend(loc='upper right', fontsize=10)
-        ax.set_xlim(60, 280)
-        ax.grid(True, alpha=0.3)
-
-        if reason:
-            ax.text(0.02, 0.02, reason, transform=ax.transAxes, fontsize=9,
-                    verticalalignment='bottom', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-        plt.tight_layout()
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-
-    except ImportError:
-        print("    matplotlib not available - skipping histogram generation")
-    except Exception as e:
-        print(f"    Histogram generation error: {e}")
-
-
-def extract_pitch_from_audio(audio_path: str) -> Tuple["np.ndarray", "np.ndarray"]:
-    """Load audio and extract pitch using librosa.pyin.
-
-    Args:
-        audio_path: Path to the audio file
-
-    Returns:
-        Tuple of (f0, voiced_f0) where:
-        - f0: Full pitch contour (includes 0 for unvoiced frames)
-        - voiced_f0: Only voiced pitch values (f0 > 0)
-
-    Raises:
-        Exception: If audio cannot be loaded or pitch cannot be estimated
-    """
-    import warnings
-
-    # audioread (librosa dependency) imports deprecated aifc/sunau at module load time.
-    # These are removed in Python 3.13. Suppress until audioread is fixed upstream.
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="'aifc' is deprecated", category=DeprecationWarning)
-        warnings.filterwarnings("ignore", message="'sunau' is deprecated", category=DeprecationWarning)
-        import librosa
-
-    import numpy as np
-
-    y, sr = librosa.load(audio_path, sr=None)
-    pyin_result = librosa.pyin(y, sr=sr, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7"))
-    f0 = pyin_result[0]
-    voiced_f0 = f0[f0 > 0]
-    return f0, voiced_f0
-
-
-def detect_gender_from_audio(audio_path: str, threshold_hz: float = 160.0, use_ttest: bool = True,
-                             male_ref_mean: float = 122.5, female_ref_mean: float = 210.0,
-                             alpha: float = 0.05, verbose: bool = False) -> Tuple[Optional[str], Optional[float], Optional[str]]:
-    """Detect gender from audio file using pitch analysis.
-
-    Uses librosa.pyin for pitch estimation. By default, uses statistical t-test
-    for robust classification against reference distributions. Falls back to
-    simple threshold comparison if t-test is disabled.
-
-    Args:
-        audio_path: Path to the audio file
-        threshold_hz: Pitch threshold in Hz for simple comparison (default: 160Hz)
-        use_ttest: Use statistical t-test instead of simple threshold (default: True)
-        male_ref_mean: Reference mean for male distribution (default: 122.5 Hz)
-        female_ref_mean: Reference mean for female distribution (default: 210 Hz)
-        alpha: Significance level for t-test (default: 0.05)
-        verbose: Print detailed analysis
-
-    Returns:
-        Tuple of (gender, confidence, reason)
-        - gender: "male" or "female" based on pitch, None if detection fails
-        - confidence: 0.0-1.0 confidence score (None if using simple threshold)
-        - reason: Human-readable explanation (None if using simple threshold)
-    """
-    try:
-        import numpy as np
-
-        f0, voiced_f0 = extract_pitch_from_audio(audio_path)
-
-        if len(voiced_f0) == 0:
-            return None, None, None
-
-        if use_ttest and len(voiced_f0) >= 3:
-            gender, confidence, reason = classify_gender_statistical(
-                voiced_f0, male_ref_mean, female_ref_mean, alpha, verbose
-            )
-            return gender, confidence, reason
-        else:
-            avg_pitch = np.mean(voiced_f0)
-            if verbose:
-                print(f"    Using threshold method: avg_pitch={avg_pitch:.1f}Hz, threshold={threshold_hz}Hz")
-            return ("female", None, None) if avg_pitch > threshold_hz else ("male", None, None)
-
-    except Exception as e:
-        if verbose:
-            print(f"    Gender detection error: {e}")
-        return None, None, None
-
-
-def correct_voice_gender(
+def validate_voice_with_chunkformer(
     audio_path: str,
     description: str,
-    threshold_hz: float = 160.0,
-    male_target_pitch_hz: float = 130.0,
-    female_target_pitch_hz: float = 220.0,
+    chunkformer_model: Any,
+    check_age: bool = True,
     verbose: bool = False,
-    use_ttest: bool = True,
-    alpha: float = 0.05,
-    male_ref_mean: float = 122.5,
-    female_ref_mean: float = 210.0,
-    plot_histogram: bool = False,
-    histogram_dir: str = None
-) -> Tuple[bool, str, Optional[str], Optional[float], Optional[float]]:
-    """Correct voice gender by pitch shifting if needed.
+) -> Tuple[bool, str, Dict[str, Any]]:
+    """Validate a voice sample against its description using ChunkFormer.
 
-    Detects current gender from audio pitch and compares to target gender
-    extracted from description. If they don't match, applies pitch shift
-    using TD-PSOLA algorithm to move toward the target gender's typical pitch range.
+    Classifies the sample (gender/age/emotion/dialect) and compares gender
+    (and optionally age) to what the description asks for. A mismatch only
+    fails validation when the classifier is confident (>= 0.7).
+
+    Shared by synthetic voice-sample validation and celebrity-clip validation
+    (which passes ``check_age=False`` since celebrity ages vary in-character).
 
     Args:
-        audio_path: Path to the audio file (will be overwritten if correction applied)
-        description: Voice description containing target gender (e.g., "male voice")
-        threshold_hz: Pitch threshold for simple gender detection (default: 160Hz)
-        male_target_pitch_hz: Target average pitch for male voices (default: 130Hz)
-        female_target_pitch_hz: Target average pitch for female voices (default: 220Hz)
-        verbose: Print verbose output
-        use_ttest: Use statistical t-test for gender classification (default: True)
-        alpha: Significance level for t-test (default: 0.05)
-        male_ref_mean: Reference mean for male distribution (default: 122.5 Hz)
-        female_ref_mean: Reference mean for female distribution (default: 210 Hz)
-        plot_histogram: Generate pitch distribution histogram (default: False)
-        histogram_dir: Directory to save histograms (default: same as audio file)
+        audio_path: Path to the voice sample WAV
+        description: Voice description from the LLM
+        chunkformer_model: Loaded ChunkFormer model
+        check_age: Also validate age when the description mentions one
+        verbose: Print debug output
 
     Returns:
-        Tuple of (success, message, final_gender, final_pitch_hz, confidence)
-        - success: True if correction was applied (or not needed), False if failed
-        - message: Description of what was done
-        - final_gender: "male" or "female" based on final pitch, None if detection failed
-        - final_pitch_hz: Average pitch in Hz after any correction, None if detection failed
-        - confidence: 0.0-1.0 confidence score from t-test, None if using threshold method
+        Tuple of (is_valid, reason, classification) where classification is a
+        dict with predicted/expected labels and probabilities for logging.
+        On model errors, validation passes (is_valid=True) with the error as
+        reason — validation is best-effort and must not block generation.
     """
     try:
-        import warnings
+        result = chunkformer_model.classify_audio(audio_path=audio_path)
 
-        # audioread (librosa dependency) imports deprecated aifc/sunau at module load time.
-        # These are removed in Python 3.13. Suppress until audioread is fixed upstream.
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="'aifc' is deprecated", category=DeprecationWarning)
-            warnings.filterwarnings("ignore", message="'sunau' is deprecated", category=DeprecationWarning)
-            import librosa
+        predicted_gender = result["gender"]["label"]
+        predicted_age = result["age"]["label"]
+        gender_prob = result["gender"]["prob"]
+        age_prob = result["age"]["prob"]
 
-        from psola import vocode
-        import numpy as np
-        from pathlib import Path
+        desc_lower = description.lower().strip()
+        expected_gender = _expected_gender_from_description(desc_lower)
+        expected_age = _expected_age_from_description(desc_lower)
 
-        target_gender = extract_gender_from_description(description)
-        if target_gender is None:
-            return False, "Could not extract target gender from description", None, None, None
+        is_valid = True
+        reasons = []
 
-        y, sr = librosa.load(audio_path, sr=None)
-        f0, voiced_f0 = extract_pitch_from_audio(audio_path)
+        if expected_gender is not None and predicted_gender != expected_gender:
+            if gender_prob >= CHUNKFORMER_CONFIDENCE_THRESHOLD:
+                is_valid = False
+                reasons.append(
+                    f"gender mismatch: expected {expected_gender}, got {predicted_gender} (conf: {gender_prob:.2f})"
+                )
+            elif verbose:
+                print(f"      [INFO] Gender mismatch ignored (conf: {gender_prob:.2f} < {CHUNKFORMER_CONFIDENCE_THRESHOLD})")
 
-        if len(voiced_f0) == 0:
-            return False, "Could not detect pitch in audio", None, None, None
-
-        current_avg_pitch = np.mean(voiced_f0)
-
-        if use_ttest and len(voiced_f0) >= 3:
-            current_gender, confidence, reason = classify_gender_statistical(
-                voiced_f0, male_ref_mean, female_ref_mean, alpha, verbose
-            )
-            if verbose:
-                print(f"    Target gender: {target_gender}, Detected gender: {current_gender} "
-                      f"({current_avg_pitch:.1f}Hz, confidence: {confidence:.2f})")
-                print(f"    Reason: {reason}")
-        else:
-            current_gender = "female" if current_avg_pitch > threshold_hz else "male"
-            confidence = None
-            if verbose:
-                print(f"    Target gender: {target_gender}, Detected gender: {current_gender} ({current_avg_pitch:.1f}Hz)")
-
-        if plot_histogram:
-            hist_dir = histogram_dir if histogram_dir else str(Path(audio_path).parent)
-            hist_path = str(Path(hist_dir) / f"{Path(audio_path).stem}_pitch_histogram.png")
-            plot_pitch_histogram(
-                voiced_f0, current_gender, hist_path,
-                male_ref_mean, female_ref_mean, 30.0, confidence, reason if use_ttest else None
-            )
-            if verbose:
-                print(f"    Saved histogram to: {hist_path}")
-
-        if current_gender == target_gender:
-            return True, f"Gender already correct ({current_gender})", current_gender, current_avg_pitch, confidence
-
-        target_pitch = female_target_pitch_hz if target_gender == "female" else male_target_pitch_hz
-        shift_ratio = target_pitch / current_avg_pitch
-
-        if shift_ratio < 0.5 or shift_ratio > 2.0:
-            return False, f"Extreme pitch ({current_avg_pitch:.1f}Hz) beyond correction range - needs regeneration", current_gender, current_avg_pitch, confidence
-
-        shift_percent = (shift_ratio - 1.0) * 100
+        if check_age and expected_age is not None and predicted_age != expected_age:
+            if age_prob >= CHUNKFORMER_CONFIDENCE_THRESHOLD:
+                is_valid = False
+                reasons.append(
+                    f"age mismatch: expected {expected_age}, got {predicted_age} (conf: {age_prob:.2f})"
+                )
+            elif verbose:
+                print(f"      [INFO] Age mismatch ignored (conf: {age_prob:.2f} < {CHUNKFORMER_CONFIDENCE_THRESHOLD})")
 
         if verbose:
-            print(f"    Applying pitch shift: {shift_percent:+.1f}% ({current_gender} → {target_gender})")
-            print(f"    Current: {current_avg_pitch:.1f}Hz → Target: {target_pitch:.1f}Hz (ratio: {shift_ratio:.2f}x)")
+            print(f"      Description: {description[:80]}")
+            print(f"      Classified: {predicted_gender} / {predicted_age} / {result['emotion']['label']}")
+            print(f"      Expected: gender={expected_gender}, age={expected_age if check_age else '(skipped)'}")
+            print(f"      Overall: {'PASS' if is_valid else 'FAIL'}")
+            if reasons:
+                print(f"      Reasons: {'; '.join(reasons)}")
 
-        target_f0 = f0 * shift_ratio
-        y_shifted = vocode(y, sr, target_pitch=target_f0)
+        classification = {
+            "classification": {
+                "gender": {"label": predicted_gender, "prob": result["gender"]["prob"]},
+                "emotion": {"label": result["emotion"]["label"], "prob": result["emotion"]["prob"]},
+                "age": {"label": predicted_age, "prob": result["age"]["prob"]},
+            },
+            "expected": {
+                "gender": expected_gender,
+                "age": expected_age if check_age else None,
+            },
+            "gender_ok": expected_gender is None or predicted_gender == expected_gender,
+            "age_ok": (expected_age is None or not check_age or predicted_age == expected_age),
+            "is_valid": is_valid,
+            "reasons": reasons,
+        }
+        reason = "; ".join(reasons) if reasons else "Validation passed"
+        return is_valid, reason, classification
 
-        import soundfile as sf
-        sf.write(audio_path, y_shifted, sr)
-
-        final_pitch = current_avg_pitch * shift_ratio
-        final_gender = target_gender
-        final_confidence = confidence
-
-        return True, f"Applied pitch shift of {shift_percent:+.1f}% ({current_gender} → {target_gender})", final_gender, final_pitch, final_confidence
-
-    except ImportError as e:
-        return False, f"Missing dependency: {e}. Install librosa and psola.", None, None, None
-    except Exception as e:
-        return False, f"Gender correction error: {e}", None, None, None
-
-
-# ============================================================================
-# AUDIO QUALITY VALIDATION
-# ============================================================================
-
-
-def remove_long_silences(audio_path: str, output_path: str, silence_threshold_db: int = -40, min_silence_duration_ms: int = 800, keep_buffer_ms: int = 200, verbose: bool = False) -> bool:
-    """Remove long silent gaps from audio while preserving speech.
-    
-    Detects silence using RMS amplitude and splits audio into speech segments,
-    rejoining them with short gaps to remove excessive pauses.
-    
-    Args:
-        audio_path: Path to the source audio file (.wav)
-        output_path: Path to write the processed audio (.wav)
-        silence_threshold_db: dBFS threshold below which audio is considered silent
-        min_silence_duration_ms: Minimum silence duration to trigger removal
-        keep_buffer_ms: Buffer to keep on either side of detected silence boundary
-        verbose: Print verbose output
-        
-    Returns:
-        True if processing was successful, False otherwise
-    """
-    import pydub
-    
-    try:
-        seg = pydub.AudioSegment.from_wav(audio_path)
     except Exception as e:
         if verbose:
-            print(f"  [Silence] Failed to load audio: {e}")
-        return False
-    
-    original_duration = len(seg)
-    
-    # Use pydub's split_on_silence to find speech segments
-    # Then rejoin with short gaps
-    try:
-        chunks = pydub.silence.split_on_silence(
-            seg,
-            min_silence_len=min_silence_duration_ms,
-            silence_thresh=silence_threshold_db,
-            keep_silence=keep_buffer_ms,
-        )
-    except Exception as e:
-        if verbose:
-            print(f"  [Silence] split_on_silence failed: {e}")
-        return False
-    
-    if not chunks:
-        return False
-    
-    # Join chunks with short gap (100ms of silence)
-    gap = pydub.AudioSegment.silent(duration=100, frame_rate=seg.frame_rate)
-    result = chunks[0]
-    for chunk in chunks[1:]:
-        result = result + gap + chunk
-    
-    result.export(output_path, format="wav")
-    
-    if verbose:
-        print(f"  [Silence] Reduced from {original_duration}ms to {len(result)}ms ({len(result)/original_duration*100:.0f}%)")
-    
-    return True
+            print(f"    ChunkFormer validation error: {e}")
+        return True, str(e), {}
 
 
 def crop_to_ref_text(audio_path: str, output_path: str, ref_words: List[str], transcribed_words: List[str], start_times: List[float], end_times: List[float], verbose: bool = False) -> bool:
@@ -583,7 +252,7 @@ Respond with ONLY the JSON object, no other text."""
             ],
             temperature=0.3,
             max_tokens=300,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            extra_body=LLM_NO_THINKING_EXTRA_BODY,
         )
 
         response_text = response.choices[0].message.content.strip()

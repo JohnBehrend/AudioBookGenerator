@@ -76,23 +76,13 @@ class TestGetEngine:
     def test_get_engine(self, mock_dir, MockEngine):
         """Test getting an engine instance."""
         from tts import get_engine
-        
+
         mock_dir.return_value = Path("/tmp/omni")
         mock_instance = MagicMock()
         MockEngine.return_value = mock_instance
-        
+
         engine = get_engine("omni", device="cuda:0")
-        
+
         assert engine == mock_instance
         mock_dir.assert_called_once_with("omni")
         MockEngine.assert_called_once_with(Path("/tmp/omni"), device="cuda:0")
-
-    @patch("tts.get_engine_dir")
-    def test_get_engine_not_found(self, mock_dir):
-        """Test getting engine for non-existent engine."""
-        from tts import get_engine
-        
-        mock_dir.side_effect = ValueError("Unknown engine: nonexistent")
-        
-        with pytest.raises(ValueError, match="Unknown engine"):
-            get_engine("nonexistent")

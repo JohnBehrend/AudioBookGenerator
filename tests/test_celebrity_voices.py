@@ -8,14 +8,18 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from audiobook_generator.celebrity_voices import (
+    _extract_json_obj,
     _extract_segment_from_audio,
     find_and_extract_video_segment,
+    get_celebrity_known_lines,
+    review_celebrity_transcript,
     validate_celebrity_segment,
     generate_celebrity_reference,
     build_celebrity_voice,
     match_celebrity,
     save_celebrity_voice_as,
     _retry_llm_call,
+    _transcript_contains_known_line,
 )
 from audiobook_generator.testing import write_silence_wav
 
@@ -73,7 +77,7 @@ class TestFindAndExtractVideoSegment:
         """Test that download failure returns (None, None)."""
         with patch("audiobook_generator.celebrity_voices.download_celebrity_audio") as mock_dl:
             mock_dl.return_value = None
-            seg, audio = find_and_extract_video_segment(
+            seg, audio, content_validated = find_and_extract_video_segment(
                 client=mock_llm_client,
                 model="test",
                 search_query="test celebrity interview",
@@ -85,6 +89,7 @@ class TestFindAndExtractVideoSegment:
             )
         assert seg is None
         assert audio is None
+        assert content_validated is False
 
     def test_calls_download_celebrity_audio(self, temp_dir, mock_llm_client):
         """Test that download_celebrity_audio is called with correct args."""
@@ -119,7 +124,7 @@ class TestFindAndExtractVideoSegment:
             seg_path.touch()
             mock_extract.return_value = [str(seg_path)]
 
-            seg, audio = find_and_extract_video_segment(
+            seg, audio, content_validated = find_and_extract_video_segment(
                 client=mock_llm_client,
                 model="test",
                 search_query="test",
@@ -357,7 +362,7 @@ class TestBuildCelebrityVoice:
         long_engine = MockTTSEngine(duration=5.0, sample_rate=22050)
         with patch("audiobook_generator.celebrity_voices.find_and_extract_video_segment") as mock_find, \
              patch("audiobook_generator.celebrity_voices.match_celebrity") as mock_match:
-            mock_find.return_value = (str(seg_path), str(seg_path))
+            mock_find.return_value = (str(seg_path), str(seg_path), False)
             ref, meta = build_celebrity_voice(
                 client=mock_llm_client,
                 model="test",
@@ -387,7 +392,7 @@ class TestBuildCelebrityVoice:
                 "reason": "test",
                 "search_query": "Test Celebrity interview",
             }
-            mock_find.return_value = (str(seg_path), str(seg_path))
+            mock_find.return_value = (str(seg_path), str(seg_path), False)
             mock_val.return_value = (True, "passed")
             ref_path = temp_dir / "test_char_v0_ref.wav"
             ref_path.touch()
@@ -423,8 +428,8 @@ class TestBuildCelebrityVoice:
                 "search_query": "Test Celebrity interview",
             }
             mock_find.side_effect = [
-                (str(seg1), str(seg1)),
-                (str(seg2), str(seg2)),
+                (str(seg1), str(seg1), False),
+                (str(seg2), str(seg2), False),
             ]
             mock_val.side_effect = [
                 (False, "gender mismatch"),
@@ -465,8 +470,8 @@ class TestBuildCelebrityVoice:
                 "search_query": "Test Celebrity interview",
             }
             mock_find.side_effect = [
-                (str(seg1), str(seg1)),
-                (str(seg2), str(seg2)),
+                (str(seg1), str(seg1), False),
+                (str(seg2), str(seg2), False),
             ]
             mock_val.return_value = (False, "gender mismatch")
             mock_gen.return_value = (None, 0.0)
@@ -494,7 +499,7 @@ class TestBuildCelebrityVoice:
                 "reason": "test",
                 "search_query": "Test Celebrity interview",
             }
-            mock_find.return_value = (None, None)
+            mock_find.return_value = (None, None, False)
 
             ref, meta = build_celebrity_voice(
                 client=mock_llm_client,
@@ -523,7 +528,7 @@ class TestBuildCelebrityVoice:
                 "reason": "test",
                 "search_query": "Test Celebrity interview",
             }
-            mock_find.return_value = (str(seg_path), str(seg_path))
+            mock_find.return_value = (str(seg_path), str(seg_path), False)
             mock_val.return_value = (True, "passed")
 
             ref, meta = build_celebrity_voice(
@@ -557,7 +562,7 @@ class TestBuildCelebrityVoice:
                 "reason": "test",
                 "search_query": "Test Celebrity interview",
             }
-            mock_find.return_value = (str(seg_path), str(seg_path))
+            mock_find.return_value = (str(seg_path), str(seg_path), False)
             mock_val.return_value = (True, "passed")
             ref_path = temp_dir / "test_char_v0_ref.wav"
             ref_path.touch()
@@ -592,7 +597,7 @@ class TestBuildCelebrityVoice:
                 "reason": "test reason",
                 "search_query": "Test Celebrity interview",
             }
-            mock_find.return_value = (str(seg_path), str(seg_path))
+            mock_find.return_value = (str(seg_path), str(seg_path), False)
             mock_val.return_value = (True, "passed")
             ref_path = temp_dir / "test_char_v0_ref.wav"
             ref_path.touch()
@@ -731,3 +736,219 @@ class TestMatchCelebrity:
         )
 
         assert result is not None
+
+
+class TestTranscriptContainsKnownLine:
+    """Tests for the content-validation matcher (no audio/Whisper needed)."""
+
+    def test_matches_exact_known_line(self):
+        assert _transcript_contains_known_line(
+            "the world is not in your books and maps it is out there and i know it",
+            ["the world is not in your books and maps"],
+        ) is True
+
+    def test_matches_with_light_whisper_noise(self):
+        # Whisper inserts filler/varies wording; fuzzy match should still hit.
+        assert _transcript_contains_known_line(
+            "you have a grand gift for silence watson",
+            ["a grand gift for silence"],
+        ) is True
+
+    def test_no_match_when_absent(self):
+        assert _transcript_contains_known_line(
+            "completely unrelated spoken words here",
+            ["the world is not in your books"],
+        ) is False
+
+    def test_empty_inputs(self):
+        assert _transcript_contains_known_line("", ["a line"]) is False
+        assert _transcript_contains_known_line("some text", []) is False
+
+
+class TestExtractJsonObj:
+    """Tests for the tolerant LLM-JSON parser."""
+
+    def test_plain_json(self):
+        assert _extract_json_obj('{"valid": true, "reason": "r"}') == {"valid": True, "reason": "r"}
+
+    def test_json_wrapped_in_prose(self):
+        raw = 'Sure! Here is the answer: {"movie": "The Hobbit", "lines": ["one"]} Hope that helps.'
+        assert _extract_json_obj(raw) == {"movie": "The Hobbit", "lines": ["one"]}
+
+    def test_single_quoted_json(self):
+        assert _extract_json_obj("{'valid': True, 'reason': 'sounds like him'}") == {
+            "valid": True, "reason": "sounds like him",
+        }
+
+    def test_no_braces_returns_none(self):
+        assert _extract_json_obj("no json here at all") is None
+
+    def test_empty_returns_none(self):
+        assert _extract_json_obj("") is None
+        assert _extract_json_obj(None) is None
+
+    def test_non_dict_json_returns_none(self):
+        assert _extract_json_obj("[1, 2, 3]") is None
+
+
+class TestGetCelebrityKnownLines:
+    """Tests for LLM-based known-line generation."""
+
+    def test_returns_movie_and_lines(self, mock_llm_client):
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": '{"movie": "The Hobbit", "lines": ["I have no memory of this place", "It is a road"]}',
+        })
+        movie, lines = get_celebrity_known_lines(
+            client=mock_llm_client, model="test", celebrity="Ian McKellen",
+        )
+        assert movie == "The Hobbit"
+        assert lines == ["I have no memory of this place", "It is a road"]
+
+    def test_filters_empty_lines(self, mock_llm_client):
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": '{"movie": "X", "lines": ["", "  ", "a real line"]}',
+        })
+        movie, lines = get_celebrity_known_lines(
+            client=mock_llm_client, model="test", celebrity="X Y",
+        )
+        assert lines == ["a real line"]
+
+    def test_returns_empty_on_junk_response(self, mock_llm_client):
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": "completely unparseable output",
+        })
+        movie, lines = get_celebrity_known_lines(
+            client=mock_llm_client, model="test", celebrity="X Y", max_retries=1,
+        )
+        assert movie == ""
+        assert lines == []
+
+    def test_returns_empty_without_client(self):
+        movie, lines = get_celebrity_known_lines(client=None, model="test", celebrity="X Y")
+        assert movie == ""
+        assert lines == []
+
+
+class TestReviewCelebrityTranscript:
+    """Tests for the LLM transcript-review content validator."""
+
+    def test_valid_transcript(self, mock_llm_client):
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": '{"valid": true, "reason": "sounds like the celebrity"}',
+        })
+        valid, reason = review_celebrity_transcript(
+            client=mock_llm_client, model="test", celebrity="X Y",
+            character="jane", description="female voice",
+            transcript="some transcript text",
+        )
+        assert valid is True
+        assert reason == "sounds like the celebrity"
+
+    def test_rejected_transcript(self, mock_llm_client):
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": '{"valid": false, "reason": "background music, not the celebrity"}',
+        })
+        valid, reason = review_celebrity_transcript(
+            client=mock_llm_client, model="test", celebrity="X Y",
+            character="jane", description="female voice",
+            transcript="some transcript text",
+        )
+        assert valid is False
+        assert reason == "background music, not the celebrity"
+
+    def test_unparseable_response_fails(self, mock_llm_client):
+        mock_llm_client.set_response({
+            "role": "assistant",
+            "content": "not json at all",
+        })
+        valid, reason = review_celebrity_transcript(
+            client=mock_llm_client, model="test", celebrity="X Y",
+            character="jane", description="female voice",
+            transcript="some transcript text",
+        )
+        assert valid is False
+        assert reason == "unparseable LLM response"
+
+    def test_empty_inputs_fail(self, mock_llm_client):
+        valid, reason = review_celebrity_transcript(
+            client=mock_llm_client, model="test", celebrity="X Y",
+            character="jane", description="female voice", transcript="",
+        )
+        assert valid is False
+        valid, reason = review_celebrity_transcript(
+            client=None, model="test", celebrity="X Y",
+            character="jane", description="female voice", transcript="text",
+        )
+        assert valid is False
+
+
+class TestContentValidatedSkip:
+    """content_validated=True must skip ChunkFormer and reach metadata."""
+
+    def _build(self, temp_dir, mock_llm_client, content_validated, chunkformer_result=None):
+        seg_path = temp_dir / "test_char_v0_segment.wav"
+        write_silence_wav(seg_path, 22050, 3)
+        ref_path = temp_dir / "test_char_v0_ref.wav"
+        ref_path.touch()
+
+        with patch("audiobook_generator.celebrity_voices.find_and_extract_video_segment") as mock_find, \
+             patch("audiobook_generator.celebrity_voices.validate_celebrity_segment") as mock_val, \
+             patch("audiobook_generator.celebrity_voices.generate_celebrity_reference") as mock_gen:
+            mock_find.return_value = (str(seg_path), str(seg_path), content_validated)
+            if chunkformer_result is not None:
+                mock_val.return_value = chunkformer_result
+            mock_gen.return_value = (str(ref_path), 5.0)
+
+            ref, meta = build_celebrity_voice(
+                client=mock_llm_client,
+                model="test",
+                character="test_char",
+                description='{"gender": "male"}',
+                output_dir=str(temp_dir),
+                pre_matched_celebrity="Test Celebrity",
+            )
+
+        return mock_val, mock_find, ref, meta
+
+    def test_content_validated_skips_chunkformer(self, temp_dir, mock_llm_client):
+        mock_val, _, ref, meta = self._build(temp_dir, mock_llm_client, content_validated=True)
+        mock_val.assert_not_called()
+        assert ref is not None
+        assert meta["content_validated"] is True
+
+    def test_not_content_validated_runs_chunkformer(self, temp_dir, mock_llm_client):
+        mock_val, _, ref, meta = self._build(
+            temp_dir, mock_llm_client, content_validated=False,
+            chunkformer_result=(True, "passed"),
+        )
+        mock_val.assert_called_once()
+        assert ref is not None
+        assert meta["content_validated"] is False
+
+    def test_known_lines_forwarded_to_search(self, temp_dir, mock_llm_client):
+        seg_path = temp_dir / "test_char_v0_segment.wav"
+        write_silence_wav(seg_path, 22050, 3)
+
+        with patch("audiobook_generator.celebrity_voices.get_celebrity_known_lines") as mock_lines, \
+             patch("audiobook_generator.celebrity_voices.find_and_extract_video_segment") as mock_find:
+            mock_lines.return_value = ("The Hobbit", ["i have no memory of this place"])
+            mock_find.return_value = (None, None, False)
+
+            ref, meta = build_celebrity_voice(
+                client=mock_llm_client,
+                model="test",
+                character="test_char",
+                description='{"gender": "male"}',
+                output_dir=str(temp_dir),
+                pre_matched_celebrity="Test Celebrity",
+            )
+
+        assert ref is None
+        call_kwargs = mock_find.call_args.kwargs
+        assert call_kwargs["known_lines"] == ["i have no memory of this place"]
+        assert "The Hobbit" in call_kwargs["search_query"]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a combined WOT character-voice seed map from prior processed books.
+"""Build a combined character-voice seed map from prior processed books.
 
 For each source book directory, map character names to their canonical voice wav
 and merge sources in priority order so a character keeps the highest-priority
@@ -15,18 +15,32 @@ Source resolution per book:
     ``.sampleN`` leftovers.
 
 Usage:
-    python scripts/build_wot_seed_map.py \
-        --out voice_test/wot_book4_shadow_rising/seed_voices_map.json \
-        --priority voice_test/wot_book3_dragon_reborn voice_test/teotw \
-            voice_test/eye_of_the_world voice_test/new_spring
+    python scripts/build_seed_map.py \
+        --out voice_test/book4/seed_voices_map.json \
+        --priority voice_test/book3 voice_test/book2 voice_test/book1
 """
 import argparse
+import importlib.util
 import json
 import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 AUDIO_EXT = {".wav", ".mp3", ".flac"}
+
+
+def _load_naming():
+    """Load the shared chapter-naming helpers without importing the package
+    (audiobook_generator/__init__.py pulls in torch/gradio, too heavy here)."""
+    spec = importlib.util.spec_from_file_location(
+        "abg_naming", REPO / "audiobook_generator" / "naming.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_naming = _load_naming()
+CHAPTER_STEM_RE = _naming.CHAPTER_STEM_RE
 
 
 def plain_voices(book_dir: Path):
@@ -44,7 +58,7 @@ def plain_voices(book_dir: Path):
         # chapter recordings from a prior book, NOT character voices. Including
         # them would (a) seed bogus "chapter_XX" characters and (b) cause the
         # pipeline to copy a prior book's chapter MP3s over the current output.
-        if re.search(r"^chapter_\d+$", stem, flags=re.IGNORECASE):
+        if CHAPTER_STEM_RE.search(stem):
             continue
         # Use an absolute path so the seed loader (which resolves relative
         # paths against the seed-map's directory) finds the file regardless of
@@ -67,7 +81,7 @@ def _voices_map_is_usable(book_dir: Path, voices: dict) -> bool:
         stem = p.stem
         if re.search(r"\.sample\d+$", stem, flags=re.IGNORECASE):
             return False
-        if re.search(r"^chapter_\d+$", stem, flags=re.IGNORECASE):
+        if CHAPTER_STEM_RE.search(stem):
             return False
         if p.suffix.lower() not in AUDIO_EXT:
             return False

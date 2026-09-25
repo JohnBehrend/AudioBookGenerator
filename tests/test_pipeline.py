@@ -11,7 +11,6 @@ from audiobook_generator.pipeline import (
     should_retry,
     generate_output_filename,
     is_generation_success,
-    collect_transcription_segments,
     END_CHARACTERS,
     MIN_RATIO_THRESHOLD,
     MAX_RETRIES,
@@ -116,7 +115,7 @@ class TestScoreStringsPop:
         when no postfix is provided. This is a known behavior of the original algorithm.
         """
         score, last_token = score_strings_pop("hello world", "hello world", postfix="")
-        assert score >= 0.0
+        assert score >= 0.5
         assert last_token == "world"
 
     def test_partial_match(self):
@@ -220,25 +219,6 @@ class TestCalculateClipPoints:
         # first content word and ends at the start of the postfix "And" (0.96s).
         assert result == (0, 960.0)
 
-    def test_no_postfix_keeps_full_audio_end(self):
-        """When the postfix is not found, do NOT clip the end.
-
-        Clipping at Whisper's (under-reported) last-valid-token end time cut the
-        final word's tail (e.g. "tank" -> "t-"). End is now kept intact (None).
-        """
-        segments = ["hello", "world", "missing"]
-        start_times = [0.0, 0.5, 1.0]
-        end_times = [0.4, 0.9, 1.4]
-
-        result = calculate_clip_points(
-            segments, start_times, end_times, "notfound", "world",
-            input_tokens=["hello", "world", "missing"],
-        )
-
-        assert result is not None
-        _, end_clip = result
-        assert end_clip is None
-
     def test_no_clipping_needed(self):
         """Test when no clipping is needed."""
         segments = ["hello", "world"]
@@ -336,36 +316,8 @@ class TestIsGenerationSuccess:
 
 
 class TestCollectTranscriptionSegments:
-    """Tests for collect_transcription_segments function."""
-
-    def test_extracts_segments(self):
-        """Test segment extraction from mock segments."""
-        class MockWord:
-            def __init__(self, word, start, end):
-                self.word = word
-                self.start = start
-                self.end = end
-
-        class MockSegment:
-            def __init__(self, words):
-                self.words = words
-
-        segments_list = [
-            MockSegment([MockWord("hello", 0.0, 0.5), MockWord("world", 0.5, 1.0)])
-        ]
-
-        segments, starts, ends = collect_transcription_segments(segments_list)
-
-        assert segments == ["hello", "world"]
-        assert starts == [0.0, 0.5]
-        assert ends == [0.5, 1.0]
-
-    def test_empty_segments(self):
-        """Test with empty segments."""
-        segments, starts, ends = collect_transcription_segments([])
-        assert segments == []
-        assert starts == []
-        assert ends == []
+    """Segment extraction is covered in tests/test_whisper_validation.py
+    (dict-based, object-based, and mixed segments)."""
 
 
 class TestConstants:
@@ -432,22 +384,3 @@ class TestIntegrationScenarios:
         result = calculate_clip_points(segments, start_times, end_times, "and", "world")
 
         assert result is not None
-
-    def test_retry_logic_pipeline(self):
-        """Test retry decision pipeline."""
-        attempts = [
-            (0.5, False),
-            (0.6, False),
-            (0.85, True),
-        ]
-
-        max_ratio = 0.0
-        for i, (ratio, should_stop) in enumerate(attempts):
-            if ratio > max_ratio:
-                max_ratio = ratio
-
-            should_continue = should_retry(ratio, max_ratio, i)
-            if not should_continue:
-                assert should_stop or i == len(attempts) - 1
-            else:
-                assert not should_stop

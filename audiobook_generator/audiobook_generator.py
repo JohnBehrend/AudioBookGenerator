@@ -22,7 +22,6 @@ import os
 import sys
 import time
 import json
-import re
 import glob
 import gc
 import shutil
@@ -37,6 +36,7 @@ from dataclasses import dataclass, field
 from .utils import _get_attn_implementation
 from .config import DEFAULTS, LLM_SETTINGS, AUDIO_SETTINGS
 from .utils import natural_sort_key
+from .naming import sorted_chapter_files
 
 TTS_ENGINE = os.environ.get('TTS_ENGINE', AUDIO_SETTINGS["default_tts_engine"])
 
@@ -554,7 +554,6 @@ def generate_audiobook_from_chapters(
     whisper_cpu: bool = False,
     debug_tts: bool = False,
     validate_clean: bool = False,
-    max_retries: Optional[int] = None,
     enable_postfix: bool = True,
     concurrency: int = 1,
     gpus: Optional[List[str]] = None,
@@ -573,7 +572,7 @@ def generate_audiobook_from_chapters(
         voices_map: Dict mapping character names to voice file paths (wav)
         output_dir: Output directory for audio files
         device: Device to run on
-        tts_engine: 'moss', 'echo-tts', 'omni', 'vox', or 'dramabox'
+        tts_engine: 'breeze', 'omni', 'dramabox', 'minimax_h3', or 'zonos2'
         cfg_scale: CFG scale value
         max_chapters: Maximum number of chapters to process
         verbose: Print verbose output
@@ -615,10 +614,6 @@ def generate_audiobook_from_chapters(
                 voice_path = os.path.join(output_dir, voice_basename)
             voice_mapper.add_voice_path(voice, voice_path)
         short_text_postfix = DEFAULTS["short_text_postfix"] if enable_postfix else ""
-
-        # Resolve max_retries: use provided value, fall back to config
-        if max_retries is None:
-            max_retries = DEFAULTS.get("max_retries", 1)
 
         # Create Whisper pool for parallel validation
         whisper_lock = None
@@ -1240,9 +1235,7 @@ class PipelineState:
     def load_chapter_maps(self):
         """Load all chapter map files from the chapters directory."""
         self.chapter_maps = {}
-        map_files = sorted([f for f in self.chapters_dir.glob("*.map.json")
-                           if re.match(r"^chapter_\d+\.map\.json$", f.name)],
-                          key=natural_sort_key)
+        map_files = sorted_chapter_files(self.chapters_dir, ".map.json")
 
         for map_file in map_files:
             try:
@@ -1335,13 +1328,12 @@ class PipelineState:
 
 def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                       verbose: bool = False, api_key: str = None, llm_port: str = None,
-                        voice_engine: str = "dramabox", tts_engine: str = "omni", turbo: bool = False,
+                        voice_engine: str = "dramabox", tts_engine: str = None, turbo: bool = False,
                       device: str = AUDIO_SETTINGS["default_device"], seed_voice_map: str = None,
                       num_llm_attempts: int = DEFAULTS["num_llm_attempts"],
                       resume: bool = False, whisper_device: str = None, whisper_alt_gpu: bool = False,
                       whisper_cpu: bool = False, debug_tts: bool = False, validate: bool = False,
-                      validate_clean: bool = False, max_retries: int = None,
-                       enable_postfix: bool = True, concurrency: int = 1,
+                      enable_postfix: bool = True, concurrency: int = 1,
                        gpus: Optional[List[str]] = None, whisper_concurrency: int = 1,
                        whisper_fast: bool = False,
                         llm_model: str = None,
@@ -1356,8 +1348,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         verbose: Print verbose output
         api_key: LLM API key for speaker labeling and character descriptions
         llm_port: LLM endpoint port (e.g., LM Studio)
-        voice_engine: TTS engine for voice sample generation ('omni', 'vox', 'dramabox')
-        tts_engine: TTS engine for audiobook generation ('echo-tts', 'omni', 'vox', 'dramabox')
+        voice_engine: TTS engine for voice sample generation ('omni', 'dramabox', 'minimax_h3')
+        tts_engine: TTS engine for audiobook generation ('breeze', 'omni', 'dramabox', 'minimax_h3', 'zonos2')
         turbo: Reserved for future turbo models
         device: CUDA device (e.g., 'cuda', 'cuda:1')
         seed_voice_map: Path to existing voices_map.json to seed voices
@@ -1371,6 +1363,8 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
         Status message
     """
     # Apply CLI overrides to centralized config so all downstream functions pick them up
+    if tts_engine is None:
+        tts_engine = AUDIO_SETTINGS["default_tts_engine"]
     if api_key:
         LLM_SETTINGS["api_key"] = api_key
     if llm_port:
@@ -1498,9 +1492,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
     # Stage 2: Label Speakers with progress
     if verbose:
         print(f"[STAGE 2] Labeling speakers...")
-    chapter_files = sorted([f for f in state.chapters_dir.glob("chapter_*.txt")
-                           if re.match(r"^chapter_\d+\.txt$", f.name)],
-                          key=natural_sort_key)
+    chapter_files = sorted_chapter_files(state.chapters_dir)
     if max_chapters is not None:
         chapter_files = chapter_files[:max_chapters]
     num_chapters = len(chapter_files)
@@ -1721,7 +1713,6 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
             seed_voice_map=seed_voice_map,
             whisper_alt_gpu=whisper_alt_gpu,
             validate_clean=validate_clean,
-            max_retries=max_retries,
             enable_postfix=enable_postfix,
             concurrency=concurrency,
             gpus=gpus,
@@ -1780,9 +1771,11 @@ def create_gradio_interface(output_dir: str = "chapters", api_key: str = None,
         seed_voice_map: Path to existing voices_map.json to seed voices
         epub_file: Path to EPUB file to pre-load in the interface
         saved_temp_dir: Optional path to a saved temp directory to restore from
-        tts_engine: TTS engine to use ('moss', 'echo-tts', 'omni', 'vox', 'dramabox')
+        tts_engine: TTS engine to use ('breeze', 'omni', 'dramabox', 'minimax_h3', 'zonos2')
     """
     # Set TTS_ENGINE environment variable for Gradio UI
+    if tts_engine is None:
+        tts_engine = AUDIO_SETTINGS["default_tts_engine"]
     if tts_engine:
         os.environ['TTS_ENGINE'] = tts_engine
     try:
@@ -1877,9 +1870,14 @@ def main():
     parser.add_argument("--seed-voice-map", help="Path to existing voices_map.json to seed voices")
     parser.add_argument("epub_file", nargs="?", help="Path to EPUB file to process")
     parser.add_argument("--saved-temp-dir", help="Path to saved temp directory to restore from")
-    parser.add_argument("--tts-engine", choices=["moss", "echo-tts", "omni", "vox", "dramabox", "breeze"], help="TTS engine to use")
+    try:
+        from tts import list_engines
+        engine_choices = list_engines()
+    except ImportError:
+        engine_choices = ["breeze", "dramabox", "minimax_h3", "omni", "zonos2"]
+    parser.add_argument("--tts-engine", choices=engine_choices, help="TTS engine to use")
     parser.add_argument("--model", default=None, help="LLM model name (e.g., coder-model)")
-    parser.add_argument("--voice-engine", choices=["omni", "vox", "dramabox", "minimax_h3"], default="dramabox", help="Voice engine for character descriptions")
+    parser.add_argument("--voice-engine", choices=["omni", "dramabox", "minimax_h3"], default="dramabox", help="Voice engine for character descriptions")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     parser.add_argument("--resume", nargs="?", const=True, default=None, metavar="DIR",
                         help="Resume from existing output directory (use --output-dir or specify DIR)")

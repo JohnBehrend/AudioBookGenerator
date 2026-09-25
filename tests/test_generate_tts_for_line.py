@@ -202,8 +202,11 @@ class TestGenerateTTSForLineEngineCall:
 class TestGenerateTTSForLineValidation:
     """Tests for validation model behavior."""
 
-    def test_no_validation_model_returns_zero_ratio(self, temp_dir):
-        """When validation_model is None, ratio should be 0.0."""
+    def test_no_validation_model_reports_zero_ratio(self, temp_dir):
+        """generate_tts_for_line with validation_model=None reports ratio 0.0.
+
+        (The inner _validate_and_clip_audio equivalent lives in
+        tests/test_whisper_validation.py.)"""
         from audiobook_generator.audiobook_generator import generate_tts_for_line
 
         engine = MockTTSEngine()

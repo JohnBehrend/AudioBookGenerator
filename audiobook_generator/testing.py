@@ -2,7 +2,6 @@
 """Testing utilities for audiobook_generator."""
 
 import os
-import json
 import numpy as np
 from contextlib import contextmanager
 from pathlib import Path

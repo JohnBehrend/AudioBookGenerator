@@ -11,7 +11,6 @@ Provides:
 from .engine import TTSEngine
 from .worker import EngineWorker
 from .pool import WorkerPool, WhisperPool
-from .voice_sample import generate_voice_sample, build_voice_clone_prompt
 
 import json
 import subprocess

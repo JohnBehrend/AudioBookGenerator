@@ -352,7 +352,7 @@ def build_chapter_word_timings(output_dir: str, chapter_idx: int,
             continue
         if not lw:
             continue
-        toks = [txt_lines[k][o:o+l] for o, l in line_toks[k]]
+        toks = [txt_lines[k][o:l] for o, l in line_toks[k]]
         if not toks:
             continue
         times = _ja.align(lw, toks)

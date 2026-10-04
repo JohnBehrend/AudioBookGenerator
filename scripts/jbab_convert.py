@@ -145,7 +145,7 @@ def main() -> int:
         if epub_t:
             epub_t = strip_tts_markers(epub_t)
             toks = tokenize(epub_t)
-            times = align(wwords, [epub_t[o:o+l] for o, l in toks])
+            times = align(wwords, [epub_t[o:l] for o, l in toks])
             if times:
                 text = epub_t
                 src_kind = "epub-aligned"

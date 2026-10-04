@@ -203,17 +203,16 @@ def align(whisper_words: list[tuple[str, float, float]],
 
 
 def transcript_text(wwords):
-    """Transcript text + 1:1 word timings (text == what was spoken)."""
-    text = "".join(w for w, _, _ in wwords).strip()
-    toks = tokenize(text)
-    if len(toks) != len(wwords):
-        if not wwords:
-            return None, None
-        span = wwords[-1][2] * 1000
-        n = len(toks)
-        times = [[int(span * i / n), int(span * (i + 1) / n)]
-                 for i in range(n)]
-        return text, times
+    """Transcript text + 1:1 word timings (text == what was spoken).
+
+    Whisper words do not reliably carry leading whitespace, so join
+    with single spaces after stripping: the token stream then equals
+    the whisper word stream exactly, keeping the 1:1 index mapping."""
+    toks = [w.strip() for w, _, _ in wwords]
+    if not toks or not any(toks):
+        return None, None
+    text = " ".join(toks)
+    assert len(tokenize(text)) == len(toks)
     times = [[int(s * 1000), int(e * 1000)] for _, s, e in wwords]
     return text, times
 
@@ -293,7 +292,7 @@ def main() -> int:
             skipped += 1
             continue
 
-        times = align(wwords, [text[o:o+l] for o, l in toks])
+        times = align(wwords, [text[o:l] for o, l in toks])
         if times is None:
             # sidecar text is untrustworthy (TTS engines paraphrase):
             # fall back to the transcript as the reading text

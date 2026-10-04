@@ -61,6 +61,14 @@ DEFAULT_REF_TEXT = os.environ.get(
 )
 CFG_SCALE_VOICE_DESIGN = 4.0
 CFG_SCALE_VOICE_CLONE = 4.0
+# Attention implementation for the text encoder / backbone. sdpa (PyTorch
+# built-in scaled-dot-product attention) is much faster than eager and needs
+# no extra deps; flash_attention_2 would need the flash-attn package (not
+# installed in this venv). Override with BLUE_ATTN_IMPLEMENTATION env var.
+ATTN_IMPLEMENTATION = os.environ.get("BLUE_ATTN_IMPLEMENTATION", "sdpa")
+if ATTN_IMPLEMENTATION not in ("eager", "sdpa", "flash_attention_2"):
+    print(f"  [blue] Invalid BLUE_ATTN_IMPLEMENTATION='{ATTN_IMPLEMENTATION}', using sdpa.", flush=True)
+    ATTN_IMPLEMENTATION = "sdpa"
 
 
 def probe() -> None:
@@ -80,19 +88,20 @@ def ensure_checkpoint() -> Path:
         from huggingface_hub import snapshot_download
 
         snapshot_download(MODEL_REPO, local_dir=str(CHECKPOINT_DIR))
-    _patch_eager_attention(CHECKPOINT_DIR)
+    _patch_attn_config(CHECKPOINT_DIR, ATTN_IMPLEMENTATION)
     return CHECKPOINT_DIR
 
 
-def _patch_eager_attention(ckpt: Path) -> None:
-    """Force the text encoder to eager attention when flash_attn is unavailable.
+def _patch_attn_config(ckpt: Path, attn_implementation: str) -> None:
+    """Align the checkpoint's text-encoder attention config with the API flag.
 
     Breeze's checkpoint ships with ``preferred_attn_implementation =
-    flash_attention_2`` on the text encoder config, which makes transformers try
-    to import ``flash_attn`` (not installed here). Eager attention is the model
-    card's default inference path, so this only avoids a hard crash; it does not
-    change quality. The checkpoint is local/ignored, so the one-line config edit
-    is safe and idempotent.
+    flash_attention_2`` on the text encoder config, which makes transformers
+    try to import ``flash_attn`` (not installed here). The API's
+    ``--attn-implementation`` flag overrides this when loading, but keep the
+    local config in sync anyway so any code path that reads the config
+    directly sees the same choice. The checkpoint is local/ignored, so the
+    config edit is safe and idempotent.
     """
     cfg_path = ckpt / "config.json"
     try:
@@ -102,14 +111,19 @@ def _patch_eager_attention(ckpt: Path) -> None:
     te = cfg.get("text_encoder_config")
     if not isinstance(te, dict):
         return
-    if te.get("preferred_attn_implementation", "flash_attention_2") == "flash_attention_2":
+    current = te.get("preferred_attn_implementation", "flash_attention_2")
+    if current != attn_implementation:
         try:
             import flash_attn  # noqa: F401
+            flash_available = True
         except ImportError:
-            te["preferred_attn_implementation"] = "eager"
-            te["_attn_implementation"] = "eager"
-            cfg_path.write_text(json.dumps(cfg, indent=2))
-            print("  [blue] Forced text-encoder attention to eager (flash_attn not installed).", flush=True)
+            flash_available = False
+        if attn_implementation == "flash_attention_2" and not flash_available:
+            attn_implementation = "sdpa"
+        te["preferred_attn_implementation"] = attn_implementation
+        te["_attn_implementation"] = attn_implementation
+        cfg_path.write_text(json.dumps(cfg, indent=2))
+        print(f"  [blue] Text-encoder attention set to {attn_implementation}.", flush=True)
 
 
 def device_port(device: str) -> int:
@@ -252,6 +266,9 @@ def run_worker(device: str) -> None:
     """
     server_proc: Optional[subprocess.Popen] = None
     server_stderr: Optional[str] = None
+    # Attention implementation in effect for the running server; falls back to
+    # eager if the requested one fails to start.
+    current_attn = ATTN_IMPLEMENTATION
     # Track the reference transcript for each voice sample we generate, so
     # generate_line can pass the exact transcript Breeze's clone template needs.
     _voice_ref_text: dict[str, str] = {}
@@ -260,7 +277,7 @@ def run_worker(device: str) -> None:
     url = f"http://127.0.0.1:{device_port(device)}"
 
     def start_server() -> None:
-        nonlocal server_proc, server_stderr
+        nonlocal server_proc, server_stderr, current_attn
 
         env = os.environ.copy()
         cuda_idx = device.replace("cuda:", "") if device.startswith("cuda:") else "0"
@@ -280,6 +297,7 @@ def run_worker(device: str) -> None:
                 # fast graphs are deliberately excluded: --fast-all hangs warmup
                 # on this setup (measured), these three give the full speedup.
                 "--fast-backbone-decode", "--fast-codec", "--fast-depth-decoder",
+                "--attn-implementation", current_attn,
             ],
             cwd=str(repo_root),
             env=env,
@@ -289,8 +307,19 @@ def run_worker(device: str) -> None:
             # its multiprocessing children, which otherwise leak and pin VRAM.
             start_new_session=True,
         )
-        print(f"  [blue] Breeze server starting (pid={server_proc.pid})...", flush=True)
-        wait_for_server(url, timeout=1200, stderr_path=stderr_path)
+        print(f"  [blue] Breeze server starting (pid={server_proc.pid}, attn={current_attn})...", flush=True)
+        try:
+            wait_for_server(url, timeout=1200, stderr_path=stderr_path)
+        except RuntimeError:
+            # The requested attention implementation may be unsupported by this
+            # model/build; fall back to eager once so generation still works.
+            if current_attn != "eager":
+                print(f"  [blue] Server failed to start with {current_attn} attention; retrying with eager.", flush=True)
+                stop_server()
+                current_attn = "eager"
+                start_server()
+                return
+            raise
         server_stderr = Path(stderr_path).read_text()
         print("  [blue] Breeze server ready.", flush=True)
 

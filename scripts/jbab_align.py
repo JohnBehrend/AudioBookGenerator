@@ -78,6 +78,15 @@ def align(whisper_words: list[tuple[str, float, float]],
     n = len(twords)
     wn = [norm(w[0]) for w in whisper_words]
     tn = [norm(t) for t in twords]
+    # character-trigram sets for fuzzy scoring: garbled transcriptions
+    # ("Mikal" for "Michael") become usable anchors instead of gaps
+    def _tri(w):
+        w = w.lower()
+        if len(w) < 3:
+            return {w}
+        return {w[i:i + 3] for i in range(len(w) - 2)}
+    wtri = [_tri(w) for w in wn]
+    ttri = [_tri(t) for t in tn]
 
     # banded DP: dp[i][j] -> (score, prev (i', j')) LCS-style.
     # The band is centered on the expected AUDIO TIME of text word i,
@@ -132,9 +141,14 @@ def align(whisper_words: list[tuple[str, float, float]],
                                     ti in wj or wj in ti):
                                 sc += 2
                             else:
-                                sc -= 1.5
+                                jt = ttri[i] & wtri[j]
+                                if jt:
+                                    jac = len(jt) / (len(ttri[i]) +
+                                                     len(wtri[j]) - len(jt))
+                                    if jac >= 0.34:
+                                        sc += 1 + jac  # fuzzy anchor
                         else:
-                            sc -= 1.5                # forced mismatch
+                            sc -= 1.5              # forced mismatch
                         if sc > best[0]:
                             best = (sc, (i - 1, j - 1))
             dp[i][j] = best
@@ -170,15 +184,31 @@ def align(whisper_words: list[tuple[str, float, float]],
     out: list[tuple[int, int]] = [(0, 0)] * n
     for i, (s, e) in anchors.items():
         out[i] = (int(s * 1000), int(e * 1000))
-    # interpolate gaps between anchors
+    # interpolate gaps between anchors, weighted by word length:
+    # long words take longer to speak than short ones
     idxs = sorted(anchors)
     for k in range(len(idxs) - 1):
         a, b = idxs[k], idxs[k + 1]
-        for i in range(a + 1, b):
-            t = (i - a) / (b - a)
-            s = anchors[a][0] + (anchors[b][0] - anchors[a][0]) * t
-            e = anchors[a][1] + (anchors[b][1] - anchors[a][1]) * t
-            out[i] = (int(s * 1000), int(e * 1000))
+        if b - a < 2:
+            continue
+        gap_slots = list(range(a + 1, b))
+        weights = [max(1, len(twords[i])) for i in gap_slots]
+        total = sum(weights)
+        t0 = anchors[a][1] * 1000
+        t1 = anchors[b][0] * 1000
+        if t1 <= t0:
+            continue
+        acc = 0
+        prev_end = t0
+        for off, wl in enumerate(weights):
+            i = gap_slots[off]
+            s = t0 + (t1 - t0) * acc / total
+            acc += wl
+            e = t0 + (t1 - t0) * acc / total
+            if e <= s:
+                e = s + 1
+            out[i] = (int(s), int(e))
+            prev_end = e
     # heads/tails: stretch from the nearest anchor to 0 / file end
     first, last = idxs[0], idxs[-1]
     for i in range(first):

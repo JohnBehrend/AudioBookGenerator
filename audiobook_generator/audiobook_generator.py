@@ -357,13 +357,20 @@ def build_chapter_word_timings(output_dir: str, chapter_idx: int,
             continue
         times = _ja.align(lw, toks)
         if times is None and clip["spans"]:
-            # weak line alignment: spread evenly over the speech span
+            # weak line alignment: distribute over the speech span
+            # weighted by word length (long words speak longer)
             sp0, sp1 = clip["spans"][0], clip["spans"][-1]
             t0 = sp0[2]
             dur = max(1, (sp1[2] + (sp1[1] - sp1[0])) - sp0[2])
-            times = [[int(t0 + dur * i / len(toks)),
-                      int(t0 + dur * (i + 1) / len(toks))]
-                     for i in range(len(toks))]
+            wls = [max(1, len(t)) for t in toks]
+            total = sum(wls)
+            acc = 0
+            times = []
+            for t, wl in zip(toks, wls):
+                s = int(t0 + dur * acc / total)
+                acc += wl
+                e = int(t0 + dur * acc / total)
+                times.append([s, max(s + 1, e)])
         if times is None:
             continue
         slot0 = starts[k]

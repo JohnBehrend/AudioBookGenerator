@@ -20,6 +20,7 @@ Usage:
 
 import os
 import sys
+import re
 import time
 import json
 import glob
@@ -154,6 +155,7 @@ def get_non_silent_audio_from_wavs(
     min_silence_len: int = 1250,
     silence_thresh: int = -60,
     inter_line_pause_ms: int = 600,
+    spans_out: Optional[List[dict]] = None,
 ) -> Any:
     """Remove silent audio from list of wave filepaths of wavs together. Return AudioSegment.
 
@@ -162,20 +164,37 @@ def get_non_silent_audio_from_wavs(
         min_silence_len: Minimum silence duration in ms to detect
         silence_thresh: Silence threshold in dB
         inter_line_pause_ms: Pause to insert between lines in ms (0 for no pause)
+        spans_out: Optional list to receive the exact position of every
+            clip in the assembled audio: {"file", "out_start", "spans":
+            [[clip_start_ms, clip_end_ms, out_pos_ms], ...]} - the
+            ground truth for karaoke word timings.
     """
     import pydub
 
     all_audio_segments = None
+    out_pos = 0
     for wav in wav_filepath_list:
         raw_audio_segment = pydub.AudioSegment.from_wav(wav)
         this_audio_segment = pydub.AudioSegment.empty()
+        clip_spans = []
+        pos = 0
         for (start_time, end_time) in pydub.silence.detect_nonsilent(raw_audio_segment, min_silence_len=min_silence_len, silence_thresh=silence_thresh):
             this_audio_segment += raw_audio_segment[start_time:end_time]
+            clip_spans.append([start_time, end_time, out_pos + pos])
+            pos += end_time - start_time
         if all_audio_segments is None:
             all_audio_segments = this_audio_segment
         else:
             pause = pydub.AudioSegment.silent(duration=inter_line_pause_ms)
             all_audio_segments = all_audio_segments + pause + this_audio_segment
+            out_pos += inter_line_pause_ms
+        out_pos += len(this_audio_segment)
+        if spans_out is not None:
+            spans_out.append({
+                "file": os.path.basename(wav),
+                "out_start": out_pos - len(this_audio_segment),
+                "spans": clip_spans,
+            })
     return all_audio_segments
 
 
@@ -258,6 +277,174 @@ def _tts_generate_only(
         return None
 
     return output_path
+
+
+def build_chapter_word_timings(output_dir: str, chapter_idx: int,
+                               verbose: bool = False) -> None:
+    """Merge per-line whisper word times + assembly offsets into
+    chapter_NN.words.json - exact karaoke timings with the EPUB text.
+
+    Line boundaries are exact (assembly offsets); word positions inside
+    a line come from the validator's transcription of that line, so the
+    TTS engines' paraphrasing cannot desync the highlight.
+    """
+    import glob as _glob
+    import json as _json
+    import os as _os
+    ci = str(chapter_idx).zfill(2)
+    map_path = _os.path.join(output_dir, f"chapter_{ci}.map.json")
+    txt_path = _os.path.join(output_dir, f"chapter_{ci}.txt")
+    if not _os.path.exists(map_path) or not _os.path.exists(txt_path):
+        return
+    with open(map_path) as f:
+        clips = _json.load(f).get("clips", [])
+    import importlib.util as _ilu
+    import sys as _sys
+    here = _os.path.dirname(_os.path.abspath(__file__))
+    scripts = _os.path.join(_os.path.dirname(here), "scripts")
+    if scripts not in _sys.path:
+        _sys.path.insert(0, scripts)
+    import jbab_align as _ja
+
+    txt = _ja.strip_tts_markers(
+        open(txt_path, encoding="utf-8", errors="replace").read())
+    slots = _ja.tokenize(txt)
+    n = len(slots)
+    if n == 0 or not clips:
+        return
+    words = [[-1, -1]] * n
+
+    txt_lines = txt.split("\n")
+    line_toks = [_ja.tokenize(ln) for ln in txt_lines]
+    starts = []
+    c = 0
+    for tk in line_toks:
+        starts.append(c)
+        c += len(tk)
+    if c != n:
+        if verbose:
+            print(f"    [WT] chapter {ci}: token count mismatch "
+                  f"({c} != {n}); skipping")
+        return
+
+    def _abs(clip, t):
+        best = None
+        for (cs, ce, op) in clip["spans"]:
+            if cs <= t <= ce:
+                return op + (t - cs)   # op is the absolute output ms
+            if best is None or abs(t - cs) < abs(best[0] - cs):
+                best = (cs, op)
+        if best:
+            return best[1] + max(0, t - best[0])
+        return clip["out_start"]
+
+    for k, clip in enumerate(clips):
+        if k >= len(txt_lines):
+            break
+        base = _os.path.basename(clip["file"]).rsplit(".", 1)[0]
+        lf = _os.path.join(output_dir, base + ".wt.json")
+        if not _os.path.exists(lf):
+            continue
+        try:
+            with open(lf) as f:
+                lw = _json.load(f)["words"]
+        except Exception:
+            continue
+        if not lw:
+            continue
+        toks = [txt_lines[k][o:o+l] for o, l in line_toks[k]]
+        if not toks:
+            continue
+        times = _ja.align(lw, toks)
+        if times is None and clip["spans"]:
+            # weak line alignment: spread evenly over the speech span
+            sp0, sp1 = clip["spans"][0], clip["spans"][-1]
+            t0 = sp0[2]
+            dur = max(1, (sp1[2] + (sp1[1] - sp1[0])) - sp0[2])
+            times = [[int(t0 + dur * i / len(toks)),
+                      int(t0 + dur * (i + 1) / len(toks))]
+                     for i in range(len(toks))]
+        if times is None:
+            continue
+        slot0 = starts[k]
+        for i, (s, e) in enumerate(times):
+            gi = slot0 + i
+            if gi >= n:
+                break
+            words[gi] = [_abs(clip, s), _abs(clip, e)]
+
+    have = [i for i in range(n) if words[i][0] >= 0]
+    if not have:
+        return
+    first, last = have[0], have[-1]
+    for i in range(n):
+        if words[i][0] >= 0:
+            continue
+        lo = i - 1
+        while lo >= 0 and words[lo][0] < 0:
+            lo -= 1
+        hi = i + 1
+        while hi < n and words[hi][0] < 0:
+            hi += 1
+        a = words[lo][1] if lo >= 0 else (words[hi][0] if hi < n else 0)
+        b = words[hi][0] if hi < n else (words[lo][1] if lo >= 0 else 1)
+        if b <= a:
+            b = a + 40
+        t = (i - lo) / max(1, (hi - lo))
+        words[i] = [int(a + (b - a) * t), int(a + (b - a) * t) + 40]
+    prev = 0
+    for i in range(n):
+        s, e = words[i]
+        s = max(s, prev)
+        if e <= s:
+            e = s + 40
+        words[i] = [s, e]
+        prev = e
+
+    out = _os.path.join(output_dir, f"chapter_{ci}.words.json")
+    tmp = out + ".tmp"
+    with open(tmp, "w") as f:
+        _json.dump({"v": 1, "words": words}, f)
+    _os.replace(tmp, out)
+    for lf in _glob.glob(_os.path.join(output_dir, f"chapter_{ci}.*.wt.json")):
+        _os.unlink(lf)
+    if verbose:
+        print(f"    [WT] chapter {ci}: {n} word timings written")
+
+
+def _save_line_word_times(output_path: str, words: List[str],
+                          starts: List[float], ends: List[float]) -> None:
+    """Persist the validator's per-word whisper timestamps for a TTS
+    line clip: chapter_NN.LLLL.wt.json next to the wav.
+
+    These are the ground truth for exact karaoke timings: the TTS
+    models paraphrase, so only a transcription of the actual audio is
+    word-accurate. Words beyond the (possibly clipped) file duration
+    are dropped."""
+    import json as _json
+    import os as _os
+    import re as _re
+    m = _re.search(r"chapter_(\d+)\.(\d+)", _os.path.basename(output_path))
+    if not m or not words:
+        return
+    try:
+        import pydub as _pydub
+        dur_ms = len(_pydub.AudioSegment.from_wav(output_path))
+    except Exception:
+        dur_ms = (max(ends) * 1000.0) if ends else 0
+    kept = [(w, s, e) for w, s, e in zip(words, starts, ends)
+            if s * 1000.0 <= dur_ms]
+    if not kept:
+        return
+    path = _os.path.join(
+        _os.path.dirname(output_path),
+        f"chapter_{m.group(1).zfill(2)}.{m.group(2).zfill(4)}.wt.json")
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        _json.dump({"v": 1,
+                    "words": [[w, round(s, 3), round(e, 3)]
+                              for w, s, e in kept]}, f)
+    _os.replace(tmp, path)
 
 
 def _validate_and_clip_audio(
@@ -415,6 +602,12 @@ def _validate_and_clip_audio(
                         print(f"  [Energy] refined clip end {end_ms}ms -> {refined_end}ms")
                     clip_points = (start_ms, refined_end)
             apply_audio_clipping(output_path, clip_points, verbose=tts_config.verbose)
+
+    # ground truth for the reader's karaoke timings
+    try:
+        _save_line_word_times(output_path, segments, start_times, end_times)
+    except Exception:
+        pass
 
     return ratio, last_valid_token
 
@@ -1002,12 +1195,23 @@ def generate_audiobook_from_chapters(
             progress_handler.update(1, desc=f"Assembling Chapters")
             wav_files = sorted(glob.glob(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.*.wav")), key=natural_sort_key)
             if wav_files:
+                spans_out: List[dict] = []
                 audio = get_non_silent_audio_from_wavs(
                     wav_files,
                     inter_line_pause_ms=DEFAULTS["inter_line_pause_ms"],
+                    spans_out=spans_out,
                 )
                 mp3_path = os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.mp3")
                 audio.export(str(mp3_path), format="mp3")
+
+                # exact karaoke timings from the validator's transcriptions
+                try:
+                    with open(os.path.join(output_dir, f"chapter_{str(i).zfill(2)}.map.json"), "w") as _mf:
+                        _json.dump({"chapter": i, "clips": spans_out}, _mf)
+                    build_chapter_word_timings(output_dir, i, verbose=verbose)
+                except Exception as _wt_err:
+                    if verbose:
+                        print(f"    [WT] chapter {i}: timing merge failed: {_wt_err}")
 
                 # Clean up individual WAV files
                 for wav in wav_files:
@@ -1882,6 +2086,8 @@ def main():
     parser.add_argument("--resume", nargs="?", const=True, default=None, metavar="DIR",
                         help="Resume from existing output directory (use --output-dir or specify DIR)")
     parser.add_argument("--concurrency", type=int, default=1, help="Number of concurrent lines to process (default: 1)")
+    parser.add_argument("--no-jbab", action="store_true",
+                        help="Skip packaging the finished book as a .jbab container (default: on)")
     parser.add_argument("--whisper-cpu", action="store_true", help="Run Whisper validation on CPU (frees GPU for TTS)")
     parser.add_argument("--whisper-concurrency", type=int, default=1, help="Number of concurrent Whisper models for validation (default: 1)")
     parser.add_argument("--whisper-fast", action="store_true", help="Use faster Whisper settings (medium model, beam_size=3)")
@@ -2056,6 +2262,26 @@ def main():
             enable_postfix=not args.no_postfix,
         )
         print(result)
+
+        # JBAB container emission (default on; --no-jbab to disable).
+        # The TTS models paraphrase, so the only truthful reading text
+        # is a transcription of what was actually spoken: the aligner
+        # runs in transcript mode (whisper transcript + 1:1 word
+        # timings), then packs <Title>.jbab.
+        if not args.no_jbab and args.epub_file and not args.gradio:
+            import subprocess as _sp
+            scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+            title = re.sub(r"[_-]+", " ", Path(args.epub_file).stem).strip()
+            print(f"\n[JBAB] packaging '{title}.jbab' "
+                  "(whisper transcript + word timings) ...", flush=True)
+            _sp.run(
+                [sys.executable, str(scripts_dir / "jbab_batch.py"),
+                 "--one", str(output_dir), "--title", title,
+                 "--out", str(output_dir / "jbab"), "--sidecar-text"],
+                cwd=str(scripts_dir.parent),
+            )
+            print(f"[JBAB] done -> {output_dir / 'jbab' / (title + '.jbab')}",
+                  flush=True)
 
 
 if __name__ == "__main__":

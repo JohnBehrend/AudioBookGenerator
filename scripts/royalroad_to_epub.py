@@ -108,7 +108,7 @@ def build_epub(links, title, author, out_path, progress=False):
 
 def main():
     ap = argparse.ArgumentParser(description="Download a Royal Road novel into an EPUB.")
-    ap.add_argument("fiction_url", help="Story URL, e.g. https://www.royalroad.com/fiction/131957/the-breakwall-paladin")
+    ap.add_argument("fiction_url", help="Story URL, e.g. https://www.royalroad.com/fiction/12345/your-story-name")
     ap.add_argument("--out", default=None, help="Output EPUB path (default: <slug>.epub)")
     ap.add_argument("--max-chapters", type=int, default=None, help="Limit number of chapters")
     args = ap.parse_args()

@@ -1621,7 +1621,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
 
     # Check for missing voice file mappings and add fallbacks
     # This handles cases where LLM labeled characters differently than the voice file names
-    # e.g., "elan morin tedronai" should map to "baalzamon.wav"
+    # e.g., an alternate spelling "Ishamael" should map to "ishamael.wav"
     if resume:
         # Get list of available voice files in the output directory
         available_voices = set()
@@ -1639,7 +1639,7 @@ def run_full_pipeline(epub_path: str, output_dir: str, max_chapters: int = None,
                 if verbose:
                     print(f"[VOICE CHECK] Missing voice file for '{char_name}': {voice_path_full}")
                 # Try to find a matching voice file by looking for similar names
-                # e.g., "elan morin tedronai" -> "baalzamon"
+                # e.g., "Ishamael" -> "ishamael"
                 for available in available_voices:
                     if available in char_name or char_name in available:
                         missing_mappings[char_name] = available

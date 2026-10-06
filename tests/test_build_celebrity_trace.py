@@ -30,7 +30,7 @@ class TestNorm:
     def test_drops_spaces_underscores_case(self):
         assert _norm("Amellia Arene") == "amelliaarene"
         assert _norm("tal_nethin") == "talnethin"
-        assert _norm("RAND") == "rand"
+        assert _norm("HERO") == "hero"
 
 
 class TestCharacterCelebrityMap:
@@ -38,42 +38,42 @@ class TestCharacterCelebrityMap:
         cur = tmp_path / "book5"
         cur.mkdir()
         (cur / "characters_descriptions.json").write_text(json.dumps({
-            "rand": {"celebrity_voice": "Keanu Reeves"},
-            "moiraine": {"celebrity_voice": "Claire Foy"},
-            "perrin": {"celebrity_voice": ""},
+            "hero": {"celebrity_voice": "Keanu Reeves"},
+            "mentor": {"celebrity_voice": "Claire Foy"},
+            "scout": {"celebrity_voice": ""},
         }))
         prior = tmp_path / "book4"
         prior.mkdir()
         (prior / "characters_descriptions.json").write_text(json.dumps({
-            "rand": {"celebrity_voice": "Chris Evans"},
-            "perrin": {"celebrity_voice": "Jeffrey Dean Morgan"},
+            "hero": {"celebrity_voice": "Chris Evans"},
+            "scout": {"celebrity_voice": "Jeffrey Dean Morgan"},
             "lan": {"celebrity_voice": "Michael Caine"},
         }))
 
         mapping = character_celebrity_map([str(cur), str(prior)])
-        assert mapping["rand"] == "Keanu Reeves"  # current wins
-        assert mapping["moiraine"] == "Claire Foy"
-        assert mapping["perrin"] == "Jeffrey Dean Morgan"  # dug from prior
+        assert mapping["hero"] == "Keanu Reeves"  # current wins
+        assert mapping["mentor"] == "Claire Foy"
+        assert mapping["scout"] == "Jeffrey Dean Morgan"  # dug from prior
         assert mapping["lan"] == "Michael Caine"
-        assert "perrin" in mapping
+        assert "scout" in mapping
 
     def test_prior_most_recent_first(self, tmp_path):
         b4 = tmp_path / "b4"; b4.mkdir()
         b3 = tmp_path / "b3"; b3.mkdir()
         (b4 / "characters_descriptions.json").write_text(json.dumps(
-            {"rand": {"celebrity_voice": "Chris Evans"}}))
+            {"hero": {"celebrity_voice": "Chris Evans"}}))
         (b3 / "characters_descriptions.json").write_text(json.dumps(
-            {"rand": {"celebrity_voice": "Richard Armitage"}}))
+            {"hero": {"celebrity_voice": "Richard Armitage"}}))
         # Caller passes most-recent-first; first book that records a celebrity wins
         mapping = character_celebrity_map([str(b4), str(b3)])
-        assert mapping["rand"] == "Chris Evans"
+        assert mapping["hero"] == "Chris Evans"
 
     def test_missing_prior_dir_is_skipped(self, tmp_path):
         cur = tmp_path / "book"; cur.mkdir()
         (cur / "characters_descriptions.json").write_text(json.dumps(
-            {"rand": {"celebrity_voice": "Chris Evans"}}))
+            {"hero": {"celebrity_voice": "Chris Evans"}}))
         mapping = character_celebrity_map([str(cur), str(tmp_path / "nope")])
-        assert mapping == {"rand": "Chris Evans"}
+        assert mapping == {"hero": "Chris Evans"}
 
     def test_no_celebrity_returns_empty(self, tmp_path):
         cur = tmp_path / "book"; cur.mkdir()
@@ -87,22 +87,22 @@ class TestFilenameCelebrityMap:
         cur = tmp_path / "book"; cur.mkdir()
         (cur / "voices_map.json").write_text(json.dumps({
             "amellia arene": "sally_field.wav",
-            "rand": "rand.wav",
+            "hero": "hero.wav",
             "nicola": "hailee_steinfeld.wav",
         }))
         mapping = filename_celebrity_map(str(cur), known=set())
         assert mapping["amellia arene"] == "sally_field"
         assert mapping["nicola"] == "hailee_steinfeld"
         # {char}.wav (seeded) is not treated as celebrity-named
-        assert "rand" not in mapping
+        assert "hero" not in mapping
 
     def test_known_chars_not_overwritten(self, tmp_path):
         cur = tmp_path / "book"; cur.mkdir()
         (cur / "voices_map.json").write_text(json.dumps({
-            "rand": "chris_evans.wav",
+            "hero": "chris_evans.wav",
         }))
-        mapping = filename_celebrity_map(str(cur), known={"rand": "Chris Evans"})
-        assert mapping == {}  # rand already known
+        mapping = filename_celebrity_map(str(cur), known={"hero": "Chris Evans"})
+        assert mapping == {}  # hero already known
 
     def test_missing_voices_map_returns_empty(self, tmp_path):
         assert filename_celebrity_map(str(tmp_path), known=set()) == {}

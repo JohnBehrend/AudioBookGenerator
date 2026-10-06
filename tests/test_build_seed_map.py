@@ -59,28 +59,28 @@ def _run_main(seed_module, tmp_path, books):
 
 class TestPlainVoices:
     def test_includes_character_and_narrator_wavs(self, seed_module, tmp_path):
-        d = _make_book_dir(tmp_path, "book", wavs=("rand", "narrator"))
-        assert set(seed_module.plain_voices(d)) == {"rand", "narrator"}
+        d = _make_book_dir(tmp_path, "book", wavs=("hero", "narrator"))
+        assert set(seed_module.plain_voices(d)) == {"hero", "narrator"}
 
     def test_excludes_sample_variant_files(self, seed_module, tmp_path):
-        d = _make_book_dir(tmp_path, "book", wavs=("rand", "rand.sample1"))
+        d = _make_book_dir(tmp_path, "book", wavs=("hero", "hero.sample1"))
         voices = seed_module.plain_voices(d)
-        assert "rand" in voices
-        assert "rand.sample1" not in voices
+        assert "hero" in voices
+        assert "hero.sample1" not in voices
 
     def test_excludes_chapter_mp3s_regression(self, seed_module, tmp_path):
         """Regression: a prior book's chapter_XX.mp3 must NOT become a voice."""
-        d = _make_book_dir(tmp_path, "book", wavs=("rand",), mp3s=("chapter_00", "chapter_53"))
+        d = _make_book_dir(tmp_path, "book", wavs=("hero",), mp3s=("chapter_00", "chapter_53"))
         voices = seed_module.plain_voices(d)
-        assert "rand" in voices
+        assert "hero" in voices
         assert not any(k.startswith("chapter_") for k in voices)
 
     def test_excludes_non_audio_files(self, seed_module, tmp_path):
-        d = _make_book_dir(tmp_path, "book", wavs=("rand",))
+        d = _make_book_dir(tmp_path, "book", wavs=("hero",))
         (d / "chapter_00.txt").write_text("not audio")
         (d / "notes.json").write_text("{}")
         voices = seed_module.plain_voices(d)
-        assert "rand" in voices
+        assert "hero" in voices
         assert not any(k.startswith("chapter_") for k in voices)
 
 
@@ -91,38 +91,38 @@ class TestBookVoices:
         """A clean voices_map.json (all entries exist) is authoritative, even when
         the dir also contains leftover .cropped.wav artifacts that globbing
         would wrongly pick up."""
-        d = _make_book_dir(tmp_path, "book", wavs=("rand", "narrator"))
+        d = _make_book_dir(tmp_path, "book", wavs=("hero", "narrator"))
         # Leftover artifacts globbing would mis-seed as bogus characters.
-        (d / "rand.wav.cropped.wav").write_bytes(b"\x00")
+        (d / "hero.wav.cropped.wav").write_bytes(b"\x00")
         (d / "narrator.wav.cropped.wav").write_bytes(b"\x00")
-        _write_voices_map(d, {"rand": "rand.wav", "narrator": "narrator.wav"})
+        _write_voices_map(d, {"hero": "hero.wav", "narrator": "narrator.wav"})
 
         voices = seed_module.book_voices(d)
-        assert set(voices) == {"rand", "narrator"}
+        assert set(voices) == {"hero", "narrator"}
         assert not any("cropped" in v for v in voices.values())
 
     def test_falls_back_to_glob_when_voices_map_stale(self, seed_module, tmp_path):
         """A stale voices_map.json pointing at deleted .sampleN files is ignored,
         and book_voices globs the real character wavs instead."""
-        d = _make_book_dir(tmp_path, "book", wavs=("rand", "moiraine"))
-        _write_voices_map(d, {"rand": "rand.sample1.wav", "moiraine": "moiraine.sample1.wav"})
+        d = _make_book_dir(tmp_path, "book", wavs=("hero", "mentor"))
+        _write_voices_map(d, {"hero": "hero.sample1.wav", "mentor": "mentor.sample1.wav"})
 
         voices = seed_module.book_voices(d)
         # Stale map ignored -> globbing yields the real character voices.
-        assert set(voices) == {"rand", "moiraine"}
+        assert set(voices) == {"hero", "mentor"}
         assert all("sample" not in v for v in voices.values())
 
     def test_falls_back_to_glob_when_voices_map_missing(self, seed_module, tmp_path):
-        d = _make_book_dir(tmp_path, "book", wavs=("rand",))
+        d = _make_book_dir(tmp_path, "book", wavs=("hero",))
         voices = seed_module.book_voices(d)
-        assert set(voices) == {"rand"}
+        assert set(voices) == {"hero"}
 
 
 class TestBuildSeedMap:
     def test_no_chapter_keys_and_no_mp3_values(self, seed_module, tmp_path):
         prior = _make_book_dir(
             tmp_path, "teotw",
-            wavs=("rand", "narrator"),
+            wavs=("hero", "narrator"),
             mp3s=("chapter_00", "chapter_01", "chapter_53"),
         )
         out = _run_main(seed_module, tmp_path, [prior])
@@ -130,14 +130,14 @@ class TestBuildSeedMap:
         assert not any(k.startswith("chapter_") for k in m)
         assert not any(str(v).endswith(".mp3") for v in m.values())
         assert "narrator" in m
-        assert "rand" in m
+        assert "hero" in m
 
     def test_priority_merge_first_book_wins(self, seed_module, tmp_path):
-        hi = _make_book_dir(tmp_path, "hi", wavs=("rand",))
-        lo = _make_book_dir(tmp_path, "lo", wavs=("rand",))
+        hi = _make_book_dir(tmp_path, "hi", wavs=("hero",))
+        lo = _make_book_dir(tmp_path, "lo", wavs=("hero",))
         out = _run_main(seed_module, tmp_path, [hi, lo])
         m = json.loads(out.read_text())
-        assert str(m["rand"]).startswith(str(hi.resolve()))
+        assert str(m["hero"]).startswith(str(hi.resolve()))
 
 
 class TestLoaderInvariant:
@@ -148,7 +148,7 @@ class TestLoaderInvariant:
         map can never do that."""
         prior = _make_book_dir(
             tmp_path, "book",
-            wavs=("narrator", "rand"),
+            wavs=("narrator", "hero"),
             mp3s=("chapter_00",),
         )
         out = _run_main(seed_module, tmp_path, [prior])

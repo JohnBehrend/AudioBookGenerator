@@ -52,11 +52,11 @@ H3_ENV = {
 
 DEVICE = "cuda:0"
 
-# Rand from The Eye of the World / The Dragon Reborn (universal-JSON format).
+# A resonant young male hero character (universal-JSON format).
 RAND_DESC = (
     '{"gender": "male", "age": "young adult", "pitch": "low", '
     '"accent": "british", "style": ["authoritative", "weary", "determined"], '
-    '"description": "Rand speaks with a low, resonant voice that carries the weight of destiny."}'
+    '"description": "The hero speaks with a low, resonant voice that carries the weight of destiny."}'
 )
 HERO_DESC = "A brave, deep male voice with authority and warmth."
 NARRATOR_DESC = "A calm, clear female narrator with a warm, measured tone."
@@ -163,7 +163,7 @@ def test_generate_frees_vram_and_whisper_validates(h3_engine, whisper_model, tmp
 
     t0 = __import__("time").monotonic()
     success, output_file, duration = h3_engine.generate_voice_sample(
-        character_name="rand",
+        character_name="hero",
         description=RAND_DESC,
         output_dir=tmp_path,
         device=DEVICE,

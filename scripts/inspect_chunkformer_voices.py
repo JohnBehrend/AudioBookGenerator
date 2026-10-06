@@ -2,19 +2,37 @@
 """
 Inspect ChunkFormer voice classification with known voice samples.
 
-Tests seed voices (known good) vs Dramabox voices (suspected broken)
-to identify exactly where classification fails.
+Tests seed voices (known good) vs cloned voices to identify exactly
+where classification fails.
+
+Voice lists and sample dirs come from a JSON map (default
+voice_test/chunkformer_inspect.json, gitignored — sample names and
+locations are personal data):
+
+    {"seed_dir": "...", "cloned_dir": "...",
+     "seed_voices": [{"name", "gender", "age"}, ...],
+     "cloned_voices": [...]}
 
 Run manually: uv run python scripts/inspect_chunkformer_voices.py
 (Diagnostic script, not part of the pytest suite.)
 """
-import os
+import argparse
 import hashlib
+import json
+import os
+from pathlib import Path
 
-SEED_DIR = "/home/johnbehrend/pydev/voices_archive"
-DRAMABOX_DIR = "/home/johnbehrend/pydev/AudioBookGenerator/voice_test/eye_of_the_world"
+DEFAULT_MAP = Path(__file__).parent.parent / "voice_test" / "chunkformer_inspect.json"
 
 _model = None
+
+
+def _load_map(path: Path) -> dict:
+    if not path.exists():
+        raise SystemExit(
+            f"no voice map at {path}; create it with 'seed_dir', 'cloned_dir', "
+            "'seed_voices' and 'cloned_voices' lists (see module docstring)")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _get_model():
@@ -90,60 +108,33 @@ def test_voice(label: str, path: str, expected_gender: str = None, expected_age:
 
 
 def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--map", type=Path, default=DEFAULT_MAP,
+                    help="JSON voice map (see module docstring)")
+    args = ap.parse_args()
+    voice_map = _load_map(args.map)
+
     print("=" * 70)
     print("ChunkFormer Voice Classification Test")
     print("=" * 70)
 
+    seed_dir = voice_map["seed_dir"]
+    cloned_dir = voice_map["cloned_dir"]
+
     print("\n--- SEED VOICES (known good) ---")
-    seed_tests = [
-        ("baalzamon", "male", "old"),
-        ("egwene", "female", "young"),
-        ("bornhald", "male", "middle age"),
-        ("narrator", "male", "middle age"),
-        ("rand", "male", "young"),
-        ("moiraine", "female", "young"),
-        ("elaida", "female", "old"),
-        ("elayne", "female", "young"),
-        ("nynaeve", "female", "young"),
-        ("generic man", "male", "middle age"),
-    ]
-    for name, exp_gender, exp_age in seed_tests:
-        path = os.path.join(SEED_DIR, f"{name}.wav")
-        test_voice(name, path, exp_gender, exp_age)
+    for v in voice_map.get("seed_voices", []):
+        path = os.path.join(seed_dir, f"{v['name']}.wav")
+        test_voice(v["name"], path, v.get("gender"), v.get("age"))
 
-    print("\n--- SEED VOICES (Eye of the World output, cloned through omni) ---")
-    seed_eotw = [
-        ("rand", "male", "young"),
-        ("mat", "male", "young"),
-        ("perrin", "male", "young"),
-        ("egwene", "female", "young"),
-        ("nynaeve", "female", "young"),
-        ("moiraine", "female", "young"),
-        ("narrator", "male", "young"),
-        ("baalzamon", "male", "young"),
-        ("bornhald", "male", "young"),
-    ]
-    for name, exp_gender, exp_age in seed_eotw:
-        path = os.path.join(DRAMABOX_DIR, f"{name}.wav")
-        test_voice(name, path, exp_gender, exp_age)
+    print("\n--- CLONED VOICES ---")
+    for v in voice_map.get("cloned_voices", []):
+        path = os.path.join(cloned_dir, f"{v['name']}.wav")
+        test_voice(v["name"], path, v.get("gender"), v.get("age"))
 
-    print("\n--- DRAMABOX VOICES (generated from description) ---")
-    dramabox_tests = [
-        ("aginor", "male", "young"),
-        ("ara", "female", "young"),
-        ("byar", "male", "young"),
-        ("cenn", "male", "young"),
-        ("darl", "male", "middle age"),
-        ("elyas", "male", "young"),
-        ("gawyn", "male", "middle age"),
-        ("ila", "female", "young"),
-        ("jon", "male", "middle age"),
-        ("mordeth", "male", "young"),
-        ("suian", "male", "young"),
-    ]
-    for name, exp_gender, exp_age in dramabox_tests:
-        path = os.path.join(DRAMABOX_DIR, f"{name}.wav")
-        test_voice(name, path, exp_gender, exp_age)
+    print("\n--- CLONED VOICES (from description) ---")
+    for v in voice_map.get("desc_voices", []):
+        path = os.path.join(cloned_dir, f"{v['name']}.wav")
+        test_voice(v["name"], path, v.get("gender"), v.get("age"))
 
     print("\n" + "=" * 70)
 

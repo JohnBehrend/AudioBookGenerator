@@ -2,9 +2,13 @@
 """Batch-convert pipeline book dirs into .jbab containers.
 
 For each book dir: stage a clean layout (chapter audio + normalized
-text sidecars), run the whisper alignment pass (waits for free GPU
+text sidecars), run the ASR alignment pass (waits for free GPU
 memory first), pack into <out>/<BookName>.jbab. Resumable: books whose
 .jbab already exists are skipped.
+
+Book metadata (title/series/number per dir) comes from --books JSON
+(default voice_test/books.json, gitignored — book data stays out of
+the repo).
 
     uv run python scripts/jbab_batch.py [--only SUBSTR ...]
         [--model medium] [--device cuda] [--compute-type float16]
@@ -13,6 +17,7 @@ memory first), pack into <out>/<BookName>.jbab. Resumable: books whose
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import subprocess
@@ -24,29 +29,28 @@ HERE = Path(__file__).parent
 AUDIO = {".mp3", ".m4a", ".m4b", ".mp4", ".ogg", ".opus", ".flac", ".wav",
          ".aac"}
 
-TITLES = {
-    "wot_book1_eye_of_the_world": ("The Eye of the World", "The Wheel of Time", 1),
-    "wot_book2_great_hunt": ("The Great Hunt", "The Wheel of Time", 2),
-    "wot_book3_dragon_reborn": ("The Dragon Reborn", "The Wheel of Time", 3),
-    "wot_book4_shadow_rising": ("The Shadow Rising", "The Wheel of Time", 4),
-    "wot_book5_fires_of_heaven": ("The Fires of Heaven", "The Wheel of Time", 5),
-    "wot_book6_lord_of_chaos": ("Lord of Chaos", "The Wheel of Time", 6),
-    "wot_book7_crown_of_swords": ("Crown of Swords", "The Wheel of Time", 7),
-    "wot_book8_path_of_daggers": ("The Path of Daggers", "The Wheel of Time", 8),
-    "wot_book9_winters_heart": ("Winter's Heart", "The Wheel of Time", 9),
-    "wot_book10_crossroads_of_twilight": ("Crossroads of Twilight", "The Wheel of Time", 10),
-    "tbi_output": ("The Blade Itself", "First Law", 1),
-    "sg_output": ("The Sinners Gospel", "", 0),
-    "bwp_output": ("The Breakwall Paladin", "", 0),
-    "new_spring": ("New Spring", "The Wheel of Time", 0),
-    "the_concordance": ("The Concordance", "", 0),
-    "RA1_output": ("RA1", "", 0),
-    "RA2_output": ("RA2", "", 0),
-    "RA3_output": ("RA3", "", 0),
-    "RA4_output": ("RA4", "", 0),
-    "eye_of_the_world": ("The Eye of the World (early test)", "", 0),
-    "teotw": ("The Eye of the World (early test)", "", 0),
-}
+DEFAULT_BOOKS = HERE.parent / "voice_test" / "books.json"
+
+
+def load_books(path: Path) -> dict[str, tuple[str, str, int]]:
+    """Load dir -> (title, series, number) metadata from a JSON file.
+
+    The books file is personal data (which books you generated, their local
+    dir names) and lives OUTSIDE the repo, gitignored under voice_test/.
+    Format: {"<dir-name>": {"title": str, "series": str, "num": int}, ...}
+    Missing file or entries are fine: the script falls back to dir names.
+    """
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"warning: could not parse {path}: {e}", file=sys.stderr)
+        return {}
+    return {
+        k: (v.get("title", k), v.get("series", ""), int(v.get("num", 0)))
+        for k, v in raw.items() if isinstance(v, dict)
+    }
 
 
 def wait_for_gpu(min_free_mb: int, poll_s: int = 60) -> None:
@@ -111,10 +115,8 @@ def main() -> int:
                     / "jbab_out")
     ap.add_argument("--only", nargs="*", default=None,
                     help="only dirs containing this substring")
-    ap.add_argument("--exclude", nargs="*",
-                    default=["teotw", "eye_of_the_world"],
-                    help="skip dirs containing this substring "
-                         "(default: early-test copies of book 1)")
+    ap.add_argument("--exclude", nargs="*", default=[],
+                    help="skip dirs with exactly these names")
     ap.add_argument("--model", default="medium")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--compute-type", default="float16")
@@ -135,7 +137,12 @@ def main() -> int:
                     help="process a single book dir (stage+align+pack)")
     ap.add_argument("--title", default=None,
                     help="book title for --one / manifest")
+    ap.add_argument("--books", type=Path, default=DEFAULT_BOOKS,
+                    help="JSON mapping book dir -> {title, series, num} "
+                         "(personal data, kept out of the repo; "
+                         "missing file = dir names used as titles)")
     args = ap.parse_args()
+    args.books_map = load_books(args.books)
 
     if args.one:
         args.out.mkdir(parents=True, exist_ok=True)
@@ -145,11 +152,8 @@ def main() -> int:
 
 
 def process_book(book: Path, title: str, args) -> int:
-    """stage -> (whisper align, GPU-gated) -> pack one book dir."""
-    info = TITLES.get(book.name, (title, "", 0))
-    title = info[0]
-    series = info[1] if len(info) > 1 else ""
-    snum = info[2] if len(info) > 2 else 0
+    """stage -> (ASR align, GPU-gated) -> pack one book dir."""
+    title, series, snum = args.books_map.get(book.name, (title, "", 0))
     out_jbab = args.out / f"{title}.jbab"
     print(f"\n=== {book.name} -> {out_jbab.name} ===", flush=True)
     if out_jbab.exists() and not getattr(args, "refresh", False):
@@ -200,7 +204,7 @@ def run_batch(args) -> int:
     print(f"{len(books)} books -> {args.out}", flush=True)
 
     for book in books:
-        title = TITLES.get(book.name, book.name)
+        title, _, _ = args.books_map.get(book.name, (book.name, "", 0))
         process_book(book, title, args)
     print("\nbatch complete", flush=True)
     return 0

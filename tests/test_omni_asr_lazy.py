@@ -88,7 +88,7 @@ class TestAsrLazyLoading:
         """generate_voice_sample (celebrity/design) must never load the ASR model."""
         requests = [
             {"type": "request", "id": 1, "method": "generate_voice_sample",
-             "kwargs": {"character_name": "elayne", "description": "a cool voice",
+             "kwargs": {"character_name": "elin", "description": "a cool voice",
                         "output_dir": str(tmp_path), "static_voice_text": "hello"}},
             {"type": "shutdown"},
         ]

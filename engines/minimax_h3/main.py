@@ -143,7 +143,7 @@ def _description_to_text(description: str) -> str:
     told about: gender, age, pitch, accent, a full ``style`` list, extra tone/
     register/quality attributes, and a free-text ``description``. This builds a
     rich, distinct voice instruction so characters with different attributes
-    (e.g. Rand vs Perrin) do not collapse onto the same voice.
+    (e.g. two distinct male characters) do not collapse onto the same voice.
     """
     text = (description or "").strip()
     if not text:

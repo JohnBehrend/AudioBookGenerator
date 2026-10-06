@@ -9,4 +9,4 @@
 	url = https://github.com/k2-fsa/OmniVoice.git
 [submodule "engines/breeze/breeze-tts"]
 	path = engines/breeze/breeze-tts
-	url = https://github.com/breezeblue-ai/breeze-tts.git
+	url = git@github.com:JohnBehrend/breeze-tts.git

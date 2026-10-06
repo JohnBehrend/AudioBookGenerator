@@ -25,27 +25,27 @@ AUDIO = {".mp3", ".m4a", ".m4b", ".mp4", ".ogg", ".opus", ".flac", ".wav",
          ".aac"}
 
 TITLES = {
-    "wot_book1_eye_of_the_world": "The Eye of the World",
-    "wot_book2_great_hunt": "The Great Hunt",
-    "wot_book3_dragon_reborn": "The Dragon Reborn",
-    "wot_book4_shadow_rising": "The Shadow Rising",
-    "wot_book5_fires_of_heaven": "The Fires of Heaven",
-    "wot_book6_lord_of_chaos": "Lord of Chaos",
-    "wot_book7_crown_of_swords": "Crown of Swords",
-    "wot_book8_path_of_daggers": "The Path of Daggers",
-    "wot_book9_winters_heart": "Winter's Heart",
-    "wot_book10_crossroads_of_twilight": "Crossroads of Twilight",
-    "tbi_output": "The Blade Itself",
-    "sg_output": "The Sinners Gospel",
-    "bwp_output": "The Breakwall Paladin",
-    "new_spring": "New Spring",
-    "the_concordance": "The Concordance",
-    "RA1_output": "RA1",
-    "RA2_output": "RA2",
-    "RA3_output": "RA3",
-    "RA4_output": "RA4",
-    "eye_of_the_world": "The Eye of the World (early test)",
-    "teotw": "The Eye of the World (early test)",
+    "wot_book1_eye_of_the_world": ("The Eye of the World", "The Wheel of Time", 1),
+    "wot_book2_great_hunt": ("The Great Hunt", "The Wheel of Time", 2),
+    "wot_book3_dragon_reborn": ("The Dragon Reborn", "The Wheel of Time", 3),
+    "wot_book4_shadow_rising": ("The Shadow Rising", "The Wheel of Time", 4),
+    "wot_book5_fires_of_heaven": ("The Fires of Heaven", "The Wheel of Time", 5),
+    "wot_book6_lord_of_chaos": ("Lord of Chaos", "The Wheel of Time", 6),
+    "wot_book7_crown_of_swords": ("Crown of Swords", "The Wheel of Time", 7),
+    "wot_book8_path_of_daggers": ("The Path of Daggers", "The Wheel of Time", 8),
+    "wot_book9_winters_heart": ("Winter's Heart", "The Wheel of Time", 9),
+    "wot_book10_crossroads_of_twilight": ("Crossroads of Twilight", "The Wheel of Time", 10),
+    "tbi_output": ("The Blade Itself", "First Law", 1),
+    "sg_output": ("The Sinners Gospel", "", 0),
+    "bwp_output": ("The Breakwall Paladin", "", 0),
+    "new_spring": ("New Spring", "The Wheel of Time", 0),
+    "the_concordance": ("The Concordance", "", 0),
+    "RA1_output": ("RA1", "", 0),
+    "RA2_output": ("RA2", "", 0),
+    "RA3_output": ("RA3", "", 0),
+    "RA4_output": ("RA4", "", 0),
+    "eye_of_the_world": ("The Eye of the World (early test)", "", 0),
+    "teotw": ("The Eye of the World (early test)", "", 0),
 }
 
 
@@ -129,7 +129,7 @@ def main() -> int:
                          "that already have words.json)")
     ap.add_argument("--sidecar-text", action="store_true",
                     help="keep using the .txt sidecar as reading text "
-                         "(default: whisper transcript, which always "
+                         "(default: ASR transcript, which always "
                          "matches what was spoken)")
     ap.add_argument("--one", type=Path, default=None,
                     help="process a single book dir (stage+align+pack)")
@@ -146,6 +146,10 @@ def main() -> int:
 
 def process_book(book: Path, title: str, args) -> int:
     """stage -> (whisper align, GPU-gated) -> pack one book dir."""
+    info = TITLES.get(book.name, (title, "", 0))
+    title = info[0]
+    series = info[1] if len(info) > 1 else ""
+    snum = info[2] if len(info) > 2 else 0
     out_jbab = args.out / f"{title}.jbab"
     print(f"\n=== {book.name} -> {out_jbab.name} ===", flush=True)
     if out_jbab.exists() and not getattr(args, "refresh", False):
@@ -173,10 +177,11 @@ def process_book(book: Path, title: str, args) -> int:
             print(f"  align failed for {book.name} "
                   "(packing without timings)", flush=True)
 
-    r = subprocess.run(
-        [sys.executable, str(HERE / "jbab_pack.py"), str(staged),
-         "-o", str(out_jbab), "--title", title, "--force"],
-        cwd=str(HERE.parent))
+    pack_cmd = [sys.executable, str(HERE / "jbab_pack.py"), str(staged),
+                "-o", str(out_jbab), "--title", title, "--force"]
+    if series:
+        pack_cmd += ["--series", series, "--series-num", str(snum)]
+    r = subprocess.run(pack_cmd, cwd=str(HERE.parent))
     if r.returncode == 0:
         print(f"  packed {out_jbab.name}", flush=True)
         return 0

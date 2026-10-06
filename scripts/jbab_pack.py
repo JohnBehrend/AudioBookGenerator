@@ -36,6 +36,8 @@ def main() -> int:
     ap.add_argument("-o", "--out", type=Path, default=None)
     ap.add_argument("--title", default=None)
     ap.add_argument("--author", default=None)
+    ap.add_argument("--series", default=None)
+    ap.add_argument("--series-num", type=int, default=0)
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
@@ -79,6 +81,8 @@ def main() -> int:
         "v": 1,
         "title": args.title or book.name,
         "author": args.author or "",
+        "series": args.series or "",
+        "series_num": args.series_num or 0,
         "chapters": [{"file": str(p.relative_to(book)), "title": p.stem}
                      for p in audio],
     }

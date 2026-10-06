@@ -125,17 +125,29 @@ class TTSConfig:
 # ============================================================================
 
 
-def setup_validation_model(device: str, cpu: bool = False, fast: bool = False) -> Any:
-    """Setup the Whisper validation model for audio transcription.
+def setup_validation_model(device: str, cpu: bool = False, fast: bool = False,
+                           backend: Optional[str] = None) -> Any:
+    """Setup the ASR validation model for audio transcription.
 
     Args:
         device: Device to run the model on (e.g., 'cuda', 'cuda:0', 'cuda:1', 'cpu')
         cpu: If True, use CPU with float32 instead of GPU with float16
         fast: If True, use smaller model for faster transcription
+        backend: 'whisper' (default) or 'parakeet'. None -> DEFAULTS["validation_backend"]
 
     Returns:
-        WhisperModel instance for audio validation
+        WhisperModel instance (whisper backend) or ParakeetModel (parakeet
+        backend). Both expose the same .transcribe(path) -> (segments, info)
+        contract.
     """
+    backend = (backend or DEFAULTS.get("validation_backend") or "whisper").lower()
+    if backend == "parakeet":
+        from .asr import load_parakeet_validation_model
+
+        model_name = (DEFAULTS.get("parakeet_model_name_fast") if fast
+                      else DEFAULTS.get("parakeet_model_name")) or "nvidia/parakeet-tdt-0.6b-v3"
+        return load_parakeet_validation_model(model_name, device=device, cpu=cpu)
+
     from faster_whisper import WhisperModel
 
     model_name = DEFAULTS["validation_model_name_fast"] if fast else DEFAULTS["validation_model_name"]
@@ -2098,6 +2110,9 @@ def main():
     parser.add_argument("--whisper-cpu", action="store_true", help="Run Whisper validation on CPU (frees GPU for TTS)")
     parser.add_argument("--whisper-concurrency", type=int, default=1, help="Number of concurrent Whisper models for validation (default: 1)")
     parser.add_argument("--whisper-fast", action="store_true", help="Use faster Whisper settings (medium model, beam_size=3)")
+    parser.add_argument("--asr-backend", choices=["whisper", "parakeet"], default=None,
+                        help="Validation ASR backend: 'whisper' (faster-whisper, default) or "
+                             "'parakeet' (NVIDIA TDT, much faster with native word timestamps)")
     parser.add_argument("--gpus", nargs="+", default=None, help="GPU devices to use (e.g., --gpus cuda:0 cuda:1)")
     parser.add_argument("--skip-chunkformer", action="store_true", help="Skip ChunkFormer voice validation (gender/emotion/dialect/age classification)")
     parser.add_argument("--celebrity-voices", action="store_true", help="Use celebrity voice references from YouTube instead of generating synthetic voices")
@@ -2219,6 +2234,10 @@ def main():
     # Validate --tts-engine with --gpus
     if args.gpus and len(args.gpus) > 1 and not args.tts_engine:
         print(f"\nWarning: --gpus specified without --tts-engine. Using default: {AUDIO_SETTINGS['default_tts_engine']}")
+
+    # ASR backend override so every setup_validation_model call site picks it up
+    if args.asr_backend:
+        DEFAULTS["validation_backend"] = args.asr_backend
 
     if args.gradio:
         create_gradio_interface(

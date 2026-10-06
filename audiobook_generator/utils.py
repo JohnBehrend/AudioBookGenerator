@@ -758,8 +758,44 @@ def normalize_character_name(name: str) -> str:
     return name.lower().strip().replace("_", " ").replace("'", " ")
 
 
+_SMALL_NUMBER_WORDS = [
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+    "sixteen", "seventeen", "eighteen", "nineteen",
+]
+_TENS_WORDS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty",
+               "seventy", "eighty", "ninety"]
+
+
+def _int_to_words(n: int) -> str:
+    """Spell out a small integer (0-99) the way TTS engines read it aloud."""
+    if n < 20:
+        return _SMALL_NUMBER_WORDS[n]
+    tens, unit = divmod(n, 10)
+    return _TENS_WORDS[tens] + (" " + _SMALL_NUMBER_WORDS[unit] if unit else "")
+
+
+def _normalize_small_numbers(text: str) -> str:
+    """Convert standalone 0-99 integer tokens to spoken words.
+
+    ASR backends disagree on numeral conventions: whisper transcribes the
+    spoken word 'one' as '1', transducer models (Parakeet) spell it out as
+    'one'. Normalizing BOTH sides of every comparison to spoken words makes
+    the two interchangeable. Larger integers (years, e.g. '1894') are left
+    alone: their spoken form is ambiguous (year vs. count reading).
+    """
+    return " ".join(
+        _int_to_words(int(tok)) if tok.isdigit() and len(tok) <= 2 else tok
+        for tok in text.split()
+    )
+
+
 def distill_string(input_str: str) -> str:
     """Remove punctuation and convert to lowercase for string comparison.
+
+    Also normalizes standalone 0-99 integers to spoken words so that ASR
+    backends with different numeral conventions score identically (see
+    _normalize_small_numbers).
 
     Args:
         input_str: Input string to distill
@@ -767,13 +803,14 @@ def distill_string(input_str: str) -> str:
     Returns:
         Lowercase string with punctuation removed (?, ., -, ;, ,, !) and normalized whitespace
     """
-    return re.sub(r'\s+', ' ', (input_str.lower()
+    distilled = re.sub(r'\s+', ' ', (input_str.lower()
             .replace("?", "")
             .replace(".", "")
             .replace("-", "")
             .replace(";", "")
             .replace(",", "")
             .replace("!", ""))).strip()
+    return _normalize_small_numbers(distilled)
 
 
 def transcribe_audio_with_whisper(validation_model: Any, audio_path: str) -> Tuple[str, List[float], List[float]]:

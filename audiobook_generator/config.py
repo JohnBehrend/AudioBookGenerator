@@ -119,6 +119,12 @@ DEFAULTS = {
     "static_voice_text": "Hello there. Good morning everyone. After all these years, it's finally here for us. The journey has been long and difficult, but we've learned to trust each other through every challenge. Now we stand together, ready to face whatever comes next. There's no turning back from here! We're going to make this work, no matter what!",
     "validation_model_name": "large-v2",
     "validation_model_name_fast": "medium",
+    # ASR backend used for validation: 'parakeet' (NVIDIA TDT/FastConformer
+    # via nemo_toolkit, ~13-36x faster with native word timestamps) or
+    # 'whisper' (faster-whisper/CTranslate2 fallback).
+    "validation_backend": "parakeet",
+    "parakeet_model_name": "/home/johnbehrend/.cache/nemo_models/parakeet-ultra.nemo",
+    "parakeet_model_name_fast": "/home/johnbehrend/.cache/nemo_models/parakeet-ultra.nemo",
     "min_silence_len": 1250,
     "silence_thresh": -60,
     "inter_line_pause_ms": 300,

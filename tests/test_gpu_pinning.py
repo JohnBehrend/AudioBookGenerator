@@ -38,7 +38,7 @@ class TestWhisperDeviceRouting:
     def test_gpu_path_uses_cuda_and_float16(self):
         """cpu=False must load Whisper on bare 'cuda' in float16 (GPU path)."""
         with patch("faster_whisper.WhisperModel") as mock_whisper:
-            setup_validation_model(device="cuda:0", cpu=False, fast=False)
+            setup_validation_model(device="cuda:0", cpu=False, fast=False, backend="whisper")
         mock_whisper.assert_called_once_with(
             DEFAULTS["validation_model_name"],
             device="cuda",
@@ -48,7 +48,7 @@ class TestWhisperDeviceRouting:
     def test_cuda_index_normalized_to_bare_cuda(self):
         """'cuda:N' must be normalized to bare 'cuda' (faster_whisper limitation)."""
         with patch("faster_whisper.WhisperModel") as mock_whisper:
-            setup_validation_model(device="cuda:2", cpu=False, fast=False)
+            setup_validation_model(device="cuda:2", cpu=False, fast=False, backend="whisper")
         mock_whisper.assert_called_once_with(
             DEFAULTS["validation_model_name"],
             device="cuda",
@@ -58,7 +58,7 @@ class TestWhisperDeviceRouting:
     def test_fast_uses_smaller_model(self):
         """fast=True must select the faster (smaller) model, still on GPU float16."""
         with patch("faster_whisper.WhisperModel") as mock_whisper:
-            setup_validation_model(device="cuda:1", cpu=False, fast=True)
+            setup_validation_model(device="cuda:1", cpu=False, fast=True, backend="whisper")
         mock_whisper.assert_called_once_with(
             DEFAULTS["validation_model_name_fast"],
             device="cuda",
@@ -68,7 +68,7 @@ class TestWhisperDeviceRouting:
     def test_cpu_path_uses_cpu_and_float32(self):
         """cpu=True must force CPU + float32 (the slow ~30x path)."""
         with patch("faster_whisper.WhisperModel") as mock_whisper:
-            setup_validation_model(device="cuda:0", cpu=True, fast=False)
+            setup_validation_model(device="cuda:0", cpu=True, fast=False, backend="whisper")
         mock_whisper.assert_called_once_with(
             DEFAULTS["validation_model_name"],
             device="cpu",
@@ -78,7 +78,7 @@ class TestWhisperDeviceRouting:
     def test_gpu_device_normalized_to_bare_cuda(self):
         """A specific 'cuda:N' device must be normalized to bare 'cuda', not kept."""
         with patch("faster_whisper.WhisperModel") as mock_whisper:
-            setup_validation_model(device="cuda:3", cpu=False, fast=False)
+            setup_validation_model(device="cuda:3", cpu=False, fast=False, backend="whisper")
         # faster_whisper would reject "cuda:3"; it must be normalized to "cuda".
         args, kwargs = mock_whisper.call_args
         assert kwargs["device"] == "cuda"

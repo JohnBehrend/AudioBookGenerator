@@ -17,6 +17,11 @@ END_CHARACTERS = ["?", ".", "-", ";", ",", "!"]
 MIN_RATIO_THRESHOLD = 0.85
 MAX_RETRIES = 2
 
+# Lead margin (ms) applied when clipping at the postfix word's start time, to
+# absorb ASR word-onset lateness (transducer models report onsets up to ~100ms
+# after the true audio onset). Never applied before the previous word's end.
+POSTFIX_CLIP_LEAD_MS = 60.0
+
 
 def _normalize_clip_token(token: str) -> str:
     """Lowercase a transcription token and strip punctuation for matching.
@@ -334,19 +339,22 @@ def calculate_clip_points(
             # Clip before the postfix starts
             if postfix_start_index == 0:
                 # No content before postfix, clip to 0 so guard catches it
-                clip_end_s = 0.0
+                clip_end_ms = 0.0
             else:
-                # Clip at the START of the postfix word. Whisper tends to
-                # UNDER-report the end time of the final content word, so
-                # clipping at (end - buffer) cut off that word's tail (e.g.
-                # "girls" losing its final 's'). The postfix word's start is a
-                # cleaner boundary (there is typically a pause before it) and
-                # keeps the full last content word.
-                clip_end_s = start_times[postfix_start_index]
-            clip_end_ms = max(0, clip_end_s * 1000)
+                # Clip at the START of the postfix word, with a small lead
+                # margin. ASR word starts can land slightly AFTER the true
+                # audio onset (observed ~50-100ms late on transducer models
+                # like Parakeet), which leaks a residual first postfix word
+                # into the clipped audio. The lead never goes before the
+                # previous word's reported end, so the final content word is
+                # still fully preserved; when a real pause precedes the
+                # postfix the margin lands inside it.
+                postfix_start_ms = start_times[postfix_start_index] * 1000
+                prev_end_ms = end_times[postfix_start_index - 1] * 1000
+                clip_end_ms = max(prev_end_ms, postfix_start_ms - POSTFIX_CLIP_LEAD_MS)
 
             if verbose:
-                print(f"POSTFIX DETECTED CLIPPING at {clip_end_s}s ({clip_end_ms}ms)")
+                print(f"POSTFIX DETECTED CLIPPING at {clip_end_ms / 1000.0:.2f}s ({clip_end_ms}ms)")
         except (ValueError, IndexError):
             pass
 

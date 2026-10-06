@@ -103,12 +103,15 @@ class TestClippingAccuracy:
     """Test that clipping removes postfix completely."""
 
     def test_clip_at_start_of_postfix(self):
-        """Clip point should be at the start of the postfix word.
+        """Clip point should be at the start of the postfix word, minus a
+        small lead margin (see POSTFIX_CLIP_LEAD_MS).
 
-        Clipping at the start of the postfix (rather than at the end of the
-        last content word minus a buffer) preserves the full final content word,
-        since Whisper under-reports the final word's end time and would otherwise
-        cut off its tail (e.g. the 's' in 'girls').
+        Clipping at the postfix onset (rather than at the end of the last
+        content word minus a buffer) preserves the full final content word,
+        since ASR under-reports the final word's end time and would otherwise
+        cut off its tail (e.g. the 's' in 'girls'). The lead margin absorbs
+        ASR onset lateness so no residual postfix leaks in; it never reaches
+        before the previous word's end.
         """
         segments = ["hello", "world", "and", "also", "with", "you"]
         start_times = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
@@ -117,13 +120,14 @@ class TestClippingAccuracy:
         result = calculate_clip_points(segments, start_times, end_times, "and", "world")
         assert result is not None
         start_clip, end_clip = result
-        # Postfix "and" starts at 1.0s -> clip there, keeping all of "world".
-        assert end_clip == 1000.0
+        # Postfix "and" starts at 1.0s; clip 60ms early (940ms), still after
+        # "world" ends (900ms), so all of "world" is kept.
+        assert end_clip == 940.0
 
     def test_keeps_full_final_content_word_when_postfix_delayed(self):
         """A pause before the postfix keeps the final word's tail intact."""
-        # Whisper reports "girls" ending early (1.0s) but the postfix "and"
-        # only starts later (1.6s); clipping must reach the postfix start.
+        # ASR reports "girls" ending early (1.0s) but the postfix "and"
+        # only starts later (1.6s); clipping must not go before "girls" ends.
         segments = ["our", "girls", "and", "also", "with", "you"]
         start_times = [0.0, 0.3, 1.6, 1.8, 2.0, 2.2]
         end_times = [0.3, 1.0, 1.8, 2.0, 2.2, 2.4]
@@ -131,9 +135,9 @@ class TestClippingAccuracy:
         result = calculate_clip_points(segments, start_times, end_times, "and", "girls")
         assert result is not None
         _, end_clip = result
-        # Old logic: end of "girls" (1.0s) - 0.05 = 950ms (cut the 's').
-        # New logic: clip at start of postfix "and" = 1600ms (keeps full "girls").
-        assert end_clip == 1600.0
+        # Postfix "and" starts at 1600ms; 60ms lead = 1540ms, which is after
+        # "girls" ends (1000ms), so the full word survives.
+        assert end_clip == 1540.0
 
     def test_safety_buffer_prevents_residual_postfix(self):
         """Postfix start boundary should prevent residual postfix audio."""
@@ -144,8 +148,9 @@ class TestClippingAccuracy:
         result = calculate_clip_points(segments, start_times, end_times, "and", "world")
         assert result is not None
         _, end_clip = result
-        # Postfix "and" starts at 1.0s -> clip there.
-        assert end_clip == 1000.0
+        # Postfix "and" starts at 1.0s -> clip at 940ms (60ms lead, after
+        # "world" ends at 900ms).
+        assert end_clip == 940.0
 
     def test_postfix_at_start_clips_to_zero(self):
         """When postfix is the first token, clip_end should be 0."""

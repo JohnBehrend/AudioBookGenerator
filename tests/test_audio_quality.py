@@ -148,6 +148,17 @@ class TestWhisperTranscriptionAccuracy:
         for input_str, expected in test_cases:
             assert distill_string(input_str) == expected
 
+    def test_distill_string_small_numbers(self):
+        """Standalone 0-99 integers normalize to spoken words so that ASR
+        backends with different numeral conventions (whisper '1' vs parakeet
+        'one') score identically. Larger integers (years) are left alone."""
+        assert distill_string("Chapter 1") == "chapter one"
+        assert distill_string("chapter one") == "chapter one"
+        assert distill_string("50 men") == "fifty men"
+        assert distill_string("21 guns") == "twenty one guns"
+        assert distill_string("Copyright 1894") == "copyright 1894"
+        assert distill_string("Chapter 100") == "chapter 100"
+
     def test_score_strings_pop_with_postfix(self):
         """Test scoring when postfix is present."""
         input_str = "hello world and also with you"

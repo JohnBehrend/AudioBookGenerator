@@ -74,6 +74,8 @@ def main() -> int:
                     help="book directory or single audio file")
     ap.add_argument("--epub", type=Path, default=None)
     ap.add_argument("--model", default="medium")
+    ap.add_argument("--asr-backend", default="parakeet", choices=["whisper", "parakeet"],
+                    help="word-timing ASR backend (parakeet: ~13x faster, native timestamps)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--compute-type", default="float16")
     ap.add_argument("--language", default=None)
@@ -120,10 +122,16 @@ def main() -> int:
                 epub_texts.append(t.strip())
         print(f"epub: {len(epub_texts)} chapters")
 
-    from faster_whisper import WhisperModel
-    print(f"loading whisper '{args.model}' on {args.device} ...")
-    model = WhisperModel(args.model, device=args.device,
-                         compute_type=args.compute_type)
+    if args.asr_backend == "parakeet":
+        from audiobook_generator.asr import ParakeetModel
+        pk_name = args.model if (args.model.startswith("nvidia/") or args.model.endswith(".nemo")) else "nvidia/parakeet-tdt-0.6b-v3"
+        print(f"loading parakeet '{pk_name}' on {args.device} ...")
+        model = ParakeetModel(pk_name, device=args.device)
+    else:
+        from faster_whisper import WhisperModel
+        print(f"loading whisper '{args.model}' on {args.device} ...")
+        model = WhisperModel(args.model, device=args.device,
+                             compute_type=args.compute_type)
 
     ok = 0
     for i, (dst, real) in enumerate(units):

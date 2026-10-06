@@ -216,8 +216,9 @@ class TestCalculateClipPoints:
         )
 
         # Content "They are" (0.42-0.74s) must be preserved: clip starts at the
-        # first content word and ends at the start of the postfix "And" (0.96s).
-        assert result == (0, 960.0)
+        # first content word and ends 60ms before the postfix "And" onset
+        # (0.96s - 60ms lead = 900ms, still after "are" ends at 740ms).
+        assert result == (0, 900.0)
 
     def test_no_clipping_needed(self):
         """Test when no clipping is needed."""

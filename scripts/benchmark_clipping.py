@@ -73,6 +73,8 @@ def main() -> None:
                     help="Path to the voice reference sample used for cloning")
     ap.add_argument("--whisper-cpu", action="store_true",
                     help="Run Whisper on CPU (slow; for debugging CPU/GPU split)")
+    ap.add_argument("--asr-backend", default=None, choices=["whisper", "parakeet"],
+                    help="validation ASR backend (default: DEFAULTS['validation_backend'])")
     args = ap.parse_args()
 
     out = Path(args.out)
@@ -93,7 +95,8 @@ def main() -> None:
     engine = get_engine("omni", device=device)
     # Whisper on the GPU by default (fast, low CPU) matching production
     # (whisper_cpu=False). Use --whisper-cpu to force CPU for debugging.
-    whisper = setup_validation_model(device, cpu=args.whisper_cpu, fast=args.whisper_cpu)
+    whisper = setup_validation_model(device, cpu=args.whisper_cpu, fast=args.whisper_cpu,
+                                     backend=args.asr_backend)
     tts_config = TTSConfig(
         device=device,
         tts_engine="omni",

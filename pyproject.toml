@@ -36,6 +36,12 @@ dependencies = [
 [project.scripts]
 audiobook-interface = "audiobook_generator.audiobook_generator:main"
 
+[project.optional-dependencies]
+# Parakeet ASR validation backend (--asr-backend parakeet)
+parakeet = [
+    "nemo_toolkit[asr]>=2.0.0",
+]
+
 
 [tool.uv]
 package = true
